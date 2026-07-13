@@ -1,0 +1,38 @@
+{
+  "common": {
+    "back": "ย้อนกลับ",
+    "cancel": "ยกเลิก",
+    "save": "บันทึก"
+  },
+  "today": {
+    "greeting": {
+      "lateNight": "ยังไม่นอนอีกหรอ",
+      "morning": "สวัสดีตอนเช้า",
+      "afternoon": "สวัสดีตอนบ่าย",
+      "evening": "สวัสดีตอนเย็น"
+    },
+    "checkIn": "สรุปเงินประจำวันจาก Lulu ✨",
+    "improveScore": "เพิ่มคะแนนของฉัน",
+    "yourJourney": "เส้นทางของคุณ",
+    "savingsCoach": "โค้ชการออมเงิน",
+    "goalsProgress": "ความคืบหน้าเป้าหมาย",
+    "quickActions": "ทำรายการด่วน"
+  },
+  "settings": {
+    "title": "ตั้งค่า",
+    "appearance": "ธีมการแสดงผล",
+    "preferences": "การตั้งค่าทั่วไป",
+    "language": "ภาษา",
+    "profile": "โปรไฟล์",
+    "account": "บัญชี",
+    "security": "ความปลอดภัย"
+  },
+  "language": {
+    "title": "🌎 เลือกภาษาของคุณ",
+    "subtitle": "Lulu จะพูดคุยกับคุณด้วยภาษาที่คุณสบายใจที่สุด",
+    "english": "English",
+    "thai": "ไทย",
+    "matchDevice": "ใช้ภาษาเดียวกับอุปกรณ์",
+    "matchDeviceCurrent": "ตอนนี้กำลังพูดภาษา {{language}}"
+  }
+}

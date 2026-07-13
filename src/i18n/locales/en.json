@@ -1,0 +1,38 @@
+{
+  "common": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "today": {
+    "greeting": {
+      "lateNight": "Still up",
+      "morning": "Good morning",
+      "afternoon": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "checkIn": "LULU DAILY CHECK-IN ✨",
+    "improveScore": "Improve my score",
+    "yourJourney": "Your Journey",
+    "savingsCoach": "Savings Coach",
+    "goalsProgress": "Goals Progress",
+    "quickActions": "Quick Actions"
+  },
+  "settings": {
+    "title": "Settings",
+    "appearance": "Appearance",
+    "preferences": "Preferences",
+    "language": "Language",
+    "profile": "Profile",
+    "account": "Account",
+    "security": "Security"
+  },
+  "language": {
+    "title": "🌎 Choose your language",
+    "subtitle": "Lulu will speak to you in your preferred language.",
+    "english": "English",
+    "thai": "ไทย",
+    "matchDevice": "Match device language",
+    "matchDeviceCurrent": "Currently speaking {{language}}"
+  }
+}
