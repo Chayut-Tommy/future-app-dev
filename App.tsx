@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { AppStateProvider, useAppState } from './src/state/AppStateContext';
 import { CelebrationProvider } from './src/state/CelebrationContext';
+import { SavingsAllocationPromptProvider } from './src/state/SavingsAllocationPromptContext';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import i18n, { resolveDeviceLanguage } from './src/i18n';
@@ -52,7 +53,9 @@ export default function App() {
       <AppStateProvider>
         <ThemeProvider>
           <CelebrationProvider>
-            <AppShell />
+            <SavingsAllocationPromptProvider>
+              <AppShell />
+            </SavingsAllocationPromptProvider>
           </CelebrationProvider>
         </ThemeProvider>
       </AppStateProvider>

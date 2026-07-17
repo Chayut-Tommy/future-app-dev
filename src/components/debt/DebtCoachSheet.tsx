@@ -1,17 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { useCelebration } from '../../state/CelebrationContext';
-import { computeDebtCoachSummary, computeHasAnyDebt, DebtEntry } from '../../lib/calculations/debtCoach';
+import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculations/debtCoach';
 import { buildDebtFreeCelebration } from '../../lib/celebrations';
 import { LiabilityType } from '../../types/models';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
-import { AddRecurringItemModal } from '../money/AddRecurringItemModal';
-import { AskLuluSheet } from '../navigation/AskLuluSheet';
 import { brand } from '../../lib/brand';
 
 function formatMoney(value: number): string {
@@ -48,20 +46,9 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
   const insets = useSafeAreaInsets();
   const [addLiabilityType, setAddLiabilityType] = useState<LiabilityType | null>(null);
   const [addCardVisible, setAddCardVisible] = useState(false);
-  const [adjustMode, setAdjustMode] = useState<'bill' | 'card' | 'liability' | null>(null);
-  const [adjustDebtId, setAdjustDebtId] = useState<string | null>(null);
-  const [choosingDebt, setChoosingDebt] = useState(false);
-  const [askLuluVisible, setAskLuluVisible] = useState(false);
 
   const hasDebt = computeHasAnyDebt(data);
   const summary = useMemo(() => computeDebtCoachSummary(data), [data]);
-  const adjustDebt = summary.debts.find((d) => d.id === adjustDebtId) ?? null;
-
-  // Reset to the coaching view every time the sheet is (re)opened — never
-  // reopen mid-way through the debt picker from a previous visit.
-  useEffect(() => {
-    if (visible) setChoosingDebt(false);
-  }, [visible]);
 
   function handleNoDebt() {
     updateUser({ confirmedNoDebt: true });
@@ -73,31 +60,6 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
     onClose();
     if (type === 'credit_card') setAddCardVisible(true);
     else setAddLiabilityType(type);
-  }
-
-  function openAdjustFor(debt: DebtEntry) {
-    onClose();
-    setAdjustDebtId(debt.id);
-    if (debt.linkedRecurringItem) setAdjustMode('bill');
-    else if (debt.kind === 'credit_card') setAdjustMode('card');
-    else if (debt.liability) setAdjustMode('liability');
-  }
-
-  // Multiple debts need a real choice first (PRD bug report: this silently
-  // defaulted to the largest debt, so a user with a mortgage, car loan, and
-  // credit card had no way to adjust anything but the mortgage).
-  function openAdjustRepayment() {
-    if (summary.debts.length === 0) return;
-    if (summary.debts.length === 1) {
-      openAdjustFor(summary.debts[0]);
-      return;
-    }
-    setChoosingDebt(true);
-  }
-
-  function openAskLulu() {
-    onClose();
-    setAskLuluVisible(true);
   }
 
   const styles = useMemo(
@@ -123,9 +85,6 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
         suggestionsBlock: { marginTop: spacing.sm, marginBottom: spacing.md },
         suggestionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.sm },
         suggestionText: { ...typography.caption, fontSize: 13, color: colors.textPrimary, flex: 1, lineHeight: 18 },
-        actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-        actionChip: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: radius.control, backgroundColor: colors.accentSoft },
-        actionChipText: { ...typography.caption, fontSize: 13, color: colors.accentStrong, fontWeight: '700' },
         optionGrid: { gap: spacing.sm, marginBottom: spacing.md },
         optionTile: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.control, backgroundColor: colors.surfaceMuted },
         optionEmoji: { fontSize: 20 },
@@ -146,26 +105,7 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
           <View style={styles.sheet}>
             <View style={styles.grabber} />
-            {choosingDebt ? (
-              <>
-                <Text style={styles.title}>Choose a debt</Text>
-                <Text style={styles.subtitle}>Which one do you want to adjust the repayment on?</Text>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {summary.debts.map((d) => (
-                    <TouchableOpacity key={d.id} style={styles.debtRow} activeOpacity={0.7} onPress={() => openAdjustFor(d)}>
-                      <Ionicons name={d.icon} size={18} color={colors.textSecondary} />
-                      <View style={styles.debtTextBlock}>
-                        <Text style={styles.debtLabel}>{d.label}</Text>
-                        <Text style={styles.debtSub}>
-                          {d.monthlyRepayment ? `Current repayment: ${formatMoney(d.monthlyRepayment)}/month` : 'No repayment set yet'}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </>
-            ) : hasDebt ? (
+            {hasDebt ? (
               <>
                 <Text style={styles.title}>Your debt overview</Text>
                 <ScrollView showsVerticalScrollIndicator={false}>
@@ -222,15 +162,6 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
                     Educational estimate only. Interest, fees, repayment rules and your circumstances may change the result.
                   </Text>
                 </ScrollView>
-
-                <View style={styles.actionsRow}>
-                  <TouchableOpacity style={styles.actionChip} onPress={openAdjustRepayment}>
-                    <Text style={styles.actionChipText}>Compare repayment scenarios</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.actionChip} onPress={openAskLulu}>
-                    <Text style={styles.actionChipText}>Ask {brand.name}</Text>
-                  </TouchableOpacity>
-                </View>
               </>
             ) : (
               <>
@@ -263,23 +194,6 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
         onClose={() => setAddLiabilityType(null)}
       />
       <AddCreditCardModal visible={addCardVisible} onClose={() => setAddCardVisible(false)} />
-      <AddRecurringItemModal
-        visible={adjustMode === 'bill'}
-        editItem={adjustDebt?.linkedRecurringItem ?? null}
-        onClose={() => setAdjustMode(null)}
-      />
-      <AddCreditCardModal
-        visible={adjustMode === 'card'}
-        editCard={data.creditCards.find((c) => c.id === adjustDebt?.id) ?? null}
-        onClose={() => setAdjustMode(null)}
-      />
-      <AddWealthItemModal
-        visible={adjustMode === 'liability'}
-        kind="liability"
-        editLiability={adjustDebt?.liability ?? null}
-        onClose={() => setAdjustMode(null)}
-      />
-      <AskLuluSheet visible={askLuluVisible} onClose={() => setAskLuluVisible(false)} />
     </>
   );
 }

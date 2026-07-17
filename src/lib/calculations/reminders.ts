@@ -68,14 +68,23 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
     };
   }
 
-  if (data.user.nextPayday && data.user.monthlyIncome > 0) {
-    const days = daysBetween(new Date(data.user.nextPayday), today);
+  // One reminder per soonest income source, not a lump-sum aggregate (PRD
+  // ask, §3/§5): with multiple income sources, "did your salary arrive?"
+  // must confirm — and reschedule — the specific source that's actually
+  // due, the same way bill reminders already target one specific item.
+  const upcomingIncome = data.recurringItems
+    .filter((r) => r.type === 'income' && r.active && !r.nextDueDateUnknown)
+    .sort((a, b) => new Date(a.nextDueDate).getTime() - new Date(b.nextDueDate).getTime())[0];
+  if (upcomingIncome) {
+    const days = daysBetween(new Date(upcomingIncome.nextDueDate), today);
     if (days >= 0 && days <= 3) {
       return {
-        id: `salary-${data.user.nextPayday}`,
+        id: `salary-${upcomingIncome.id}-${upcomingIncome.nextDueDate}`,
         kind: 'salary_check',
-        title: 'Did your salary arrive? 🎉',
-        body: `${brand.name} expected your pay around ${shortDate(data.user.nextPayday)}.`,
+        title: `Did your ${upcomingIncome.label.toLowerCase()} arrive? 🎉`,
+        body: `${brand.name} expected it around ${shortDate(upcomingIncome.nextDueDate)}.`,
+        recurringItemId: upcomingIncome.id,
+        amount: upcomingIncome.amount,
       };
     }
   }

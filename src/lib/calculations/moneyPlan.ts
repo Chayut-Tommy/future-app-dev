@@ -1,5 +1,5 @@
 import { AppData } from '../../types/models';
-import { computeMonthlySummary } from './monthlySummary';
+import { computeAdHocIncome } from './monthlySummary';
 import { computeSafeToSpend } from './safeToSpend';
 
 export interface MoneyPlanEntry {
@@ -27,6 +27,10 @@ export interface MoneyPlan {
   recurring: MoneyPlanRecurring[];
   billsSetAside: number;
   goalsSetAside: number;
+  /** The user's chosen Savings allocation this month — $0 unless they've
+   * explicitly turned it on. Field name kept for API stability; value now
+   * sourced from safeToSpend.savingsAllocationMonthly, not an automatic
+   * percentage. */
   emergencySetAside: number;
   available: number;
   /** Only set when there's a real, meaningfully positive gap after every
@@ -81,10 +85,24 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
 
   dated.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  const summary = computeMonthlySummary(data);
   const safeToSpend = computeSafeToSpend(data, today);
 
-  const surplus = summary.netCashflow > 50 ? summary.netCashflow : null;
+  // Ad-hoc income already logged this month (a bonus, gift, refund) counts
+  // toward what's actually available this month, same as it does for
+  // Available Until Payday — but it's added here, not folded into
+  // safeToSpend.remainingPool itself, so a one-off windfall never inflates
+  // Lulu Score's read on ongoing, sustainable income (PRD ask, §5).
+  const monthStart = new Date(year, month, 1);
+  const adHocIncomeThisMonth = computeAdHocIncome(data.transactions, monthStart, today);
+  const available = Math.max(0, safeToSpend.remainingPool + adHocIncomeThisMonth);
+
+  // "Surplus" must be the exact same figure as `available` — previously
+  // this used a separate, incomplete calculation (monthly income minus
+  // expenses only) that never subtracted goals or the savings plan, so it
+  // could show a materially larger number than every other "remaining"
+  // figure on the page (PRD bug report: surplus read $5,067 while Available
+  // Until Payday and End of Month Outlook both correctly read $2,699).
+  const surplus = available > 50 ? available : null;
 
   return {
     monthLabel,
@@ -92,8 +110,8 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
     recurring,
     billsSetAside: safeToSpend.fixedExpensesMonthly,
     goalsSetAside: safeToSpend.goalContributionsMonthly,
-    emergencySetAside: safeToSpend.defaultSavingsBuffer,
-    available: Math.max(0, safeToSpend.remainingPool),
+    emergencySetAside: safeToSpend.savingsAllocationMonthly,
+    available,
     surplus,
   };
 }

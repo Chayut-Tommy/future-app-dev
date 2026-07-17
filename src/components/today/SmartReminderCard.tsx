@@ -17,7 +17,7 @@ import { AddCreditCardModal } from '../credit/AddCreditCardModal';
  * than growing a parallel notification-history feature.
  */
 export function SmartReminderCard() {
-  const { data, addTransaction, updateUser, updateRecurringItem } = useAppState();
+  const { data, addTransaction, updateRecurringItem } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography } = useTheme();
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
@@ -55,9 +55,22 @@ export function SmartReminderCard() {
   }
 
   function confirmSalary() {
-    if (!reminder || !data.user.nextPayday) return;
-    addTransaction({ type: 'income', amount: data.user.monthlyIncome, categoryId: 'cat-salary', date: new Date().toISOString() });
-    updateUser({ nextPayday: stepFrequency(data.user.nextPayday, data.user.payFrequency) });
+    if (!reminder || !reminder.recurringItemId || reminder.amount === undefined) return;
+    const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
+    if (!item) return;
+    // Best-effort match back to a real income category by name (the
+    // add-income flow prefills the source's label from a category, e.g.
+    // "Salary", "Rental income") — falls back to a generic bucket rather
+    // than guessing, never fabricating a category that wasn't real.
+    const matchedCategory = data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === item.label.toLowerCase());
+    addTransaction({
+      type: 'income',
+      amount: reminder.amount,
+      categoryId: matchedCategory?.id ?? 'cat-other-income',
+      date: new Date().toISOString(),
+      recurringItemId: item.id,
+    });
+    updateRecurringItem(item.id, { nextDueDate: stepFrequency(item.nextDueDate, item.frequency) });
     dismiss();
   }
 
@@ -72,6 +85,7 @@ export function SmartReminderCard() {
       date: new Date().toISOString(),
       paymentSource: source,
       creditCardId: source === 'credit_card' ? data.creditCards[0]?.id : undefined,
+      recurringItemId: item.id,
     });
     updateRecurringItem(item.id, { nextDueDate: stepFrequency(item.nextDueDate, item.frequency) });
     dismiss();

@@ -30,9 +30,9 @@ function idleCashOpportunity(data: AppData): MoneyOpportunity | null {
   return {
     id: 'idle_cash',
     icon: 'trending-up-outline',
-    title: 'Your cash is sitting idle',
-    detail: `Potential impact: +$${Math.round(annualExtra).toLocaleString()} a year at ${bestComparison.bankName}'s rate.`,
-    actionLabel: 'Compare savings',
+    title: 'Savings account rate',
+    detail: `Current: ${(weightedRate * 100).toFixed(1)}% · ${bestComparison.bankName} lists ${(bestComparison.rate * 100).toFixed(1)}% — a difference of about $${Math.round(annualExtra).toLocaleString()} a year on this balance.`,
+    actionLabel: 'Compare rates',
     action: 'compare_savings',
   };
 }
@@ -45,8 +45,8 @@ function savingsRateOpportunity(data: AppData): MoneyOpportunity | null {
   return {
     id: 'savings_rate',
     icon: 'bar-chart-outline',
-    title: `Your savings rate is ${ratePct}%`,
-    detail: 'Great progress. Try reaching 25%.',
+    title: 'Savings rate',
+    detail: `Current: ${ratePct}% of income · General reference: many people aim for around 20–25%.`,
     actionLabel: 'Review spending',
     action: 'open_money',
   };
@@ -60,9 +60,9 @@ function readyToInvestOpportunity(data: AppData): MoneyOpportunity | null {
   return {
     id: 'ready_to_invest',
     icon: 'rocket-outline',
-    title: "You're ready to start investing",
-    detail: 'Start your first investing lesson.',
-    actionLabel: 'Start lesson',
+    title: 'Investment learning',
+    detail: "You haven't recorded any investments yet — explore the fundamentals whenever you're curious.",
+    actionLabel: 'Explore basics',
     action: 'open_investing_path',
   };
 }
@@ -73,9 +73,9 @@ function cardDebtOpportunity(data: AppData): MoneyOpportunity | null {
   return {
     id: 'card_debt',
     icon: 'card-outline',
-    title: 'Reduce your card interest',
-    detail: 'See your payoff options and potential savings.',
-    actionLabel: 'Reduce debt',
+    title: 'Credit card balance',
+    detail: "You're carrying a balance that's accruing interest.",
+    actionLabel: 'View debt overview',
     action: 'debt_coach',
   };
 }
@@ -89,18 +89,20 @@ function emergencyFundOpportunity(data: AppData): MoneyOpportunity | null {
   return {
     id: 'emergency_fund',
     icon: 'shield-outline',
-    title: 'Build your emergency fund',
-    detail: `You have ${monthsCovered} month${monthsCovered === 1 ? '' : 's'} of expenses saved — aim for 3.`,
+    title: 'Emergency savings',
+    detail: `Current: ${monthsCovered} month${monthsCovered === 1 ? '' : 's'} of expenses · General reference: many people aim for 3–6 months.`,
     actionLabel: 'Add savings',
     action: 'add_cash',
   };
 }
 
 /**
- * "Lulu found N ways to improve" — every entry is derived from a real
- * signal on the user's own data (never a fabricated dollar figure). The
- * idle-cash impact specifically uses a rate the user themselves entered in
- * Compare Savings, not an invented "market best rate."
+ * Factual, reference-style insights from the user's own data — never a
+ * fabricated dollar figure, and never phrased as a directive (PRD ask:
+ * Grow should read as educational reference points — "current" vs. "a
+ * general reference" — not as personalised recommendations). The
+ * savings-rate comparison specifically uses a rate the user themselves
+ * entered in Compare Savings, not an invented "market best rate."
  */
 export function computeMoneyOpportunities(data: AppData): MoneyOpportunity[] {
   return [

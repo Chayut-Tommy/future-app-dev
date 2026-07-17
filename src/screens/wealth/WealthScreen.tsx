@@ -14,7 +14,8 @@ import { WealthGuideSteps } from '../../components/wealth/WealthGuideSteps';
 import { YourFutureCard } from '../../components/wealth/YourFutureCard';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddCreditCardModal } from '../../components/credit/AddCreditCardModal';
-import { computeMonthlySummary } from '../../lib/calculations/monthlySummary';
+import { computeMoneyPlan } from '../../lib/calculations/moneyPlan';
+import { useFinancialState, describeFinancialStateForWealthMap } from '../../lib/calculations/financialState';
 import { creditCardLiabilityInsight, Tone } from '../../lib/calculations/creditHealth';
 import { computeMortgageEquity } from '../../lib/calculations/propertyEquity';
 import { computeAccessibleNetWorth, computeRetirementSavings, computeTotalWealth } from '../../lib/calculations/wealthDefinitions';
@@ -105,8 +106,19 @@ export function WealthScreen() {
   const accessibleNetWorth = useMemo(() => computeAccessibleNetWorth(data), [data]);
   const retirementSavings = useMemo(() => computeRetirementSavings(data), [data]);
   const netWorth = useMemo(() => computeTotalWealth(data), [data]);
+  // Single shared signal for "is this user in a recovery-oriented state" —
+  // replaces a local `netWorth < 0` check that used to disagree with
+  // Today's and Your Future's own independent versions of the same idea
+  // (PRD bug report). Never re-derive this locally.
+  const financialState = useFinancialState(data);
+  const wealthMapStateCopy = useMemo(() => describeFinancialStateForWealthMap(financialState), [financialState]);
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
-  const summary = useMemo(() => computeMonthlySummary(data), [data]);
+  // Single source of truth for "how much wealth is this month actually
+  // generating" — reuses the exact same Income → Bills → Savings → Goals →
+  // Unallocated waterfall as Money Allocation, rather than a second,
+  // independent income-minus-expenses figure that could disagree with it
+  // (PRD ask: only one "surplus" number across the app).
+  const plan = useMemo(() => computeMoneyPlan(data), [data]);
   const activeGoals = data.goals.filter((g) => g.status === 'active');
   const [creditCardModalVisible, setCreditCardModalVisible] = useState(false);
   const [wealthChangeSheetVisible, setWealthChangeSheetVisible] = useState(false);
@@ -253,17 +265,15 @@ export function WealthScreen() {
             </View>
             <TouchableOpacity onPress={() => setWealthChangeSheetVisible(true)} activeOpacity={0.7}>
               <Text style={styles.heroDeltaLabel}>Estimated wealth change this month</Text>
-              <Text style={[styles.heroDelta, { color: summary.netCashflow >= 0 ? '#8FE0B8' : 'rgba(255,255,255,0.85)' }]}>
-                {summary.netCashflow >= 0 ? '+' : ''}
-                {formatMoney(summary.netCashflow)}
+              <Text style={[styles.heroDelta, { color: plan.available >= 0 ? '#8FE0B8' : 'rgba(255,255,255,0.85)' }]}>
+                {plan.available >= 0 ? '+' : ''}
+                {formatMoney(plan.available)}
                 <Text style={styles.heroDeltaTap}>  Tap for breakdown</Text>
               </Text>
             </TouchableOpacity>
           </>
         ) : null}
-        {netWorth < 0 ? (
-          <Text style={styles.heroSupportive}>You're in rebuilding mode. {brand.name} will help you reduce debt and grow assets.</Text>
-        ) : null}
+        {wealthMapStateCopy ? <Text style={styles.heroSupportive}>{wealthMapStateCopy}</Text> : null}
       </LinearGradient>
 
       {!unlockStatus.wealth_projection ? (
@@ -475,28 +485,36 @@ export function WealthScreen() {
         visible={wealthChangeSheetVisible}
         onClose={() => setWealthChangeSheetVisible(false)}
         title="Estimated wealth change this month"
-        subtitle="Only real activity during this period counts — adding a previously-owned asset or debt is not wealth created this month."
+        subtitle="The same Income → Bills → Savings → Goals → Unallocated breakdown as Money Allocation — only real activity during this period counts."
       >
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Income recorded this month</Text>
-          <Text style={styles.breakdownValue}>+{formatMoney(summary.income)}</Text>
+          <Text style={styles.breakdownLabel}>Income</Text>
+          <Text style={styles.breakdownValue}>+{formatMoney(data.user.monthlyIncome)}</Text>
         </View>
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Expenses recorded this month</Text>
-          <Text style={styles.breakdownValue}>-{formatMoney(summary.expenses)}</Text>
+          <Text style={styles.breakdownLabel}>Bills</Text>
+          <Text style={styles.breakdownValue}>-{formatMoney(plan.billsSetAside)}</Text>
+        </View>
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Savings allocation</Text>
+          <Text style={styles.breakdownValue}>-{formatMoney(plan.emergencySetAside)}</Text>
+        </View>
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Goals</Text>
+          <Text style={styles.breakdownValue}>-{formatMoney(plan.goalsSetAside)}</Text>
         </View>
         <View style={[styles.breakdownRow, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, marginTop: 4 }]}>
-          <Text style={[styles.breakdownLabel, { fontWeight: '700' }]}>Cashflow contribution</Text>
+          <Text style={[styles.breakdownLabel, { fontWeight: '700' }]}>Unallocated</Text>
           <Text style={[styles.breakdownValue, { fontWeight: '700' }]}>
-            {summary.netCashflow >= 0 ? '+' : ''}
-            {formatMoney(summary.netCashflow)}
+            {plan.available >= 0 ? '+' : ''}
+            {formatMoney(plan.available)}
           </Text>
         </View>
         <Text style={{ ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 18, marginTop: spacing.md }}>
-          This figure reflects recorded income minus recorded expenses this month only. Savings and investment contributions, debt
-          repayments, retirement contributions, and manual value changes are reflected directly in Your Money Engine and your
-          assets/liabilities below, not folded into this number — so entering an asset or debt you already owned never shows up here
-          as new growth or loss.
+          This assumes bills, your Savings allocation (if you've set one) and goal contributions happen as planned, minus spending
+          already recorded this month. Debt repayments, retirement contributions, and manual value changes are reflected directly in
+          Your Money Engine and your assets/liabilities below, not folded into this number — so entering an asset or debt you already
+          owned never shows up here as new growth or loss.
         </Text>
       </InfoSheet>
     </Screen>

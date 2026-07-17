@@ -22,8 +22,13 @@ export function computeSummaryForMonth(data: AppData, year: number, month: numbe
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month + 1, 1);
 
+  // Excludes transactions auto-created by confirming a recurring bill
+  // (recurringItemId set) — that bill's cost is already counted below via
+  // fixedExpensesMonthly's recurring rate, so including the confirmation
+  // transaction too would count the same bill twice (mirrors
+  // computeAdHocIncome's identical exclusion on the income side).
   const loggedExpenses = data.transactions
-    .filter((t) => t.type === 'expense' && new Date(t.date) >= monthStart && new Date(t.date) < monthEnd)
+    .filter((t) => t.type === 'expense' && !t.recurringItemId && new Date(t.date) >= monthStart && new Date(t.date) < monthEnd)
     .reduce((sum, t) => sum + t.amount, 0);
 
   const fixedExpensesMonthly = data.recurringItems
@@ -36,6 +41,72 @@ export function computeSummaryForMonth(data: AppData, year: number, month: numbe
   const savingsRate = income > 0 ? netCashflow / income : 0;
 
   return { income, expenses, fixedExpenses: fixedExpensesMonthly, variableExpenses: loggedExpenses, netCashflow, savingsRate };
+}
+
+/**
+ * One-off income the user has actually logged in a date range — a bonus,
+ * gift, tax refund, sale of shares — deliberately excluding transactions
+ * auto-created by confirming a recurring income source arrived (PRD ask,
+ * §5: recurring income and one-off income transactions must stay
+ * completely separate, never double-counted). This is real cash that has
+ * already landed, so it's added directly to "what's available right now"
+ * views (Available Until Payday, Money Flow, Money Breakdown) — but never
+ * folded into `monthlyIncome` itself, which stays a measure of ongoing,
+ * sustainable income for Lulu Score and month-to-month comparisons.
+ */
+export function computeAdHocIncome(transactions: AppData['transactions'], from: Date, to: Date): number {
+  return transactions
+    .filter((t) => t.type === 'income' && !t.recurringItemId && new Date(t.date) >= from && new Date(t.date) <= to)
+    .reduce((sum, t) => sum + t.amount, 0);
+}
+
+export interface MonthToDateActivity {
+  income: number;
+  spend: number;
+}
+
+/**
+ * A literal "what's actually happened since the 1st" pulse check — every
+ * logged transaction this calendar month, recurring-confirmed or ad-hoc
+ * alike (PRD ask: Today's live month snapshot). Deliberately not the same
+ * as MonthlySummary above: that one blends a monthly income *rate* with
+ * logged expenses for budgeting math; this one is pure recorded activity,
+ * so it naturally reads lower than the rate mid-month and matches Money
+ * tab's Spending Tracker totals exactly.
+ */
+export function computeMonthToDateActivity(data: AppData, today: Date = new Date()): MonthToDateActivity {
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const income = data.transactions
+    .filter((t) => t.type === 'income' && new Date(t.date) >= monthStart && new Date(t.date) <= today)
+    .reduce((sum, t) => sum + t.amount, 0);
+  const spend = data.transactions
+    .filter((t) => t.type === 'expense' && new Date(t.date) >= monthStart && new Date(t.date) <= today)
+    .reduce((sum, t) => sum + t.amount, 0);
+  return { income, spend };
+}
+
+/**
+ * The single authoritative "recorded cashflow this month" figure — every
+ * logged income transaction this calendar month minus every logged expense
+ * transaction, recurring-confirmed or ad-hoc alike (thin wrapper over
+ * `computeMonthToDateActivity`, never reconstructed independently). This is
+ * *recorded* activity, distinct from `computeMonthlySummary`'s
+ * `netCashflow`, which blends the recurring monthly income *rate* with
+ * logged expenses for budgeting/Lulu-Score math — the two answer different
+ * questions and must not be swapped (PRD bug report: Financial State copy
+ * said "recorded cashflow" while actually reading the recurring-rate
+ * figure, so a user with a one-off $50,000 income transaction still saw
+ * "this month's cashflow is also tight," even though July So Far, Available
+ * Until Payday, and Estimated Wealth Change — all of which already use this
+ * same recorded-activity source — showed a strongly positive month).
+ *
+ * Any copy that says "recorded cashflow" (Financial State's Cashflow Focus
+ * / Financial Rebuild variants) must use this function, not
+ * `computeMonthlySummary`.
+ */
+export function computeRecordedMonthlyCashflow(data: AppData, today: Date = new Date()): number {
+  const activity = computeMonthToDateActivity(data, today);
+  return activity.income - activity.spend;
 }
 
 /**

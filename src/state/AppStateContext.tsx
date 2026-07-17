@@ -14,6 +14,7 @@ import {
 import { createEmptyAppData, loadAppData, saveAppData } from '../lib/storage';
 import { generateId } from '../lib/id';
 import { computeLuluScore } from '../lib/calculations/luluScore';
+import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
 
 export type TransferTarget = { kind: 'asset'; assetId: string } | { kind: 'liability'; liabilityId: string };
 
@@ -43,6 +44,28 @@ function upsertNetWorthHistory(data: AppData): AppData {
     if (history.length > 180) history = history.slice(history.length - 180);
   }
   return { ...data, netWorthHistory: history };
+}
+
+// Keeps `user.monthlyIncome`/`incomeAmount`/`payFrequency`/`nextPayday` in
+// sync with the real source of truth — active income-type recurringItems
+// (PRD ask, §3: multiple income sources). Every existing reader of these
+// fields (Money Engine, Safe to Spend, Lulu Score, Money Plan, timeline,
+// reminders — ~25 files) keeps working unmodified, since it's still just
+// one aggregate number/date; only how that number gets produced changed,
+// from direct user entry to a live sum over however many sources exist.
+function syncIncomeAggregate(data: AppData): AppData {
+  const monthlyIncome = computeTotalMonthlyIncome(data.recurringItems);
+  const primary = findPrimaryIncomeItem(data.recurringItems);
+  return {
+    ...data,
+    user: {
+      ...data.user,
+      monthlyIncome,
+      incomeAmount: primary?.amount,
+      payFrequency: primary?.frequency ?? 'monthly',
+      nextPayday: primary && !primary.nextDueDateUnknown ? primary.nextDueDate : null,
+    },
+  };
 }
 
 // Same pattern as net worth history — one real entry per calendar day,
@@ -230,7 +253,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const persist = useCallback((next: AppData) => {
-    const withScoreHistory = upsertLuluScoreHistory(next);
+    const withIncome = syncIncomeAggregate(next);
+    const withScoreHistory = upsertLuluScoreHistory(withIncome);
     setData(withScoreHistory);
     saveAppData(withScoreHistory);
   }, []);

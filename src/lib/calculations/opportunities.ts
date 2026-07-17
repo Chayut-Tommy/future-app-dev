@@ -22,12 +22,11 @@ export interface Opportunity {
 }
 
 /**
- * Lulu's coaching engine — a stand-in for the full Recommendation Engine v2
- * (PRD §8). Every rule here is either derived from the user's real data or
- * is a clearly generic, evergreen educational nudge — never a fabricated
- * claim. Always framed as an opportunity (PRD §0.1), never a deficiency.
- * Copy is deliberately short — one punchy line, Apple-Fitness-card style —
- * with `action` telling the card what the button should actually do.
+ * Factual, reference-style insights derived from the user's real data —
+ * never a fabricated claim, never phrased as a directive (PRD ask, Voice
+ * guide §0.1a: "current state + general reference," not "problem +
+ * directive"; action labels describe navigation, not commands). Always
+ * framed as an observation Navilo made, not a deficiency in the user.
  */
 export function findOpportunities(data: AppData): Opportunity[] {
   const opportunities: Opportunity[] = [];
@@ -42,6 +41,7 @@ export function findOpportunities(data: AppData): Opportunity[] {
     const summary = computeMonthlySummary(data);
     const cash = computeLiquidCash(assets);
     const monthsCovered = cash / monthlyIncome;
+    const monthsCoveredLabel = Math.round(monthsCovered * 10) / 10;
     const investmentAssets = assets
       .filter((a) => (ACCESSIBLE_INVESTMENT_TYPES as string[]).includes(a.type))
       .reduce((sum, a) => sum + a.currentValue, 0);
@@ -50,25 +50,25 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (monthsCovered < 3) {
       opportunities.push({
         icon: 'shield-checkmark-outline',
-        title: 'Build emergency fund 🛡️',
-        body: 'Grow toward 3 months of expenses.',
-        actionLabel: 'Add now',
+        title: 'Emergency savings',
+        body: `Current: ${monthsCoveredLabel} month${monthsCoveredLabel === 1 ? '' : 's'} of expenses saved. General reference: many people aim for 3–6 months.`,
+        actionLabel: 'View options',
         action: 'add_asset',
       });
     } else if (monthsCovered >= 3 && monthsCovered < 6) {
       opportunities.push({
         icon: 'shield-checkmark-outline',
-        title: 'Extend your buffer',
-        body: 'Stretch to 6 months for extra safety.',
-        actionLabel: 'Add now',
+        title: 'Emergency savings',
+        body: `Current: ${monthsCoveredLabel} months of expenses saved. General reference: many people extend to 6 months for extra buffer.`,
+        actionLabel: 'View options',
         action: 'add_asset',
       });
     } else if (monthsCovered > 8 && investmentAssets < monthlyIncome * 3) {
       opportunities.push({
         icon: 'cash-outline',
-        title: 'Put idle cash to work',
-        body: 'Some of your cash could be invested.',
-        actionLabel: 'Invest',
+        title: 'Cash reserves',
+        body: `Current: ${monthsCoveredLabel} months of expenses held in cash. General reference: many people invest cash beyond roughly 6 months of expenses.`,
+        actionLabel: 'Explore investing',
         action: 'add_asset',
       });
     }
@@ -76,18 +76,19 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (investmentAssets === 0) {
       opportunities.push({
         icon: 'trending-up-outline',
-        title: 'Start investing 📈',
-        body: 'Investing may help build your score over time.',
-        actionLabel: 'Invest',
+        title: 'Investments',
+        body: 'Current: no investments recorded yet. General reference: investing is one way people grow wealth over the long term.',
+        actionLabel: 'Explore investing',
         action: 'add_asset',
         investingRelated: true,
       });
     } else if (investmentAssets / (monthlyIncome * 12) < 0.1) {
+      const investPct = Math.round((investmentAssets / (monthlyIncome * 12)) * 100);
       opportunities.push({
         icon: 'trending-up-outline',
-        title: 'Invest a little more',
-        body: 'Small increases compound over years.',
-        actionLabel: 'Invest',
+        title: 'Investment contribution rate',
+        body: `Current: investments are about ${investPct}% of annual income. General reference: contribution rates vary widely by goal and risk tolerance.`,
+        actionLabel: 'Explore investing',
         action: 'add_asset',
         investingRelated: true,
       });
@@ -96,19 +97,20 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (superAssets === 0 || superAssets < monthlyIncome * 6) {
       opportunities.push({
         icon: 'shield-outline',
-        title: 'Boost retirement 🚀',
-        body: 'Small increases today grow future wealth.',
-        actionLabel: 'Improve',
+        title: 'Retirement savings',
+        body: `Current: $${Math.round(superAssets).toLocaleString()} recorded. General reference: retirement balances vary widely by age and country.`,
+        actionLabel: 'View options',
         action: 'add_asset',
         investingRelated: true,
       });
     }
 
     if (summary.savingsRate < 0.1) {
+      const ratePct = Math.round(summary.savingsRate * 100);
       opportunities.push({
         icon: 'trending-up-outline',
-        title: 'Save a bit more',
-        body: 'A few extra percent compounds fast.',
+        title: 'Savings rate',
+        body: `Current: ${ratePct}% of income. General reference: many people aim for around 10–20%.`,
         actionLabel: 'Review',
         action: 'review_spending',
       });
@@ -121,9 +123,9 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (allocation.length >= 1 && diversification < 40) {
       opportunities.push({
         icon: 'pie-chart-outline',
-        title: 'Diversify your wealth',
-        body: `Concentrated in ${allocation[0]?.label ?? 'one area'} right now.`,
-        actionLabel: 'Improve',
+        title: 'Portfolio concentration',
+        body: `Current: concentrated in ${allocation[0]?.label ?? 'one area'}. General reference: many people spread holdings across multiple asset types.`,
+        actionLabel: 'View details',
         action: 'add_asset',
         investingRelated: true,
       });
@@ -132,9 +134,9 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (assetTypesPresent < 2) {
       opportunities.push({
         icon: 'map-outline',
-        title: 'Complete your Wealth Map',
-        body: 'Add property, super, or investments.',
-        actionLabel: 'Add now',
+        title: 'Wealth Map coverage',
+        body: `Current: ${assetTypesPresent} asset type recorded. A fuller picture can include property, retirement, and investments where relevant.`,
+        actionLabel: 'View options',
         action: 'add_asset',
       });
     }
@@ -145,8 +147,8 @@ export function findOpportunities(data: AppData): Opportunity[] {
     if (utilisation > 0.3) {
       opportunities.push({
         icon: 'card-outline',
-        title: 'Lower card balance',
-        body: 'Reducing your balance may help your score.',
+        title: 'Credit utilisation',
+        body: `Current: ${Math.round(utilisation * 100)}% utilisation. General reference: many people aim to stay under 30%.`,
         actionLabel: 'Review',
         action: 'manage_cards',
       });
@@ -156,8 +158,8 @@ export function findOpportunities(data: AppData): Opportunity[] {
       const highest = withApr.reduce((max, c) => ((c.apr ?? 0) > (max.apr ?? 0) ? c : max), withApr[0]);
       opportunities.push({
         icon: 'flame-outline',
-        title: 'Tackle high-interest debt',
-        body: `${highest.label} costs you the most.`,
+        title: 'Card interest rates',
+        body: `${highest.label} carries the highest recorded rate among your cards (${Math.round((highest.apr ?? 0) * 100)}%).`,
         actionLabel: 'Review',
         action: 'manage_cards',
       });
@@ -167,9 +169,9 @@ export function findOpportunities(data: AppData): Opportunity[] {
   if (goals.length === 0) {
     opportunities.push({
       icon: 'flag-outline',
-      title: 'Set your first goal 🎯',
-      body: `A clear goal makes ${brand.name}'s suggestions more relevant.`,
-      actionLabel: 'Set goal',
+      title: 'Goals',
+      body: `No goals recorded yet. Add one and ${brand.name} will track your progress toward it.`,
+      actionLabel: 'Set a goal',
       action: 'add_goal',
     });
   }
@@ -177,8 +179,8 @@ export function findOpportunities(data: AppData): Opportunity[] {
   if (transactions.length > 0) {
     opportunities.push({
       icon: 'search-outline',
-      title: 'Review your spending',
-      body: `Spot patterns ${brand.name} already noticed.`,
+      title: 'Spending patterns',
+      body: `${brand.name} tracks patterns in your logged transactions.`,
       actionLabel: 'Review',
       action: 'review_spending',
     });
@@ -195,15 +197,15 @@ export function findOpportunities(data: AppData): Opportunity[] {
   });
   opportunities.push({
     icon: 'umbrella-outline',
-    title: 'Check your coverage',
-    body: 'Make sure policies still fit your life.',
+    title: 'Insurance coverage',
+    body: 'General reference: many people review policies periodically as circumstances change.',
     actionLabel: 'Review',
     action: 'none',
   });
   opportunities.push({
     icon: 'stats-chart-outline',
-    title: 'Track your net worth',
-    body: `${brand.name} is already keeping the history.`,
+    title: 'Net worth history',
+    body: `${brand.name} keeps a running history you can view anytime.`,
     actionLabel: 'View',
     action: 'open_wealth',
   });
@@ -238,7 +240,7 @@ export function buildGoalImpactOpportunity(data: AppData): Opportunity | null {
   return {
     icon: 'bulb-outline',
     title: `${biggestIncrease.categoryName} spending is up`,
-    body: `Cut $${Math.round(potentialMonthlySaving)}/mo, reach "${goal.name}" ~${monthsSaved}mo sooner.`,
+    body: `If this returns to its previous level (about $${Math.round(potentialMonthlySaving)}/mo), "${goal.name}" could be reached roughly ${monthsSaved} month${monthsSaved === 1 ? '' : 's'} sooner.`,
     actionLabel: 'Review',
     action: 'review_spending',
   };

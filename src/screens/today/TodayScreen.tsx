@@ -12,17 +12,16 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { JourneyTimeline } from '../../components/health/JourneyTimeline';
+import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
 import { SavingsCoachCard } from '../../components/health/SavingsCoachCard';
 import { LuluCheckInCard } from '../../components/today/LuluCheckInCard';
 import { LuluRecommendationCard } from '../../components/today/LuluRecommendationCard';
-import { DebtRecoveryCard, DebtRecoveryAction } from '../../components/today/DebtRecoveryCard';
+import { FinancialStateCard } from '../../components/today/FinancialStateCard';
 import { SavingFactsCard } from '../../components/today/SavingFactsCard';
-import { AchievementCelebrationSheet } from '../../components/today/AchievementCelebrationSheet';
 import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
 import { SmartReminderCard } from '../../components/today/SmartReminderCard';
-import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
@@ -31,12 +30,12 @@ import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { AskLuluSheet } from '../../components/navigation/AskLuluSheet';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
 import { findOpportunities, OpportunityAction } from '../../lib/calculations/opportunities';
-import { computeDebtRecoveryStatus } from '../../lib/calculations/debtRecovery';
-import { computeAchievements, Achievement } from '../../lib/calculations/achievements';
+import { useFinancialState } from '../../lib/calculations/financialState';
+import { computeAchievements } from '../../lib/calculations/achievements';
 import { pickDailyInsight } from '../../lib/calculations/dailyInsight';
 import { daysUntilDue } from '../../lib/calculations/creditHealth';
 import { timeAwareGreeting, computeCheckInLine } from '../../lib/calculations/greeting';
-import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration } from '../../lib/celebrations';
+import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration, computeScoreMilestoneCelebration } from '../../lib/celebrations';
 import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
@@ -63,14 +62,13 @@ export function TodayScreen() {
   const [contributeGoalId, setContributeGoalId] = useState<string | null>(null);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
   const [askLuluVisible, setAskLuluVisible] = useState(false);
-  const [celebrating, setCelebrating] = useState<Achievement | null>(null);
-  const [debtCoachVisible, setDebtCoachVisible] = useState(false);
 
   const greeting = useMemo(() => timeAwareGreeting(data.user.name, t), [data.user.name, t]);
+  const monthLabel = useMemo(() => new Date().toLocaleDateString(undefined, { month: 'long' }), []);
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
   const opportunities = useMemo(() => findOpportunities(data), [data]);
   const topOpportunity = opportunities[0] ?? null;
-  const debtRecovery = useMemo(() => computeDebtRecoveryStatus(data), [data]);
+  const financialState = useFinancialState(data);
 
   // Cash/savings shortcuts should update the user's existing savings
   // account rather than silently creating a duplicate one (PRD ask) —
@@ -89,13 +87,11 @@ export function TodayScreen() {
     setWealthModalPresetType(undefined);
   }
 
-  const debtRecoveryActions: DebtRecoveryAction[] = [
-    { key: 'income', label: 'Add income', icon: 'cash-outline', onPress: () => setIncomeModalVisible(true) },
-    { key: 'bills', label: 'Add bills', icon: 'calendar-outline', onPress: () => navigation.navigate('Money') },
-    { key: 'spending', label: 'Review spending', icon: 'search-outline', onPress: () => navigation.navigate('Transactions') },
-    { key: 'debt', label: 'Pay down debt', icon: 'card-outline', onPress: () => setDebtCoachVisible(true) },
-    { key: 'buffer', label: 'Build buffer', icon: 'shield-outline', onPress: openSavingsFlow },
-  ];
+  const financialStateActions = {
+    income: () => setIncomeModalVisible(true),
+    bills: () => navigation.navigate('Money'),
+    spending: () => navigation.navigate('Transactions'),
+  };
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const dailyInsight = useMemo(() => pickDailyInsight(data), [data]);
@@ -140,33 +136,40 @@ export function TodayScreen() {
   // Celebrate a newly unlocked "Your Journey" milestone the moment it
   // happens (PRD ask: Lulu should feel alive, not a passive checklist).
   // Genuinely big wins (first investment, emergency fund) get the
-  // full-screen confetti tier; everything else keeps the existing sheet.
+  // full-screen confetti tier; every other achievement (Started Navilo,
+  // Added Income, Added Savings, etc.) is routine and gets the small toast
+  // tier instead — non-blocking, no backdrop, can never collide with a
+  // native Modal (PRD ask: reserve native Modal celebrations for score
+  // milestones and major achievements only, after two rounds of a freeze
+  // regression traced to native-Modal presentation races).
   //
-  // Deferred, not synchronous (PRD bug report: "Got it" / "Improve my
-  // score" / "View full journey" all stop receiving touches after adding
-  // income/savings/assets/debt). Root cause: saving in an add/edit modal
-  // updates `data` and calls its own onClose() in the very same tick — if
-  // that data change also unlocks an achievement, this effect used to
-  // present a brand-new Modal (AchievementCelebrationSheet or the "big"
-  // tier) in that identical tick. Two RN <Modal> components swapping
-  // presentation on iOS in the same commit is a known native race (the
-  // closing modal's dismiss can interrupt the new one's present) that
-  // leaves the underlying screen's view with touch interaction disabled —
-  // invisible, but nothing responds. Waiting until `data` has stopped
-  // changing for a beat lets the closing modal's native dismiss transition
-  // finish first, so the celebration Modal is always the only one animating.
+  // The toast branch fires immediately, no defer — SmallCelebrationToast
+  // is a plain absolutely-positioned View with pointerEvents="none", not a
+  // native <Modal>, so it can never race a closing add/edit modal's native
+  // dismiss animation the way a Modal-based celebration could.
+  //
+  // The 'big' branch stays deferred 400ms (PRD bug report: saving in an
+  // add/edit modal updates `data` and calls its own onClose() in the same
+  // tick; presenting a brand-new native Modal in that identical tick is a
+  // known iOS race that leaves the screen's touch interaction disabled).
+  // Both branches route through `celebrate()` — CelebrationContext's single
+  // queue — never a second, disconnected presentation path (a second
+  // regression, reproduced even with the Financial State Engine fully
+  // disabled, traced to exactly that: this effect and the score-milestone
+  // effect below each independently able to present their own Modal).
   useEffect(() => {
-    if (celebrating) return;
     const newlyUnlocked = achievements.find((a) => a.unlocked && !data.seenAchievementIds.includes(a.id));
     if (!newlyUnlocked) return;
-    const timer = setTimeout(() => {
-      if (BIG_TIER_ACHIEVEMENT_IDS.has(newlyUnlocked.id)) {
-        celebrate({ id: newlyUnlocked.id, tier: 'big', icon: newlyUnlocked.icon, title: newlyUnlocked.title, body: newlyUnlocked.subtitle });
-        markAchievementsSeen([newlyUnlocked.id]);
-      } else {
-        setCelebrating(newlyUnlocked);
-      }
-    }, 400);
+    const isBig = BIG_TIER_ACHIEVEMENT_IDS.has(newlyUnlocked.id);
+    const fire = () => {
+      celebrate({ id: newlyUnlocked.id, tier: isBig ? 'big' : 'small', icon: newlyUnlocked.icon, title: newlyUnlocked.title, body: newlyUnlocked.subtitle });
+      markAchievementsSeen([newlyUnlocked.id]);
+    };
+    if (!isBig) {
+      fire();
+      return;
+    }
+    const timer = setTimeout(fire, 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
@@ -182,10 +185,46 @@ export function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.user.age, data.user.moneyGoal, data.user.confidenceLevel]);
 
-  function closeCelebration() {
-    markAchievementsSeen(achievements.filter((a) => a.unlocked).map((a) => a.id));
-    setCelebrating(null);
-  }
+  // Building the initial money picture (income → savings → bills → assets)
+  // can jump the Score several 10-point bands in minutes — that's score
+  // *discovery*, not a genuine improvement, and celebrating each jump risks
+  // presenting a native Modal celebration while the guided checklist (whose
+  // own steps open their own Modals) is still on screen — exactly the
+  // presentation window this app's recurring freeze regression happens in
+  // (PRD bug report: tapping "Tell me about your assets" froze the app
+  // right after a bill entry crossed the 80-point band). The moment the
+  // checklist disappears — completed or manually dismissed — silently
+  // snapshot whatever band the score is already in as "already celebrated"
+  // (PRD ask, §4/§5). No celebration UI fires for this snapshot itself;
+  // only score increases *above* this baseline are ever celebrated.
+  useEffect(() => {
+    if (!data.user.moneyPictureChecklistDismissed || data.user.scoreMilestoneBaselineSet) return;
+    const currentBand = luluScore.locked ? 0 : Math.floor(luluScore.score / 10) * 10;
+    updateUser({
+      highestScoreMilestoneCelebrated: Math.max(data.user.highestScoreMilestoneCelebrated ?? 0, currentBand),
+      scoreMilestoneBaselineSet: true,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.user.moneyPictureChecklistDismissed]);
+
+  // Celebrate every 10-point Score milestone above the established baseline
+  // (PRD ask, §6) — gated on `scoreMilestoneBaselineSet` so this can never
+  // fire until the effect above has run, which structurally means it can
+  // never fire while the money-picture checklist (and its own Modals) are
+  // still on screen. Deferred for the same iOS Modal race the achievement-
+  // unlock effect above guards against. Routes through `celebrate()`, so it
+  // shares one queue with every other celebration source.
+  useEffect(() => {
+    if (luluScore.locked || !data.user.scoreMilestoneBaselineSet) return;
+    const result = computeScoreMilestoneCelebration(luluScore.score, data.user.highestScoreMilestoneCelebrated ?? 0);
+    if (!result) return;
+    const timer = setTimeout(() => {
+      celebrate(result.event);
+      updateUser({ highestScoreMilestoneCelebrated: result.milestone });
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [luluScore.locked, luluScore.score, data.user.highestScoreMilestoneCelebrated, data.user.scoreMilestoneBaselineSet]);
 
   function handleOpportunityAction(action: OpportunityAction) {
     switch (action) {
@@ -322,13 +361,22 @@ export function TodayScreen() {
         <JourneyTimeline achievements={achievements} />
       </SectionCard>
 
+      {/* 4.5 "X so far" — a live month-to-date pulse check, external header
+          for consistency with every other Today section (PRD bug report:
+          the title used to live inside the card, unlike everywhere else). */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{monthLabel} so far</Text>
+      </View>
+      <MonthSnapshotCard />
+
       {/* 5. Key recommendation — one thing at a time, Lulu talking, not a
           checklist (PRD ask). Comes after Journey: celebrate first, then
-          suggest the next step. Debt Recovery Mode takes over this slot
-          when the numbers are hard — "you're rebuilding," not a checklist
-          of things going wrong. */}
-      {debtRecovery.active ? (
-        <DebtRecoveryCard status={debtRecovery} actions={debtRecoveryActions} />
+          suggest the next step. A non-standard financial state (Cashflow
+          Focus / Financial Rebuild) takes over this slot instead — "your
+          cashflow is tight" or "your position is rebuilding," never a
+          checklist of things going wrong. */}
+      {financialState.key !== 'standard' ? (
+        <FinancialStateCard state={financialState} actions={financialStateActions} />
       ) : topOpportunity ? (
         <LuluRecommendationCard
           opportunity={topOpportunity}
@@ -427,8 +475,6 @@ export function TodayScreen() {
       <GoalDetailSheet goal={contributeGoal} onClose={() => setContributeGoalId(null)} onCreateAnother={() => setGoalModalVisible(true)} />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
       <AskLuluSheet visible={askLuluVisible} onClose={() => setAskLuluVisible(false)} />
-      <AchievementCelebrationSheet achievement={celebrating} onClose={closeCelebration} />
-      <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
     </Screen>
   );
 }

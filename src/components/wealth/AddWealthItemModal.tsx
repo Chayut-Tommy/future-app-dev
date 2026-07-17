@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -8,6 +9,7 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { brand } from '../../lib/brand';
+import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
 
 const LOAN_BILL_LABELS: Partial<Record<LiabilityType, string>> = {
   mortgage: 'Home Loan Repayment',
@@ -68,6 +70,10 @@ function nextOccurrenceFromDay(dayOfMonth: number): string {
   return candidate.toISOString();
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 export function AddWealthItemModal({
   visible,
   kind,
@@ -105,6 +111,12 @@ export function AddWealthItemModal({
   const [interestRate, setInterestRate] = useState('');
   const [liabilityInterestRate, setLiabilityInterestRate] = useState('');
   const [assetType, setAssetType] = useState<AssetType>('cash');
+  // Only meaningful for cash/savings — whether this balance counts toward
+  // Available Until Payday and other short-term Money calculations, as
+  // distinct from wealth reporting (which always includes it). Defaults
+  // per `resolveIncludeInMoneyCalculations` (PRD ask): cash starts
+  // included, savings starts excluded until the user opts in.
+  const [includeInMoney, setIncludeInMoney] = useState(true);
   const [liabilityType, setLiabilityType] = useState<LiabilityType>('personal_loan');
   const [repaymentAmount, setRepaymentAmount] = useState('');
   const [repaymentFrequency, setRepaymentFrequency] = useState<PayFrequency>('monthly');
@@ -112,6 +124,12 @@ export function AddWealthItemModal({
   // ask, §B4) — the user picks a real day of month, or explicitly defers
   // scheduling it. Both start unset so nothing is silently pre-filled.
   const [repaymentDayOfMonth, setRepaymentDayOfMonth] = useState('');
+  // Only meaningful for weekly/fortnightly — a "day of month" can't express
+  // a real weekly/fortnightly cadence (mirrors Income's and Bills' own
+  // "next due date" picker for the same frequencies, PRD bug report: a
+  // fortnightly car loan repayment still asked for "day of month").
+  const [repaymentNextDueDate, setRepaymentNextDueDate] = useState<string | null>(null);
+  const [repaymentPickerOpen, setRepaymentPickerOpen] = useState(false);
   const [addRepaymentLater, setAddRepaymentLater] = useState(false);
   const [propertyLinkMode, setPropertyLinkMode] = useState<'none' | 'existing' | 'new'>('none');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
@@ -132,6 +150,16 @@ export function AddWealthItemModal({
   // updateLiability, so editing only re-links to an existing property.
   const isMortgage = kind === 'liability' && liabilityType === 'mortgage';
   const propertyAssets = data.assets.filter((a) => a.type === 'property');
+  const usesRepaymentDayOfMonth = repaymentFrequency === 'monthly';
+
+  function chooseRepaymentFrequency(f: PayFrequency) {
+    setRepaymentFrequency(f);
+    // Switching frequency invalidates whatever day/date was picked under
+    // the old schedule (same rule Income and Bills already follow).
+    setRepaymentDayOfMonth('');
+    setRepaymentNextDueDate(null);
+    setRepaymentPickerOpen(false);
+  }
 
   const isEditing = !!(editAsset || editLiability);
   const isDirty =
@@ -147,6 +175,7 @@ export function AddWealthItemModal({
       setAssetType(editAsset.type);
       const rate = editAsset.interestRate ? String(Math.round(editAsset.interestRate * 10000) / 100) : '';
       setInterestRate(rate);
+      setIncludeInMoney(resolveIncludeInMoneyCalculations(editAsset));
       initialSnapshot.current = { label: editAsset.label, value: String(editAsset.currentValue), interestRate: rate };
     } else if (editLiability) {
       setLabel(editLiability.label);
@@ -163,10 +192,13 @@ export function AddWealthItemModal({
       setInterestRate('');
       setLiabilityInterestRate('');
       setAssetType(presetAssetType ?? 'cash');
+      setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: presetAssetType ?? 'cash', includeInMoneyCalculations: undefined }));
       setLiabilityType(presetLiabilityType ?? 'personal_loan');
       setRepaymentAmount('');
       setRepaymentFrequency('monthly');
       setRepaymentDayOfMonth('');
+      setRepaymentNextDueDate(null);
+      setRepaymentPickerOpen(false);
       setAddRepaymentLater(false);
       setPropertyLinkMode('none');
       setSelectedPropertyId(null);
@@ -178,6 +210,7 @@ export function AddWealthItemModal({
 
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
+    setIncludeInMoney(resolveIncludeInMoneyCalculations({ type, includeInMoneyCalculations: undefined }));
     setFormStep('details');
   }
 
@@ -219,10 +252,23 @@ export function AddWealthItemModal({
       const rateValue = parseFloat(interestRate);
       const interestRatePayload =
         (assetType === 'cash' || assetType === 'savings') && !isNaN(rateValue) && rateValue >= 0 ? rateValue / 100 : undefined;
+      const includeInMoneyPayload = assetType === 'cash' || assetType === 'savings' ? includeInMoney : undefined;
       if (editAsset) {
-        updateAsset(editAsset.id, { type: assetType, label: label.trim(), currentValue: amount, interestRate: interestRatePayload });
+        updateAsset(editAsset.id, {
+          type: assetType,
+          label: label.trim(),
+          currentValue: amount,
+          interestRate: interestRatePayload,
+          includeInMoneyCalculations: includeInMoneyPayload,
+        });
       } else {
-        addAsset({ type: assetType, label: label.trim(), currentValue: amount, interestRate: interestRatePayload });
+        addAsset({
+          type: assetType,
+          label: label.trim(),
+          currentValue: amount,
+          interestRate: interestRatePayload,
+          includeInMoneyCalculations: includeInMoneyPayload,
+        });
       }
     } else if (kind === 'liability') {
       const liabRateValue = parseFloat(liabilityInterestRate);
@@ -239,10 +285,13 @@ export function AddWealthItemModal({
         const repaymentValue = parseFloat(repaymentAmount);
         const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
         // Only creates a repayment bill once the user has actually chosen a
-        // day — never silently assumes "due one month from today" (PRD bug
-        // report, §B4). "I'll add this later" creates just the liability.
+        // day/date — never silently assumes "due one month from today" (PRD
+        // bug report, §B4). "I'll add this later" creates just the liability.
         const hasRepaymentSchedule =
-          !addRepaymentLater && !isNaN(repaymentValue) && repaymentValue > 0 && repaymentDayValue >= 1 && repaymentDayValue <= 31;
+          !addRepaymentLater &&
+          !isNaN(repaymentValue) &&
+          repaymentValue > 0 &&
+          (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
         const newPropertyValueNum = parseFloat(newPropertyValue);
         const propertyLink: Parameters<typeof addMortgageWithProperty>[1] =
           propertyLinkMode === 'existing' && selectedPropertyId
@@ -259,7 +308,7 @@ export function AddWealthItemModal({
                 label: LOAN_BILL_LABELS.mortgage ?? 'Home Loan Repayment',
                 amount: repaymentValue,
                 frequency: repaymentFrequency,
-                nextDueDate: nextOccurrenceFromDay(repaymentDayValue),
+                nextDueDate: usesRepaymentDayOfMonth ? nextOccurrenceFromDay(repaymentDayValue) : (repaymentNextDueDate as string),
                 isFixed: true,
                 active: true,
                 // Filled 'home', not the outline icon Rent uses — a
@@ -272,13 +321,17 @@ export function AddWealthItemModal({
       } else {
         const isLoan = liabilityType in LOAN_BILL_LABELS;
         // Smarter loan flow (PRD ask): a repayment amount plus a real
-        // chosen day auto-creates the matching recurring bill, linked back
-        // to this liability. Never silently assumes a due date (PRD bug
-        // report, §B4) — "I'll add this later" skips bill creation.
+        // chosen day/date auto-creates the matching recurring bill, linked
+        // back to this liability. Never silently assumes a due date (PRD
+        // bug report, §B4) — "I'll add this later" skips bill creation.
         const repaymentValue = parseFloat(repaymentAmount);
         const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
         const hasRepaymentSchedule =
-          isLoan && !addRepaymentLater && !isNaN(repaymentValue) && repaymentValue > 0 && repaymentDayValue >= 1 && repaymentDayValue <= 31;
+          isLoan &&
+          !addRepaymentLater &&
+          !isNaN(repaymentValue) &&
+          repaymentValue > 0 &&
+          (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
         if (hasRepaymentSchedule) {
           // Atomic: creates (or reuses, never duplicates) the liability and
           // links this bill to it in one state write — addLiability then
@@ -291,7 +344,7 @@ export function AddWealthItemModal({
               label: LOAN_BILL_LABELS[liabilityType] ?? 'Loan Repayment',
               amount: repaymentValue,
               frequency: repaymentFrequency,
-              nextDueDate: nextOccurrenceFromDay(repaymentDayValue),
+              nextDueDate: usesRepaymentDayOfMonth ? nextOccurrenceFromDay(repaymentDayValue) : (repaymentNextDueDate as string),
               isFixed: true,
               active: true,
               icon: liabilityType === 'car_loan' ? 'car-outline' : 'document-text-outline',
@@ -347,8 +400,25 @@ export function AddWealthItemModal({
         freqChipActive: { backgroundColor: colors.accentSoft },
         freqText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
         freqTextActive: { color: colors.accentStrong },
+        dateButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: colors.surfaceMuted,
+          borderRadius: radius.control,
+          paddingHorizontal: spacing.md,
+          paddingVertical: 14,
+        },
+        dateButtonText: { ...typography.body, fontSize: 15, color: colors.textPrimary },
+        dateButtonPlaceholder: { color: colors.textMuted },
+        dateHint: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs },
         deferRepaymentLink: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs, marginBottom: spacing.md },
         deferRepaymentText: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
+        moneyIncludeBox: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
+        moneyIncludeTitle: { ...typography.body, fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 2 },
+        moneyIncludeCopy: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
+        moneyIncludeToggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+        moneyIncludeToggleText: { ...typography.caption, fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
         categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
         categoryCard: {
           flexBasis: '46%',
@@ -413,8 +483,10 @@ export function AddWealthItemModal({
                   onSelectCreditCard?.();
                   return;
                 }
-                if (kind === 'asset') setAssetType(t.value as AssetType);
-                else setLiabilityType(t.value as LiabilityType);
+                if (kind === 'asset') {
+                  setAssetType(t.value as AssetType);
+                  setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined }));
+                } else setLiabilityType(t.value as LiabilityType);
               }}
             >
               <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>{t.label}</Text>
@@ -452,6 +524,23 @@ export function AddWealthItemModal({
             onChangeText={setInterestRate}
             returnKeyType="done"
           />
+          <View style={styles.moneyIncludeBox}>
+            <Text style={styles.moneyIncludeTitle}>Should {brand.name} include this balance when estimating your available money?</Text>
+            <Text style={styles.moneyIncludeCopy}>
+              Include it if this money is available for everyday bills and spending. You can change this later. This never affects your
+              recorded net wealth — only short-term estimates like Available Until Payday.
+            </Text>
+            <TouchableOpacity style={styles.moneyIncludeToggleRow} onPress={() => setIncludeInMoney((v) => !v)}>
+              <Ionicons
+                name={includeInMoney ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={includeInMoney ? colors.accentStrong : colors.textMuted}
+              />
+              <Text style={styles.moneyIncludeToggleText}>
+                {includeInMoney ? 'Yes, include this balance' : 'No, keep it separate'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </>
       ) : null}
       {kind === 'liability' ? (
@@ -553,7 +642,7 @@ export function AddWealthItemModal({
                 <TouchableOpacity
                   key={f.value}
                   style={[styles.freqChip, active ? styles.freqChipActive : null]}
-                  onPress={() => setRepaymentFrequency(f.value)}
+                  onPress={() => chooseRepaymentFrequency(f.value)}
                 >
                   <Text style={[styles.freqText, active ? styles.freqTextActive : null]}>{f.label}</Text>
                 </TouchableOpacity>
@@ -561,18 +650,46 @@ export function AddWealthItemModal({
             })}
           </View>
           {!addRepaymentLater ? (
-            <>
-              <Text style={styles.label}>When is your next repayment? (day of month)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 15"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="number-pad"
-                value={repaymentDayOfMonth}
-                onChangeText={setRepaymentDayOfMonth}
-                returnKeyType="done"
-              />
-            </>
+            usesRepaymentDayOfMonth ? (
+              <>
+                <Text style={styles.label}>Day of month due</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 15"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  value={repaymentDayOfMonth}
+                  onChangeText={setRepaymentDayOfMonth}
+                  returnKeyType="done"
+                />
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Next repayment date</Text>
+                <TouchableOpacity style={styles.dateButton} onPress={() => setRepaymentPickerOpen(true)}>
+                  <Text style={[styles.dateButtonText, !repaymentNextDueDate ? styles.dateButtonPlaceholder : null]}>
+                    {repaymentNextDueDate ? formatDate(repaymentNextDueDate) : 'Choose a date'}
+                  </Text>
+                  <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <Text style={styles.dateHint}>
+                  {repaymentFrequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
+                </Text>
+                {repaymentPickerOpen ? (
+                  <DateTimePicker
+                    value={repaymentNextDueDate ? new Date(repaymentNextDueDate) : new Date()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                    minimumDate={new Date()}
+                    onChange={(event, date) => {
+                      if (Platform.OS === 'android') setRepaymentPickerOpen(false);
+                      if (event.type === 'dismissed') return;
+                      if (date) setRepaymentNextDueDate(date.toISOString());
+                    }}
+                  />
+                ) : null}
+              </>
+            )
           ) : null}
           <TouchableOpacity onPress={() => setAddRepaymentLater((v) => !v)} style={styles.deferRepaymentLink}>
             <Ionicons

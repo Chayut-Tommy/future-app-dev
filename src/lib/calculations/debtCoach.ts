@@ -67,38 +67,40 @@ function monthsToPayoff(balance: number, monthlyRate: number, payment: number): 
 export function computeDebtCoachSummary(data: AppData): DebtCoachSummary {
   const debts: DebtEntry[] = [];
 
+  // Every credit card is already mirrored into a linked Liability (see
+  // upsertCreditCardLiability in AppStateContext) so it counts toward net
+  // worth. That mirror is the same real-world debt as the CreditCard
+  // record it points to — iterating data.creditCards separately here as
+  // well doubled it up in Debt Overview (PRD bug report: the same card
+  // appeared twice with an identical balance). data.liabilities is the
+  // single pass; a creditCardId link just means "look up the card for its
+  // APR/minimum payment," never a second entry.
   for (const l of data.liabilities) {
     if (l.currentBalance <= 0) continue;
-    const linkedRecurringItem = data.recurringItems.find((r) => r.linkedLiabilityId === l.id && r.active);
+    const linkedCard = l.creditCardId ? data.creditCards.find((c) => c.id === l.creditCardId) : undefined;
+    const linkedRecurringItem = linkedCard ? undefined : data.recurringItems.find((r) => r.linkedLiabilityId === l.id && r.active);
     // Normalised to a true monthly figure via the shared income engine —
     // a weekly or fortnightly repayment bill was previously summed at its
     // raw per-payment amount, understating debt-to-income and repayment
     // totals here versus every other screen that already normalises (PRD
     // bug report, §D7: figures must reconcile across every screen).
-    const monthlyRepayment = linkedRecurringItem ? toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency) : undefined;
+    const monthlyRepayment = linkedCard
+      ? linkedCard.minimumPayment > 0
+        ? linkedCard.minimumPayment
+        : undefined
+      : linkedRecurringItem
+      ? toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency)
+      : undefined;
     debts.push({
       id: l.id,
-      kind: l.type,
-      icon: DEBT_ICON[l.type],
-      label: l.label || DEBT_LABEL[l.type],
+      kind: linkedCard ? 'credit_card' : l.type,
+      icon: DEBT_ICON[linkedCard ? 'credit_card' : l.type],
+      label: l.label || DEBT_LABEL[linkedCard ? 'credit_card' : l.type],
       balance: l.currentBalance,
-      interestRate: l.interestRate,
+      interestRate: linkedCard ? linkedCard.apr : l.interestRate,
       monthlyRepayment,
       linkedRecurringItem,
       liability: l,
-    });
-  }
-
-  for (const c of data.creditCards) {
-    if (c.currentBalance <= 0) continue;
-    debts.push({
-      id: c.id,
-      kind: 'credit_card',
-      icon: DEBT_ICON.credit_card,
-      label: c.label || DEBT_LABEL.credit_card,
-      balance: c.currentBalance,
-      interestRate: c.apr,
-      monthlyRepayment: c.minimumPayment > 0 ? c.minimumPayment : undefined,
     });
   }
 

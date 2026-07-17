@@ -9,9 +9,10 @@ import { brand } from '../../lib/brand';
 const COLLAPSED_COUNT = 3;
 
 /**
- * "✨ Lulu found N ways to improve" — the AI-driven hero Grow now leads
- * with (PRD ask), instead of a static education library. The count is
- * always the real number of applicable opportunities, never a fixed "3".
+ * The data-driven hero Grow leads with (PRD ask), instead of a static
+ * education library — a set of factual reference points ("current" vs. "a
+ * general reference"), not recommendations. The count is always the real
+ * number of applicable insights, never a fixed "3".
  */
 export function MoneyOpportunitiesHero({
   opportunities,
@@ -73,9 +74,9 @@ export function MoneyOpportunitiesHero({
         <Text style={styles.eyebrow}>{brand.name.toUpperCase()} PICK</Text>
       </View>
       <Text style={styles.title}>
-        ✨ {brand.name} identified {opportunities.length} way{opportunities.length === 1 ? '' : 's'} to improve
+        ✨ {opportunities.length} insight{opportunities.length === 1 ? '' : 's'} from your money picture
       </Text>
-      <Text style={styles.subtitle}>Based on your money picture:</Text>
+      <Text style={styles.subtitle}>General reference points based on what you've added so far:</Text>
 
       {visible.map((opp, i) => (
         <TouchableOpacity key={opp.id} style={styles.itemRow} activeOpacity={0.8} onPress={() => onAction(opp)}>

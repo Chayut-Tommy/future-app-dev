@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Dimensions, Modal, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Dimensions, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -46,17 +46,26 @@ function ConfettiPiece({ index, colors }: { index: number; colors: string[] }) {
   );
 }
 
+// See MediumCelebrationSheet.tsx for why this fallback exists (RN Modal's
+// onDismiss is iOS-only).
+const ANDROID_DISMISS_FALLBACK_MS = 350;
+
 /**
  * The biggest celebration tier — reserved for genuinely big moments (a
  * first investment, an emergency fund milestone). Confetti is plain
  * Animated views (no new native dependency), each falling and spinning on
  * its own randomized timeline for an organic look.
+ *
+ * `visible` is local state — see MediumCelebrationSheet.tsx's comment for
+ * why the queue must only advance after the native Modal's `onDismiss`,
+ * never on button press directly.
  */
-export function BigCelebrationOverlay({ event, onClose }: { event: CelebrationEvent; onClose: () => void }) {
+export function BigCelebrationOverlay({ event, onDismissed }: { event: CelebrationEvent; onDismissed: () => void }) {
   const { colors, radius, spacing, typography, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const trophyBounce = useRef(new Animated.Value(0)).current;
   const confettiColors = [colors.gold, colors.accent, colors.purple, colors.market, colors.successBright];
+  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -64,6 +73,13 @@ export function BigCelebrationOverlay({ event, onClose }: { event: CelebrationEv
     Animated.spring(trophyBounce, { toValue: 1, useNativeDriver: true, friction: 4, tension: 80, delay: 150 }).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event.id]);
+
+  function requestDismiss() {
+    setVisible(false);
+    if (Platform.OS === 'android') {
+      setTimeout(onDismissed, ANDROID_DISMISS_FALLBACK_MS);
+    }
+  }
 
   const styles = useMemo(
     () =>
@@ -93,7 +109,13 @@ export function BigCelebrationOverlay({ event, onClose }: { event: CelebrationEv
   );
 
   return (
-    <Modal visible animationType="fade" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent
+      onRequestClose={requestDismiss}
+      onDismiss={Platform.OS === 'ios' ? onDismissed : undefined}
+    >
       <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         {Array.from({ length: CONFETTI_COUNT }).map((_, i) => (
           <ConfettiPiece key={i} index={i} colors={confettiColors} />
@@ -110,7 +132,7 @@ export function BigCelebrationOverlay({ event, onClose }: { event: CelebrationEv
           <Text style={styles.eyebrow}>MILESTONE UNLOCKED</Text>
           <Text style={styles.title}>{event.title}</Text>
           {event.body ? <Text style={styles.body}>{event.body}</Text> : null}
-          <Button label="Continue" onPress={onClose} style={styles.button} />
+          <Button label="Continue" onPress={requestDismiss} style={styles.button} />
         </View>
       </View>
     </Modal>

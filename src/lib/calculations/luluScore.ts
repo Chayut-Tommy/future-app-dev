@@ -1,5 +1,5 @@
 import { AppData } from '../../types/models';
-import { computeMonthlySummary } from './monthlySummary';
+import { computeMonthlySummary, computeMonthToDateActivity, computeRecordedMonthlyCashflow } from './monthlySummary';
 import { computeLiquidCash } from './liquidAssets';
 import { computeSafeToSpend, computeFixedCosts } from './safeToSpend';
 import { computeGoalAllocation } from './goalAllocation';
@@ -165,25 +165,40 @@ function buildMoneyFlowCategory(data: AppData): ScoreCategory {
   let spendingFraction = 0.5;
   let spendingStatus: FactorStatus = 'not_enough_info';
   if (hasEnoughSpendingHistory && elapsedDays > 0) {
-    const expectedByNow = safeToSpend.discretionaryPool * (elapsedDays / cycleTotalDays);
+    const expectedByNow = safeToSpend.cycleDiscretionaryPool * (elapsedDays / cycleTotalDays);
     const overspendRatio = expectedByNow > 0 ? (safeToSpend.spendSoFarThisCycle - expectedByNow) / expectedByNow : 0;
     spendingFraction = clamp(1 - Math.max(0, overspendRatio) * 1.25, 0, 1);
     spendingStatus = spendingFraction >= 0.75 ? 'healthy' : spendingFraction >= 0.4 ? 'improving' : 'needs_attention';
   }
 
-  // 3. Savings Behaviour — 10
-  const plannedRate = monthlyIncome > 0 ? safeToSpend.defaultSavingsBuffer / monthlyIncome : 0;
-  function savingsRateFraction(rate: number): number {
+  // 3. Recorded Cashflow — 10 — actual recorded income/spending only, never
+  // the user's optional Savings Allocation selection (PRD ask: choosing a
+  // forecasting preference is not evidence of money actually saved; leaving
+  // it off must not read as negative behaviour). Named for what it actually
+  // measures — recorded income vs. recorded spending, not a savings
+  // contribution Navilo can't independently verify (PRD ask: "do not imply
+  // that positive cashflow proves money was saved"). Neutral/insufficient-
+  // data rather than penalised when there isn't enough recorded income yet
+  // to judge.
+  const monthActivity = computeMonthToDateActivity(data);
+  const recordedNetCashflow = computeRecordedMonthlyCashflow(data);
+  const hasRecordedIncomeThisMonth = monthActivity.income > 0;
+  const recordedCashflowRate = hasRecordedIncomeThisMonth ? recordedNetCashflow / monthActivity.income : 0;
+  function cashflowRateFraction(rate: number): number {
     if (rate <= 0) return 0;
     if (rate < 0.05) return 0.2;
     if (rate < 0.1) return 0.5;
     if (rate < 0.2) return 0.8;
     return 1;
   }
-  const hasSavingsEvidence = data.assets.some((a) => a.type === 'savings' && a.currentValue > 0) || user.savingsBufferOverride !== undefined;
-  const rawSavingsFraction = savingsRateFraction(plannedRate);
-  const savingsFraction = hasSavingsEvidence ? rawSavingsFraction : rawSavingsFraction * 0.5;
-  const savingsStatus: FactorStatus = plannedRate <= 0 ? 'not_started' : hasSavingsEvidence ? (savingsFraction >= 0.75 ? 'healthy' : 'improving') : 'improving';
+  const cashflowFraction = hasRecordedIncomeThisMonth ? cashflowRateFraction(recordedCashflowRate) : 0.5;
+  const cashflowStatus: FactorStatus = !hasRecordedIncomeThisMonth
+    ? 'not_enough_info'
+    : recordedCashflowRate <= 0
+      ? 'not_started'
+      : cashflowFraction >= 0.75
+        ? 'healthy'
+        : 'improving';
 
   return buildCategory('moneyFlow', 'Money Flow Health', 30, [
     {
@@ -204,20 +219,22 @@ function buildMoneyFlowCategory(data: AppData): ScoreCategory {
       applicable: true,
       fraction: spendingFraction,
       status: spendingStatus,
-      current: hasEnoughSpendingHistory ? `${Math.round(spendingFraction * 100)}% on pace with your ${brand.name} Money Plan` : 'Not enough spending history yet',
-      target: `Staying within your ${brand.name} Money Plan for the full cycle`,
+      current: hasEnoughSpendingHistory ? `${Math.round(spendingFraction * 100)}% on pace with your ${brand.name} Money Allocation` : 'Not enough spending history yet',
+      target: `Staying within your ${brand.name} Money Allocation for the full cycle`,
       action: hasEnoughSpendingHistory ? 'Review Spending Tracker' : 'Log a few more transactions',
     },
     {
-      key: 'savings_behaviour',
-      label: 'Savings Behaviour',
+      key: 'recorded_cashflow',
+      label: 'Recorded Cashflow',
       weight: 10,
       applicable: true,
-      fraction: savingsFraction,
-      status: savingsStatus,
-      current: `${brand.name} Savings Plan set at ${Math.round(plannedRate * 100)}% of income${hasSavingsEvidence ? '' : ' (not yet evidenced in a savings balance)'}`,
-      target: 'Saving 10-20%+ of income, with a real savings balance behind it',
-      action: `Adjust ${brand.name} Savings Plan`,
+      fraction: cashflowFraction,
+      status: cashflowStatus,
+      current: hasRecordedIncomeThisMonth
+        ? `Recorded income ${recordedNetCashflow >= 0 ? 'exceeded' : 'fell short of'} recorded spending by ${Math.round(Math.abs(recordedCashflowRate) * 100)}% this month`
+        : 'Not enough recorded income this month yet to show this',
+      target: 'Recorded income staying ahead of recorded spending, ideally by 10-20%+',
+      action: hasRecordedIncomeThisMonth && recordedCashflowRate <= 0 ? 'Review Spending Tracker' : 'Keep logging income and spending',
     },
   ]);
 }
@@ -247,8 +264,14 @@ function buildResilienceCategory(data: AppData): ScoreCategory {
     .filter((r) => r.active && r.type === 'expense' && user.nextPayday && new Date(r.nextDueDate) <= new Date(user.nextPayday))
     .reduce((sum, r) => sum + r.amount, 0);
   const hasPaydaySafetyData = !!user.nextPayday && data.recurringItems.some((r) => r.active && r.type === 'expense');
-  const notOverspent = safeToSpend.remainingPool >= 0;
-  const coversUpcomingBills = liquid >= upcomingBillsBeforePayday;
+  const notOverspent = safeToSpend.cycleRemainingPool >= 0;
+  // Short-term "can you cover upcoming bills" question — must read the same
+  // user-confirmed Money balance Available Until Payday uses, not the total
+  // wealth reading `liquid` above (that one answers "how many months of
+  // resilience does this person have," a different question — PRD ask: a
+  // reserved savings balance can count toward resilience without being
+  // available to pay a bill next week).
+  const coversUpcomingBills = safeToSpend.includedMoneyBalance >= upcomingBillsBeforePayday;
   let paydayFraction = 0.5;
   let paydayStatus: FactorStatus = 'not_enough_info';
   if (hasPaydaySafetyData) {
@@ -282,7 +305,11 @@ function buildResilienceCategory(data: AppData): ScoreCategory {
       status: bufferStatus,
       current: `${monthsLabel(monthsCovered)} of essential expenses in cash and savings`,
       target: '3 months of essential expenses (6+ months is excellent)',
-      action: `Adjust ${brand.name} Savings Plan`,
+      // Based on an actual accessible balance, not the optional Savings
+      // Allocation setting (PRD ask) — neutral, factual action wording,
+      // never an instruction to add money (PRD ask: "do not instruct the
+      // user to add money").
+      action: 'Review your savings balance',
     },
     {
       key: 'payday_safety',
@@ -469,11 +496,16 @@ function buildWealthBuildingCategory(data: AppData): ScoreCategory {
   const isFinanciallyReady = monthlyIncome > 0 && surplusRatio >= 0 && monthsCovered >= 1;
   const isStronglyReady = isFinanciallyReady && monthsCovered >= 1 && surplusRatio > 0.1;
 
-  // 1. Wealth Contribution Habit — 6
-  const plannedRate = monthlyIncome > 0 ? safeToSpend.defaultSavingsBuffer / monthlyIncome : 0;
+  // 1. Wealth Assets Recorded — 6 — a static recorded balance, not a
+  // contribution habit (PRD ask: "a static recorded balance does not prove
+  // a contribution habit" — the app has no dated per-asset balance history
+  // to actually evidence a habit, so this factor reports what it can
+  // verify: whether a savings or non-cash wealth balance is currently
+  // recorded). Never reads the optional Savings Allocation selection.
+  const hasSavingsBalance = data.assets.some((a) => a.type === 'savings' && a.currentValue > 0);
   const hasAnyWealthAsset = data.assets.some((a) => a.currentValue > 0 && a.type !== 'cash');
-  const habitFraction = plannedRate <= 0 ? 0.15 : hasAnyWealthAsset ? clamp(0.5 + plannedRate * 2, 0, 1) : 0.4;
-  const habitStatus: FactorStatus = plannedRate <= 0 ? 'not_started' : hasAnyWealthAsset ? 'healthy' : 'improving';
+  const wealthAssetsFraction = hasAnyWealthAsset ? (hasSavingsBalance ? 1 : 0.7) : 0.5;
+  const wealthAssetsStatus: FactorStatus = hasAnyWealthAsset ? 'healthy' : 'not_enough_info';
 
   // 2. Personal Investing — 4
   const investmentAssets = data.assets.filter((a) => isAccessibleInvestment(a.type));
@@ -533,15 +565,17 @@ function buildWealthBuildingCategory(data: AppData): ScoreCategory {
 
   return buildCategory('wealthBuilding', 'Wealth Building', 15, [
     {
-      key: 'contribution_habit',
-      label: 'Wealth Contribution Habit',
+      key: 'wealth_assets_recorded',
+      label: 'Wealth Assets Recorded',
       weight: 6,
       applicable: true,
-      fraction: habitFraction,
-      status: habitStatus,
-      current: `Setting aside ${Math.round(plannedRate * 100)}% of income toward savings, investing, or debt reduction`,
-      target: 'A consistent contribution habit, evidenced by a growing balance',
-      action: `Adjust ${brand.name} Savings Plan`,
+      fraction: wealthAssetsFraction,
+      status: wealthAssetsStatus,
+      current: hasAnyWealthAsset
+        ? 'A savings or non-cash wealth balance is currently recorded'
+        : 'No savings or non-cash wealth balance recorded yet',
+      target: 'A recorded, growing balance in savings or investments',
+      action: 'Review your wealth assets',
     },
     {
       key: 'personal_investing',
@@ -651,7 +685,7 @@ function buildGoalsCategory(data: AppData): ScoreCategory {
       applicable: true,
       fraction: consistencyFraction,
       status: consistencyFraction >= 0.75 ? 'healthy' : 'improving',
-      current: `${fundedCount}/${allocation.allocations.length} goals fully funded by your ${brand.name} Money Plan`,
+      current: `${fundedCount}/${allocation.allocations.length} goals fully funded by your ${brand.name} Money Allocation`,
       target: 'Every active goal fully funded by your plan',
       action: 'Review goal contributions',
     },

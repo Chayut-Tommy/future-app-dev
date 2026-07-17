@@ -2,6 +2,16 @@ import { AppData } from '../../types/models';
 import { computeWealthProjection } from './wealthProjection';
 import { computeMonthlySummary } from './monthlySummary';
 
+/** Single source of truth for "net worth right now" + "the monthly
+ * contribution assumed going forward" — every Future Wealth figure (age
+ * cards, next-milestone headline, what-if insight) reads these two numbers
+ * from computeWealthProjection rather than each re-deriving its own copy,
+ * so they can never quietly drift apart from one another. */
+function currentNetWorthAndContribution(data: AppData): { netWorth: number; monthlyContribution: number } {
+  const projection = computeWealthProjection(data, 0);
+  return { netWorth: projection.currentNetWorth, monthlyContribution: projection.monthlyContribution };
+}
+
 export interface AgeProjection {
   age: number;
   yearsAhead: number;
@@ -67,11 +77,7 @@ export function computeCashflowIsNegative(data: AppData): boolean {
  * computed estimates could.
  */
 export function computeNextWealthMilestone(data: AppData): NextWealthMilestone | null {
-  const totalAssets = data.assets.reduce((sum, a) => sum + a.currentValue, 0);
-  const totalLiabilities = data.liabilities.reduce((sum, l) => sum + l.currentBalance, 0);
-  const netWorth = totalAssets - totalLiabilities;
-  const summary = computeMonthlySummary(data);
-  const monthlyContribution = Math.max(0, summary.netCashflow);
+  const { netWorth, monthlyContribution } = currentNetWorthAndContribution(data);
   const assumedAnnualReturn = 0.06;
 
   const milestone = MILESTONES.find((m) => m > netWorth);
@@ -96,11 +102,7 @@ export interface WhatIfMilestoneInsight {
  * assumed-return disclaimer used everywhere else, not a canned line.
  */
 export function computeWhatIfMilestone(data: AppData): WhatIfMilestoneInsight | null {
-  const totalAssets = data.assets.reduce((sum, a) => sum + a.currentValue, 0);
-  const totalLiabilities = data.liabilities.reduce((sum, l) => sum + l.currentBalance, 0);
-  const netWorth = totalAssets - totalLiabilities;
-  const summary = computeMonthlySummary(data);
-  const monthlyContribution = Math.max(0, summary.netCashflow);
+  const { netWorth, monthlyContribution } = currentNetWorthAndContribution(data);
   const assumedAnnualReturn = 0.06;
 
   const milestone = MILESTONES.find((m) => m > netWorth);

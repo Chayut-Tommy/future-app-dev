@@ -8,6 +8,7 @@ export interface SpendingInsight {
 }
 
 const PERIOD_DAYS = 30;
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function sumByCategory(transactions: AppData['transactions']): Map<string, number> {
   const map = new Map<string, number>();
@@ -60,10 +61,12 @@ export function computeCategoryDeltas(data: AppData): CategoryDelta[] {
 }
 
 /**
- * Real, derived spending patterns from the user's own transactions — this
- * period vs. the prior period, largest category, daily average, and a
- * weekend-vs-weekday comparison. Empty until enough transactions exist;
- * never fabricated.
+ * Real, derived spending patterns from the user's own transactions — never
+ * a technically-true-but-meaningless comparison (PRD bug report: "Weekend
+ * spending is higher than weekdays" fired off $60/day weekend vs $0/day
+ * weekday, which is noise, not a pattern). Every insight here requires a
+ * real baseline and a clear enough margin before it's shown; empty until
+ * enough transactions exist, never fabricated.
  */
 export function computeSpendingInsights(data: AppData): SpendingInsight[] {
   const expenses = data.transactions.filter((t) => t.type === 'expense');
@@ -83,6 +86,22 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
 
   const insights: SpendingInsight[] = [];
   const thisMap = sumByCategory(thisPeriod);
+  const totalThisPeriod = [...thisMap.values()].reduce((sum, v) => sum + v, 0);
+
+  // Overall trend vs. the prior period — the single most useful "am I
+  // tracking okay?" signal, shown before any per-category detail.
+  const totalPriorPeriod = priorPeriod.reduce((sum, t) => sum + t.amount, 0);
+  if (totalPriorPeriod >= 20) {
+    const changePct = (totalThisPeriod - totalPriorPeriod) / totalPriorPeriod;
+    if (Math.abs(changePct) >= 0.1) {
+      const pct = Math.round(Math.abs(changePct) * 100);
+      insights.push({
+        icon: changePct < 0 ? 'trending-down-outline' : 'trending-up-outline',
+        title: changePct < 0 ? 'Tracking lower than last month' : 'Tracking higher than last month',
+        body: `$${Math.round(totalThisPeriod)} in the last ${PERIOD_DAYS} days — ${pct}% ${changePct < 0 ? 'less' : 'more'} than the period before.`,
+      });
+    }
+  }
 
   // Category trend changes (only where there's a meaningful prior baseline)
   for (const d of computeCategoryDeltas(data)) {
@@ -90,7 +109,7 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
       const pct = Math.round(Math.abs(d.changePct) * 100);
       insights.push({
         icon: d.changePct > 0 ? 'trending-up-outline' : 'trending-down-outline',
-        title: `${d.categoryName} ${d.changePct > 0 ? 'increased' : 'decreased'} ${pct}%`,
+        title: `${d.categoryName} spending ${d.changePct > 0 ? 'increased' : 'decreased'} ${pct}%`,
         body: `$${Math.round(d.amount)} in the last ${PERIOD_DAYS} days, vs $${Math.round(d.priorAmount)} the period before.`,
       });
     }
@@ -109,49 +128,58 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
     const category = data.categories.find((c) => c.id === largestCategoryId);
     insights.push({
       icon: 'pie-chart-outline',
-      title: 'Largest category',
-      body: `${category?.name ?? 'This category'} is your biggest spend area — $${Math.round(largestAmount)} in the last ${PERIOD_DAYS} days.`,
+      title: `${category?.name ?? 'This category'} is your largest category`,
+      body: `$${Math.round(largestAmount)} in the last ${PERIOD_DAYS} days.`,
     });
   }
 
-  // Average daily spend
-  const totalThisPeriod = [...thisMap.values()].reduce((sum, v) => sum + v, 0);
+  // Subscription total — a real, recurring cost worth surfacing on its own,
+  // not buried inside a general category comparison.
+  const subscriptionTotal = thisPeriod.filter((t) => t.categoryId === 'cat-subscriptions').reduce((sum, t) => sum + t.amount, 0);
+  if (subscriptionTotal > 0) {
+    insights.push({
+      icon: 'card-outline',
+      title: 'Subscription costs',
+      body: `About $${Math.round(subscriptionTotal)} over the last ${PERIOD_DAYS} days.`,
+    });
+  }
+
+  // Which single weekday sees the most spending — only surfaced with a
+  // real, repeated pattern behind it (at least 3 separate purchases on that
+  // day, and a clear margin over the average across all seven days), never
+  // from one or two purchases landing on the same day by chance.
+  const dayOccurrences = new Array(7).fill(0);
+  for (let i = 0; i < PERIOD_DAYS; i++) {
+    dayOccurrences[new Date(now - i * 86400000).getDay()] += 1;
+  }
+  const dayTotals = new Array(7).fill(0);
+  const dayTxnCounts = new Array(7).fill(0);
+  for (const t of thisPeriod) {
+    const day = new Date(t.date).getDay();
+    dayTotals[day] += t.amount;
+    dayTxnCounts[day] += 1;
+  }
+  const dayAverages = dayTotals.map((total, i) => (dayOccurrences[i] > 0 ? total / dayOccurrences[i] : 0));
+  const overallDayAverage = dayAverages.reduce((sum, v) => sum + v, 0) / 7;
+  let topDay = 0;
+  for (let d = 1; d < 7; d++) {
+    if (dayAverages[d] > dayAverages[topDay]) topDay = d;
+  }
+  if (thisPeriod.length >= 10 && dayTxnCounts[topDay] >= 3 && overallDayAverage > 0 && dayAverages[topDay] >= overallDayAverage * 1.5) {
+    insights.push({
+      icon: 'calendar-outline',
+      title: `You usually spend the most on ${DAY_NAMES[topDay]}s`,
+      body: `About $${Math.round(dayAverages[topDay])} on an average ${DAY_NAMES[topDay]}, vs $${Math.round(overallDayAverage)}/day overall.`,
+    });
+  }
+
+  // Average daily spend — a neutral baseline figure, kept last since it
+  // describes rather than surfaces a pattern.
   insights.push({
     icon: 'today-outline',
     title: 'Average daily spend',
     body: `About $${Math.round(totalThisPeriod / PERIOD_DAYS)}/day over the last ${PERIOD_DAYS} days.`,
   });
-
-  // Weekend vs. weekday
-  let weekendTotal = 0;
-  let weekdayTotal = 0;
-  let weekendDays = 0;
-  let weekdayDays = 0;
-  for (let i = 0; i < PERIOD_DAYS; i++) {
-    const day = new Date(now - i * 86400000).getDay();
-    if (day === 0 || day === 6) weekendDays++;
-    else weekdayDays++;
-  }
-  for (const t of thisPeriod) {
-    const day = new Date(t.date).getDay();
-    if (day === 0 || day === 6) weekendTotal += t.amount;
-    else weekdayTotal += t.amount;
-  }
-  const weekendAvg = weekendDays > 0 ? weekendTotal / weekendDays : 0;
-  const weekdayAvg = weekdayDays > 0 ? weekdayTotal / weekdayDays : 0;
-  if (weekendAvg > 0 && weekendAvg > weekdayAvg * 1.15) {
-    insights.push({
-      icon: 'calendar-outline',
-      title: 'Weekend spending is higher',
-      body: `You spend about $${Math.round(weekendAvg)}/day on weekends, vs $${Math.round(weekdayAvg)}/day on weekdays.`,
-    });
-  } else if (weekdayAvg > 0 && weekdayAvg > weekendAvg * 1.15) {
-    insights.push({
-      icon: 'calendar-outline',
-      title: 'Weekday spending is higher',
-      body: `You spend about $${Math.round(weekdayAvg)}/day on weekdays, vs $${Math.round(weekendAvg)}/day on weekends.`,
-    });
-  }
 
   return insights.slice(0, 6);
 }

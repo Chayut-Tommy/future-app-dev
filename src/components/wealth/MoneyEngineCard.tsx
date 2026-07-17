@@ -2,17 +2,26 @@ import React, { useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { AppData } from '../../types/models';
+import { AppData, RecurringItem } from '../../types/models';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
-import { frequencyAdverb } from '../../lib/calculations/incomeEngine';
+import { frequencyAdverb, toMonthlyAmount } from '../../lib/calculations/incomeEngine';
 import { computeRetirementSavings, computeTotalWealth } from '../../lib/calculations/wealthDefinitions';
 import { AddIncomeModal } from '../income/AddIncomeModal';
-import { EditSavingsPlanModal } from './EditSavingsPlanModal';
+import { EditSavingsAllocationModal } from './EditSavingsAllocationModal';
+import { OptionsSheet } from '../shared/OptionsSheet';
 import { brand } from '../../lib/brand';
 
 function formatMoney(value: number): string {
   const sign = value < 0 ? '-' : '';
   return `${sign}$${Math.round(Math.abs(value)).toLocaleString()}`;
+}
+
+/** Makes clear the user chose this, Navilo didn't (PRD ask). */
+function savingsAllocationSub(user: AppData['user'], monthlyAmount: number): string {
+  const setting = user.savingsAllocation;
+  if (!setting || setting.mode === 'off') return 'Not set';
+  if (setting.mode === 'percent') return `${Math.round((setting.percent ?? 0) * 100)}% selected by you`;
+  return `${formatMoney(monthlyAmount)} selected by you`;
 }
 
 /**
@@ -29,7 +38,32 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
   const { colors, radius, spacing, typography } = useTheme();
   const safeToSpend = useMemo(() => computeSafeToSpend(data), [data]);
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
+  const [incomeSourcesSheetVisible, setIncomeSourcesSheetVisible] = useState(false);
+  const [editIncomeItem, setEditIncomeItem] = useState<RecurringItem | null>(null);
   const [savingsPlanModalVisible, setSavingsPlanModalVisible] = useState(false);
+
+  // Multiple income sources (PRD ask, §3) — tapping "Monthly income" opens
+  // this list rather than jumping straight into a single editor, so a
+  // second/third source is exactly as easy to add or edit as the first.
+  const incomeItems = data.recurringItems.filter((r) => r.type === 'income' && r.active);
+
+  function openIncome() {
+    if (incomeItems.length === 0) {
+      setEditIncomeItem(null);
+      setIncomeModalVisible(true);
+    } else {
+      setIncomeSourcesSheetVisible(true);
+    }
+  }
+
+  function selectIncomeSource(key: string) {
+    if (key === 'add') {
+      setEditIncomeItem(null);
+    } else {
+      setEditIncomeItem(incomeItems.find((r) => r.id === key) ?? null);
+    }
+    setIncomeModalVisible(true);
+  }
 
   // Retirement Savings kept separate from Investments — most people can't
   // actually access it, so folding it into the same total made a $200k-
@@ -50,7 +84,9 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
   // themselves (PRD bug report: weekly/fortnightly income was previously
   // shown and calculated as if it were already monthly).
   const incomeSub =
-    data.user.incomeAmount && data.user.payFrequency !== 'monthly'
+    incomeItems.length > 1
+      ? `${incomeItems.length} income sources`
+      : data.user.incomeAmount && data.user.payFrequency !== 'monthly'
       ? `${formatMoney(data.user.incomeAmount)} paid ${frequencyAdverb(data.user.payFrequency)}`
       : null;
 
@@ -67,17 +103,17 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
       iconColor: colors.accent,
       iconBg: colors.accentSoft,
       info: null as string | null,
-      onPress: () => setIncomeModalVisible(true),
+      onPress: openIncome,
     },
     {
       icon: 'trending-up-outline' as const,
-      label: `${brand.name} Savings Plan`,
-      sub: `${data.user.monthlyIncome > 0 ? Math.round((safeToSpend.defaultSavingsBuffer / data.user.monthlyIncome) * 100) : 0}% of monthly income`,
-      value: safeToSpend.defaultSavingsBuffer,
+      label: 'Savings allocation',
+      sub: savingsAllocationSub(data.user, safeToSpend.savingsAllocationMonthly),
+      value: safeToSpend.savingsAllocationMonthly,
       flow: true,
       iconColor: colors.aiBlue,
       iconBg: colors.aiBlueSoft,
-      info: `What ${brand.name} sets aside for you each month — 10% of income by default, or your own target. Feeds Available Until Payday, Money Flow, and ${brand.name} Money Plan.`,
+      info: `An optional amount you choose to set aside — off by default. Feeds Available Until Payday, Money Flow, and ${brand.name} Money Allocation as an estimate only.`,
       onPress: () => setSavingsPlanModalVisible(true),
     },
     {
@@ -166,8 +202,31 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
         <Text style={styles.totalLabel}>= Total Wealth Today</Text>
         <Text style={styles.totalValue}>{formatMoney(totalWealth)}</Text>
       </View>
-      <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
-      <EditSavingsPlanModal visible={savingsPlanModalVisible} onClose={() => setSavingsPlanModalVisible(false)} />
+      <OptionsSheet
+        visible={incomeSourcesSheetVisible}
+        onClose={() => setIncomeSourcesSheetVisible(false)}
+        title="💼 Income sources"
+        subtitle="Tap a source to edit it, or add another."
+        options={[
+          ...incomeItems.map((item) => ({
+            key: item.id,
+            icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash-outline',
+            label: item.label,
+            description: `${formatMoney(toMonthlyAmount(item.amount, item.frequency))}/mo · ${frequencyAdverb(item.frequency)}`,
+          })),
+          { key: 'add', icon: 'add-circle-outline' as const, label: 'Add income source', description: 'Salary, rental, dividends, and more' },
+        ]}
+        onSelect={selectIncomeSource}
+      />
+      <AddIncomeModal
+        visible={incomeModalVisible}
+        editItem={editIncomeItem}
+        onClose={() => {
+          setIncomeModalVisible(false);
+          setEditIncomeItem(null);
+        }}
+      />
+      <EditSavingsAllocationModal visible={savingsPlanModalVisible} onClose={() => setSavingsPlanModalVisible(false)} />
     </View>
   );
 }

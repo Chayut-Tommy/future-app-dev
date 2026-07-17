@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,20 +7,27 @@ import { useAppState } from '../../state/AppStateContext';
 import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { OptionsSheet } from '../../components/shared/OptionsSheet';
+import { InfoSheet } from '../../components/shared/InfoSheet';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddRecurringItemModal } from '../../components/money/AddRecurringItemModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { SafeToSpendHero } from '../../components/money/SafeToSpendHero';
+import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet';
+import { SavingsAllocationDetailSheet } from '../../components/money/SavingsAllocationDetailSheet';
+import { EditSavingsAllocationModal } from '../../components/wealth/EditSavingsAllocationModal';
 import { MoneyPlanCard } from '../../components/money/MoneyPlanCard';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
-import { computeMonthlySummary, describeCashflowMessage } from '../../lib/calculations/monthlySummary';
+import { computeMonthlySummary, describeCashflowMessage, computeAdHocIncome } from '../../lib/calculations/monthlySummary';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
+import { computeMoneyPlan } from '../../lib/calculations/moneyPlan';
 import { FlowPeriod, flowPeriodNoun, fromMonthlyAmount } from '../../lib/calculations/incomeEngine';
 import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { computeMoneyTimeline, computeAttentionItems } from '../../lib/calculations/moneyTimeline';
 import { MoneyTimelineCard } from '../../components/money/MoneyTimelineCard';
+import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculations/debtCoach';
+import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { RecurringItem } from '../../types/models';
 import { brand } from '../../lib/brand';
@@ -49,8 +56,9 @@ function formatMoney(value: number): string {
 export function MoneyScreen() {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
-  const { colors, spacing, typography, radius, cardShadow, aiAccentColor } = useTheme();
+  const { colors, spacing, typography, radius, cardShadow } = useTheme();
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
+  const [editIncome, setEditIncome] = useState<RecurringItem | null>(null);
   const [billModalVisible, setBillModalVisible] = useState(false);
   const [editBill, setEditBill] = useState<RecurringItem | null>(null);
   const [mortgageModalVisible, setMortgageModalVisible] = useState(false);
@@ -58,15 +66,49 @@ export function MoneyScreen() {
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [flowPeriod, setFlowPeriod] = useState<FlowPeriod>('monthly');
   const [spentSheetVisible, setSpentSheetVisible] = useState(false);
+  const [flowInfoVisible, setFlowInfoVisible] = useState(false);
+  const [debtCoachVisible, setDebtCoachVisible] = useState(false);
+  const [selectBalancesVisible, setSelectBalancesVisible] = useState(false);
+  const [addBalanceModalVisible, setAddBalanceModalVisible] = useState(false);
+  const [savingsAllocationDetailVisible, setSavingsAllocationDetailVisible] = useState(false);
+  const [savingsAllocationDetailDate, setSavingsAllocationDetailDate] = useState<Date | null>(null);
+  const [editSavingsAllocationVisible, setEditSavingsAllocationVisible] = useState(false);
 
   const summary = useMemo(() => computeMonthlySummary(data), [data]);
   const safeToSpend = useMemo(() => computeSafeToSpend(data), [data]);
+  // Single source of truth for every "remaining"/"unallocated" figure this
+  // screen shows (Money Breakdown and End of Month Outlook both read
+  // plan.available/plan.surplus, never a separately-computed number) —
+  // fixes the two figures previously disagreeing (PRD bug report, §3/§4).
+  const plan = useMemo(() => computeMoneyPlan(data), [data]);
   const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
   const hasActiveGoals = data.goals.some((g) => g.status === 'active');
-  const timelineEvents = useMemo(() => computeMoneyTimeline(data), [data]);
-  const attentionItems = useMemo(() => computeAttentionItems(timelineEvents, safeToSpend.remainingPool), [timelineEvents, safeToSpend.remainingPool]);
+  // Starts at the same 30-day planning horizon as before; growing this as
+  // the user scrolls near the bottom of the (now fixed-height) timeline box
+  // is what lets recurring events keep appearing further out instead of the
+  // list just stopping (PRD ask, §2). Capped well short of the simulation's
+  // own 400-iteration ceiling in recurringSchedule.ts.
+  const [timelineHorizonDays, setTimelineHorizonDays] = useState(30);
+  const timelineEvents = useMemo(() => computeMoneyTimeline(data, new Date(), timelineHorizonDays), [data, timelineHorizonDays]);
+  const extendTimelineHorizon = useCallback(() => {
+    setTimelineHorizonDays((days) => Math.min(180, days + 30));
+  }, []);
+  const attentionItems = useMemo(
+    () => computeAttentionItems(timelineEvents, safeToSpend.cycleRemainingPool),
+    [timelineEvents, safeToSpend.cycleRemainingPool]
+  );
   const insights = useMemo(() => computeSpendingInsights(data), [data]);
   const hasExpenseTransactions = data.transactions.some((t) => t.type === 'expense');
+  const hasDebt = computeHasAnyDebt(data);
+  const debtSummary = useMemo(() => computeDebtCoachSummary(data), [data]);
+  // Ad-hoc income logged this month (bonus, gift, refund) — added to Money
+  // Flow's income figure directly, alongside recurring income, so a
+  // one-off windfall is visibly reflected here too (PRD ask, §5).
+  const adHocIncomeThisMonth = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return computeAdHocIncome(data.transactions, monthStart, now);
+  }, [data.transactions]);
 
   function openAddBill() {
     setEditBill(null);
@@ -87,12 +129,34 @@ export function MoneyScreen() {
     else if (key === 'add') setTransactionModalVisible(true);
   }
 
-  function handleTimelineEventPress(event: { kind: string; id: string }) {
+  function handleTimelineEventPress(event: { kind: string; id: string; date: Date; recurringItemId?: string }) {
+    // A Savings Allocation row is a display of the one shared user-level
+    // setting on a given cycle date, not an independently editable
+    // transaction (PRD ask) — handled before the recurringItemId guard
+    // below, since these events never have one.
+    if (event.kind === 'savings') {
+      setSavingsAllocationDetailDate(event.date);
+      setSavingsAllocationDetailVisible(true);
+      return;
+    }
+    // Matched by recurringItemId, not the event id — the timeline now
+    // repeats a recurring item across every occurrence in the horizon
+    // (PRD ask, §2), so its id includes a per-occurrence date and can't be
+    // reverse-matched to the source item by string equality any more.
+    if (!event.recurringItemId) return;
     if (event.kind === 'bill' || event.kind === 'mortgage') {
-      const item = data.recurringItems.find((r) => `bill-${r.id}` === event.id);
+      const item = data.recurringItems.find((r) => r.id === event.recurringItemId);
       if (item) {
         setEditBill(item);
         setBillModalVisible(true);
+      }
+    } else if (event.kind === 'income') {
+      // Income events behave the same as bills (PRD ask, §4) — tapping one
+      // opens that specific source's editor, not the generic "add income" flow.
+      const item = data.recurringItems.find((r) => r.id === event.recurringItemId);
+      if (item) {
+        setEditIncome(item);
+        setIncomeModalVisible(true);
       }
     }
   }
@@ -111,12 +175,28 @@ export function MoneyScreen() {
   // savings buffer deducted at all) — one shared engine now, so they can
   // never contradict each other (PRD bug report).
   const periodNoun = flowPeriodNoun(flowPeriod);
-  const periodIncome = fromMonthlyAmount(data.user.monthlyIncome, flowPeriod);
+  // Ad-hoc income is added after period conversion, not before — it's a
+  // real amount that landed this calendar month, not a rate to be scaled
+  // up/down by whichever period is selected (PRD ask, §5).
+  const periodIncome = fromMonthlyAmount(data.user.monthlyIncome, flowPeriod) + adHocIncomeThisMonth;
   const periodBills = fromMonthlyAmount(safeToSpend.fixedExpensesMonthly, flowPeriod);
   const periodSpent = fromMonthlyAmount(safeToSpend.spendSoFarThisCycle, flowPeriod);
-  const periodAvailable = fromMonthlyAmount(Math.max(0, safeToSpend.remainingPool), flowPeriod);
+  const periodAvailable = fromMonthlyAmount(plan.available, flowPeriod);
+  // Raw (unfloored) monthly remainder including ad-hoc income — the same
+  // figure plan.available/plan.surplus are built from, so End of Month
+  // Outlook and Money Breakdown can never disagree (PRD bug report, §3/§4).
+  const monthOutlookRaw = safeToSpend.remainingPool + adHocIncomeThisMonth;
   const flowRows = [
-    { key: 'income', label: `Income this ${periodNoun}`, value: periodIncome, color: colors.accent, onPress: () => setIncomeModalVisible(true) },
+    {
+      key: 'income',
+      label: `Income this ${periodNoun}`,
+      value: periodIncome,
+      color: colors.accent,
+      onPress: () => {
+        setEditIncome(null);
+        setIncomeModalVisible(true);
+      },
+    },
     { key: 'bills', label: `Bills this ${periodNoun}`, value: periodBills, color: colors.navy, onPress: undefined },
     { key: 'spent', label: `Spent this ${periodNoun}`, value: periodSpent, color: colors.warning, onPress: handleSpentTap },
     { key: 'available', label: `Available this ${periodNoun}`, value: periodAvailable, color: colors.successBright },
@@ -129,6 +209,7 @@ export function MoneyScreen() {
         sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
         link: { ...typography.micro, color: colors.accent, fontWeight: '700' },
         emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        flowInfoText: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.md },
 
         // Money Flow period toggle
         periodToggleRow: {
@@ -174,7 +255,6 @@ export function MoneyScreen() {
         outlookExplainer: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
 
         // Spending Tracker insight cards
-        trackerMessage: { ...typography.caption, fontSize: 12, fontStyle: 'italic', color: aiAccentColor, marginBottom: spacing.sm },
         insightCard: {
           backgroundColor: colors.surface,
           borderRadius: 14,
@@ -197,22 +277,32 @@ export function MoneyScreen() {
           marginTop: spacing.xs,
         },
         flowLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
+
+        // Debt Overview
+        debtTotalsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md },
+        debtTotalsLabel: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginBottom: 2 },
+        debtTotalsValue: { ...typography.heading, fontSize: 18, color: colors.textPrimary },
+        debtRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 7 },
+        debtTextBlock: { flex: 1 },
+        debtLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        debtSub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 1 },
       }),
-    [colors, spacing, typography, radius, cardShadow, aiAccentColor]
+    [colors, spacing, typography, radius, cardShadow]
   );
 
   return (
     <Screen title="Money" scrollRef={tabScrollRefs.Money}>
-      {data.user.monthlyIncome > 0 ? (
-        <SafeToSpendHero
-          safeToSpend={safeToSpend}
-          monthlyIncome={data.user.monthlyIncome}
-          hasActiveGoals={hasActiveGoals}
-          onCreateGoal={() => setGoalModalVisible(true)}
-          onAddPayday={() => setIncomeModalVisible(true)}
-          heroCopy={heroCopy}
-        />
-      ) : null}
+      <SafeToSpendHero
+        safeToSpend={safeToSpend}
+        hasActiveGoals={hasActiveGoals}
+        onCreateGoal={() => setGoalModalVisible(true)}
+        onAddPayday={() => {
+          setEditIncome(null);
+          setIncomeModalVisible(true);
+        }}
+        onSelectBalances={() => setSelectBalancesVisible(true)}
+        heroCopy={heroCopy}
+      />
 
       {attentionItems.length > 0 ? (
         <>
@@ -242,12 +332,50 @@ export function MoneyScreen() {
         </SectionCard>
       ) : (
         <SectionCard>
-          <MoneyTimelineCard events={timelineEvents} onEventPress={handleTimelineEventPress} />
+          <MoneyTimelineCard events={timelineEvents} onEventPress={handleTimelineEventPress} onNearEnd={extendTimelineHorizon} />
         </SectionCard>
+      )}
+
+      {/* Spending Tracker — add, review, and understand spending in one
+          place (PRD ask: users care about the outcome, not data entry).
+          Comes right after the timeline: "what's happening" then "what
+          have I already spent," before the cashflow/allocation views below
+          that assume spending-to-date as an input. */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Spending Tracker</Text>
+        <TouchableOpacity onPress={() => setTransactionModalVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.link}>+ Add</Text>
+        </TouchableOpacity>
+      </View>
+      {!hasExpenseTransactions ? (
+        <SectionCard>
+          <Text style={styles.emptyText}>Add transactions to unlock spending insights.</Text>
+        </SectionCard>
+      ) : (
+        <>
+          {insights.map((insight) => (
+            <View key={insight.title} style={styles.insightCard}>
+              <View style={styles.insightIconBadge}>
+                <Ionicons name={insight.icon} size={15} color={colors.market} />
+              </View>
+              <View style={styles.insightTextBlock}>
+                <Text style={styles.insightHeading}>{insight.title}</Text>
+                <Text style={styles.insightBody}>{insight.body}</Text>
+              </View>
+            </View>
+          ))}
+          <TouchableOpacity style={styles.trackerFooterRow} onPress={() => navigation.navigate('Transactions')} activeOpacity={0.7}>
+            <Text style={styles.flowLabel}>View transaction history</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+          </TouchableOpacity>
+        </>
       )}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Money Flow</Text>
+        <TouchableOpacity onPress={() => setFlowInfoVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
+        </TouchableOpacity>
       </View>
       <SectionCard>
         <View style={styles.periodToggleRow}>
@@ -288,12 +416,12 @@ export function MoneyScreen() {
             <View style={styles.outlookBox}>
               <Text style={styles.outlookLabel}>Estimated end-of-cycle position</Text>
               <Text style={styles.outlookValue}>
-                {safeToSpend.remainingPool >= 0
-                  ? `Approximately ${formatMoney(safeToSpend.remainingPool)} unallocated`
-                  : `Approximately ${formatMoney(Math.abs(safeToSpend.remainingPool))} short`}
+                {monthOutlookRaw >= 0
+                  ? `Approximately ${formatMoney(plan.available)} unallocated`
+                  : `Approximately ${formatMoney(Math.abs(monthOutlookRaw))} short`}
               </Text>
               <Text style={styles.outlookExplainer}>
-                {safeToSpend.remainingPool >= 0
+                {monthOutlookRaw >= 0
                   ? "Based on your current plan — income, bills, goals, and your savings plan already accounted for."
                   : describeCashflowMessage(summary)}
               </Text>
@@ -302,40 +430,50 @@ export function MoneyScreen() {
         </>
       ) : null}
 
-      {/* Spending Tracker — add, review, and understand spending in one
-          place (PRD ask: users care about the outcome, not data entry). */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Spending Tracker</Text>
-        <TouchableOpacity onPress={() => setTransactionModalVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.link}>+ Add</Text>
-        </TouchableOpacity>
-      </View>
-      {!hasExpenseTransactions ? (
-        <SectionCard>
-          <Text style={styles.trackerMessage}>Track spending and {brand.name} will find patterns for you.</Text>
-          <Text style={styles.emptyText}>Log a few transactions and {brand.name} will start noticing patterns here.</Text>
-        </SectionCard>
-      ) : (
+      {hasDebt ? (
         <>
-          {insights.map((insight) => (
-            <View key={insight.title} style={styles.insightCard}>
-              <View style={styles.insightIconBadge}>
-                <Ionicons name={insight.icon} size={15} color={colors.market} />
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Debt Overview</Text>
+          </View>
+          <SectionCard>
+            <View style={styles.debtTotalsRow}>
+              <View>
+                <Text style={styles.debtTotalsLabel}>Total debt</Text>
+                <Text style={styles.debtTotalsValue}>{formatMoney(debtSummary.totalDebt)}</Text>
               </View>
-              <View style={styles.insightTextBlock}>
-                <Text style={styles.insightHeading}>{insight.title}</Text>
-                <Text style={styles.insightBody}>{insight.body}</Text>
+              <View>
+                <Text style={styles.debtTotalsLabel}>Monthly repayments</Text>
+                <Text style={styles.debtTotalsValue}>{formatMoney(debtSummary.totalMonthlyRepayment)}</Text>
               </View>
             </View>
-          ))}
-          <TouchableOpacity style={styles.trackerFooterRow} onPress={() => navigation.navigate('Transactions')} activeOpacity={0.7}>
-            <Text style={styles.flowLabel}>View transaction history</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.accent} />
-          </TouchableOpacity>
+            {debtSummary.debts.map((d) => (
+              <View key={d.id} style={styles.debtRow}>
+                <Ionicons name={d.icon} size={16} color={colors.textSecondary} />
+                <View style={styles.debtTextBlock}>
+                  <Text style={styles.debtLabel}>{d.label}</Text>
+                  <Text style={styles.debtSub}>
+                    {formatMoney(d.balance)} remaining
+                    {d.monthlyRepayment ? ` · ${formatMoney(d.monthlyRepayment)}/month` : ''}
+                  </Text>
+                </View>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.trackerFooterRow} onPress={() => setDebtCoachVisible(true)} activeOpacity={0.7}>
+              <Text style={styles.flowLabel}>View full debt overview</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+            </TouchableOpacity>
+          </SectionCard>
         </>
-      )}
+      ) : null}
 
-      <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
+      <AddIncomeModal
+        visible={incomeModalVisible}
+        editItem={editIncome}
+        onClose={() => {
+          setIncomeModalVisible(false);
+          setEditIncome(null);
+        }}
+      />
       <AddRecurringItemModal
         visible={billModalVisible}
         editItem={editBill}
@@ -348,6 +486,24 @@ export function MoneyScreen() {
         presetLiabilityType="mortgage"
         onClose={() => setMortgageModalVisible(false)}
       />
+      <SelectBalancesSheet
+        visible={selectBalancesVisible}
+        onClose={() => setSelectBalancesVisible(false)}
+        onAddBalance={() => setAddBalanceModalVisible(true)}
+      />
+      <AddWealthItemModal
+        visible={addBalanceModalVisible}
+        kind="asset"
+        presetAssetType="cash"
+        onClose={() => setAddBalanceModalVisible(false)}
+      />
+      <SavingsAllocationDetailSheet
+        visible={savingsAllocationDetailVisible}
+        onClose={() => setSavingsAllocationDetailVisible(false)}
+        occurrenceDate={savingsAllocationDetailDate}
+        onEditAllocation={() => setEditSavingsAllocationVisible(true)}
+      />
+      <EditSavingsAllocationModal visible={editSavingsAllocationVisible} onClose={() => setEditSavingsAllocationVisible(false)} />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <OptionsSheet
@@ -360,6 +516,14 @@ export function MoneyScreen() {
         ]}
         onSelect={handleSpentSheetSelect}
       />
+      <InfoSheet visible={flowInfoVisible} onClose={() => setFlowInfoVisible(false)} title="About Money Flow">
+        <Text style={styles.flowInfoText}>
+          This view converts your recurring income, bills and spending into the selected time period so you can compare your cash flow
+          consistently.
+        </Text>
+        <Text style={styles.flowInfoText}>Your actual payment dates remain unchanged — this only changes how the numbers are displayed.</Text>
+      </InfoSheet>
+      <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
     </Screen>
   );
 }

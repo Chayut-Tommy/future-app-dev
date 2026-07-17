@@ -4,16 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
-import { WealthGuideSteps } from './WealthGuideSteps';
-import { AddIncomeModal } from '../income/AddIncomeModal';
-import { AddWealthItemModal } from './AddWealthItemModal';
-import { DebtCoachSheet } from '../debt/DebtCoachSheet';
 import { computeAgeProjections, computeWhatIfMilestone, computeNextWealthMilestone, computeCashflowIsNegative } from '../../lib/calculations/futureProjection';
 import { ACCESSIBLE_INVESTMENT_TYPES } from '../../lib/calculations/assetGroups';
 import { computeAccessibleNetWorth, computeRetirementSavings } from '../../lib/calculations/wealthDefinitions';
+import { useFinancialState } from '../../lib/calculations/financialState';
 import { InfoSheet } from '../shared/InfoSheet';
 import { AgeProjection } from '../../lib/calculations/futureProjection';
-import { AssetType } from '../../types/models';
 import { brand } from '../../lib/brand';
 
 function formatMoney(value: number): string {
@@ -33,10 +29,6 @@ export function YourFutureCard() {
   const { data, updateUser } = useAppState();
   const { colors, radius, spacing, typography, glow } = useTheme();
   const [ageInput, setAgeInput] = useState('');
-  const [incomeModalVisible, setIncomeModalVisible] = useState(false);
-  const [wealthModalVisible, setWealthModalVisible] = useState(false);
-  const [presetAssetType, setPresetAssetType] = useState<AssetType | undefined>(undefined);
-  const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [breakdownAge, setBreakdownAge] = useState<AgeProjection | null>(null);
 
   const projections = useMemo(() => computeAgeProjections(data), [data]);
@@ -45,18 +37,16 @@ export function YourFutureCard() {
   const cashflowIsNegative = useMemo(() => computeCashflowIsNegative(data), [data]);
   const totalAssets = useMemo(() => data.assets.reduce((sum, a) => sum + a.currentValue, 0), [data.assets]);
   const totalLiabilities = useMemo(() => data.liabilities.reduce((sum, l) => sum + l.currentBalance, 0), [data.liabilities]);
-  const isRebuilding = totalAssets - totalLiabilities < 0;
+  // Shared signal, not a local net-worth check — must never drift from
+  // Today's and Wealth's own reading of the same state (PRD bug report).
+  const financialState = useFinancialState(data);
+  const isRebuilding = financialState.key === 'financial_rebuild';
   const accessibleNetWorth = useMemo(() => computeAccessibleNetWorth(data), [data]);
   const retirementSavings = useMemo(() => computeRetirementSavings(data), [data]);
   const personalInvestments = useMemo(
     () => data.assets.filter((a) => (ACCESSIBLE_INVESTMENT_TYPES as string[]).includes(a.type)).reduce((sum, a) => sum + a.currentValue, 0),
     [data.assets]
   );
-
-  function openWealthModal(assetType: AssetType) {
-    setPresetAssetType(assetType);
-    setWealthModalVisible(true);
-  }
 
   const styles = useMemo(
     () =>
@@ -93,47 +83,44 @@ export function YourFutureCard() {
         breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
         breakdownLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
         breakdownValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
+        breakdownSubLabel: { ...typography.caption, fontSize: 12, color: colors.textMuted, paddingLeft: spacing.sm },
+        breakdownSubValue: { ...typography.caption, fontSize: 12, color: colors.textMuted },
+        breakdownTotalRow: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 2 },
         addAgeLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.md },
         addAgeLinkText: { ...typography.micro, color: colors.accent, fontWeight: '700' },
       }),
     [colors, radius, spacing, typography, glow]
   );
 
+  // Financial Rebuild state: kept deliberately factual — no ordered action
+  // plan (PRD bug report: an earlier version's "Your rebuild path" checklist
+  // — Add income / Add cash savings / Reduce debt / Build investments —
+  // read as Navilo prescribing a sequence of financial decisions, which is
+  // exactly what this state's copy elsewhere is written to avoid).
   if (isRebuilding) {
-    const rebuildSteps = [
-      { label: 'Add income', done: data.user.monthlyIncome > 0, onPress: () => setIncomeModalVisible(true) },
-      {
-        label: 'Add cash savings',
-        done: data.assets.some((a) => (a.type === 'cash' || a.type === 'savings') && a.currentValue > 0),
-        onPress: () => openWealthModal('savings'),
-      },
-      // "Reduce debt" opens Debt Coach, not a bare add-liability form (PRD
-      // ask: tapping this means "help me improve my situation," not "add
-      // another liability").
-      { label: 'Reduce debt', done: totalLiabilities === 0, onPress: () => setDebtCoachVisible(true) },
-      {
-        label: 'Build investments',
-        done: data.assets.some((a) => (ACCESSIBLE_INVESTMENT_TYPES as string[]).includes(a.type)),
-        onPress: () => openWealthModal('etf'),
-      },
-    ];
+    const deficit = totalLiabilities - totalAssets;
     return (
       <SectionCard style={styles.card}>
         <Text style={styles.title}>Your Future</Text>
-        <Text style={styles.freedomText}>You're currently in rebuilding mode.</Text>
+        <Text style={styles.freedomText}>Your current financial position is rebuilding.</Text>
         <Text style={styles.body}>
-          Your future projection will unlock once {brand.name} has enough positive savings data to work with.
+          Your future projection will unlock once {brand.name} has enough positive net-wealth data to work with.
         </Text>
-        <WealthGuideSteps steps={rebuildSteps} title="Your rebuild path" />
-        <Text style={styles.disclaimer}>Once your monthly cashflow is positive, {brand.name} will project your future wealth.</Text>
-        <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
-        <AddWealthItemModal
-          visible={wealthModalVisible}
-          kind="asset"
-          presetAssetType={presetAssetType}
-          onClose={() => setWealthModalVisible(false)}
-        />
-        <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Recorded assets</Text>
+          <Text style={styles.breakdownValue}>{formatMoney(totalAssets)}</Text>
+        </View>
+        <View style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>Recorded liabilities</Text>
+          <Text style={styles.breakdownValue}>{formatMoney(totalLiabilities)}</Text>
+        </View>
+        <View style={[styles.breakdownRow, styles.breakdownTotalRow]}>
+          <Text style={styles.breakdownLabel}>Liabilities exceed assets by</Text>
+          <Text style={styles.breakdownValue}>{formatMoney(deficit)}</Text>
+        </View>
+        <Text style={styles.disclaimer}>
+          Once your recorded assets exceed your recorded liabilities, {brand.name} will project your future wealth.
+        </Text>
       </SectionCard>
     );
   }
@@ -227,22 +214,33 @@ export function YourFutureCard() {
               <Text style={styles.breakdownLabel}>Current accessible net worth</Text>
               <Text style={styles.breakdownValue}>{formatMoney(accessibleNetWorth)}</Text>
             </View>
+            {/* Sub-detail only — already inside "Current accessible net
+             * worth" above (which nets all non-retirement assets, personal
+             * investments included, against every liability). Shown purely
+             * so users can see what's inside that figure; never add this to
+             * the other rows, or liabilities and investments both get
+             * counted twice (PRD bug report). */}
+            <View style={styles.breakdownRow}>
+              <Text style={styles.breakdownSubLabel}>— of which personal investments</Text>
+              <Text style={styles.breakdownSubValue}>{formatMoney(personalInvestments)}</Text>
+            </View>
+            <View style={styles.breakdownRow}>
+              <Text style={styles.breakdownSubLabel}>— of which liabilities</Text>
+              <Text style={styles.breakdownSubValue}>-{formatMoney(totalLiabilities)}</Text>
+            </View>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Retirement savings</Text>
-              <Text style={styles.breakdownValue}>{formatMoney(retirementSavings)}</Text>
+              <Text style={styles.breakdownValue}>+{formatMoney(retirementSavings)}</Text>
             </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Existing personal investments</Text>
-              <Text style={styles.breakdownValue}>{formatMoney(personalInvestments)}</Text>
-            </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Current liabilities</Text>
-              <Text style={styles.breakdownValue}>-{formatMoney(totalLiabilities)}</Text>
+            <View style={[styles.breakdownRow, styles.breakdownTotalRow]}>
+              <Text style={styles.breakdownLabel}>Starting point for this projection</Text>
+              <Text style={styles.breakdownValue}>{formatMoney(accessibleNetWorth + retirementSavings)}</Text>
             </View>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Assumed monthly contribution</Text>
               <Text style={styles.breakdownValue}>{formatMoney(breakdownAge.monthlyContribution)}/mo</Text>
             </View>
+            <Text style={styles.breakdownSubLabel}>Your chosen Savings allocation amount — not leftover cash after spending. $0 if you haven't set one.</Text>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Assumed annual return</Text>
               <Text style={styles.breakdownValue}>6%</Text>

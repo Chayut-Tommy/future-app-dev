@@ -31,8 +31,11 @@ const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: k
   Grow: { outline: 'compass-outline', filled: 'compass' },
 };
 
-// Outcome-organized navigation (PRD §3.0) — Today/Wealth/Money/Grow.
-// Money replaces the old Health tab: users interact with day-to-day money
+// Outcome-organized navigation (PRD §3.0) — Today/Money/Wealth/Grow. Money
+// sits second, not third (PRD ask): day-to-day cashflow is where users
+// spend most of their time, while Wealth is more useful once they've
+// already entered data and want to check their longer-term position. Money
+// replaces the old Health tab: users interact with day-to-day money
 // behavior (spending, bills, cashflow) far more often than score mechanics,
 // which now live one tap away from the Lulu Score card on Today instead of
 // a dedicated tab. Grow (formerly Discover) is Lulu's coaching/education
@@ -74,8 +77,8 @@ export function MainTabNavigator() {
       })}
     >
       <Tab.Screen name="Today" component={TodayScreen} listeners={scrollToTopOnRepeatPress('Today')} />
-      <Tab.Screen name="Wealth" component={WealthScreen} listeners={scrollToTopOnRepeatPress('Wealth')} />
       <Tab.Screen name="Money" component={MoneyScreen} listeners={scrollToTopOnRepeatPress('Money')} />
+      <Tab.Screen name="Wealth" component={WealthScreen} listeners={scrollToTopOnRepeatPress('Wealth')} />
       <Tab.Screen name="Grow" component={DiscoverScreen} listeners={scrollToTopOnRepeatPress('Grow')} />
     </Tab.Navigator>
   );

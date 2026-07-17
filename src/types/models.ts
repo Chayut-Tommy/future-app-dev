@@ -22,6 +22,25 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 export type MoneyGoal = 'save_more' | 'buy_home' | 'build_investments' | 'pay_debt' | 'understand_spending' | 'build_wealth';
 export type ConfidenceLevel = 'beginner' | 'learning' | 'confident';
 
+/** One shared, user-selected savings-allocation model (PRD ask: "one shared
+ * user-selected Savings allocation model rather than separate defaults
+ * across different screens"). `'off'` (or the field being absent) always
+ * means $0 — never an implied default percentage. `percent` is a fraction
+ * (0.1 = 10%) applied to expected recurring income only; `amount` is a
+ * fixed monthly dollar figure, prorated per pay cycle the same way a
+ * percentage is. This is a forecasting preference the user opted into, not
+ * evidence of actual saved money — see resolveSavingsAllocationMonthly and
+ * luluScore.ts's Recorded Cashflow/Emergency Buffer/Wealth Assets Recorded
+ * factors, none of which read this setting. */
+export interface SavingsAllocationSetting {
+  mode: 'off' | 'percent' | 'fixed';
+  /** Fraction of expected recurring income, e.g. 0.1 for 10%. Only applies
+   * when the user has recurring income — see resolveSavingsAllocationMonthly. */
+  percent?: number;
+  /** A fixed monthly dollar amount, prorated per cycle like percent mode. */
+  amount?: number;
+}
+
 export interface RecurringItem {
   id: string;
   type: 'income' | 'expense';
@@ -39,6 +58,13 @@ export interface RecurringItem {
    * over time, unlike a pure expense such as rent. Not currently used to
    * auto-adjust the balance (no real amortisation schedule is tracked). */
   linkedLiabilityId?: string;
+  /** Income items only — true when the user genuinely doesn't know their
+   * next payment date (irregular freelance/casual work). `nextDueDate`
+   * still holds a placeholder value so it can stay a required field
+   * everywhere else, but scheduling/reminder/timeline logic must check this
+   * flag rather than trusting that date at face value (PRD ask: Navilo
+   * never guesses a payday for irregular income). */
+  nextDueDateUnknown?: boolean;
 }
 
 export interface Category {
@@ -72,6 +98,15 @@ export interface Transaction {
    * future bank-feed integration can flow through the same addTransaction
    * path and be distinguished in the UI without a schema change. */
   source?: 'manual' | 'bank_feed';
+  /** Set only when this transaction was auto-created by confirming a
+   * recurring item was paid/received (SmartReminderCard) — distinguishes it
+   * from a genuinely ad-hoc transaction (a bonus, gift, refund) the user
+   * logged directly. Recurring income already drives every future-looking
+   * calculation via the recurring item itself; without this flag, a
+   * confirmed payday would get double-counted as "ad-hoc" income too (PRD
+   * ask, §5: keep recurring income and one-off income transactions
+   * completely separate). */
+  recurringItemId?: string;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
@@ -101,6 +136,18 @@ export interface Asset {
   tickerSymbol?: string;
   /** Only meaningful for cash-type assets used as a savings account (Savings Optimiser). */
   interestRate?: number;
+  /** Only meaningful for `cash`/`savings` — whether this balance counts
+   * toward short-term Money calculations (Available Until Payday, Money
+   * Flow), as distinct from wealth reporting (Net Wealth, Wealth Map,
+   * Emergency Fund coverage), which always includes every cash/savings
+   * asset regardless of this flag (PRD ask: a balance can correctly count
+   * as recorded wealth without being available for everyday bills — e.g. a
+   * house deposit or reserved savings). Absent means "use the default for
+   * this asset's type" — see `resolveIncludeInMoneyCalculations` in
+   * `liquidAssets.ts`, never re-derive the default inline. Defaults: cash
+   * = included, savings = excluded until the user opts in (PRD ask: never
+   * silently pool all savings into short-term spending estimates). */
+  includeInMoneyCalculations?: boolean;
 }
 
 export interface Liability {
@@ -161,6 +208,19 @@ export interface UserProfile {
   incomeSource?: string;
   payFrequency: PayFrequency;
   nextPayday: string | null; // ISO date
+  /** Highest Score milestone (10/20/.../100) already celebrated — prevents
+   * re-firing the same celebration on every re-render, and lets a score
+   * that jumps past several bands at once still only celebrate the highest
+   * one reached (PRD ask, §6: celebrate every major milestone, once each). */
+  highestScoreMilestoneCelebrated?: number;
+  /** Set once, the first time `moneyPictureChecklistDismissed` becomes
+   * true — marks that `highestScoreMilestoneCelebrated` has been silently
+   * snapshotted to whatever band the score was already in, so building the
+   * initial money picture (which can jump the score several bands in
+   * minutes) is never misread as a genuine improvement worth celebrating.
+   * Score-milestone celebrations are gated on this being true (PRD ask,
+   * §4/§5) — only crossings *above* that baseline celebrate. */
+  scoreMilestoneBaselineSet?: boolean;
   /** Optional — powers "Your Future" multi-age projection. Never asked at onboarding. */
   age?: number;
   /** Collected once at onboarding — powers early personalisation before enough real data exists. */
@@ -200,11 +260,26 @@ export interface UserProfile {
    * deferred rather than forcing entry before the user has bills handy
    * (PRD ask, §3B). */
   confirmedBillsLater?: boolean;
-  /** User-set monthly savings target ($), overriding Lulu's default 10%-
-   * of-income buffer. Feeds Safe to Spend, Money Flow, and Lulu Money Plan
-   * — one shared savings figure everywhere, never a separate number per
-   * screen (PRD ask). Absent = use the default 10% target. */
-  savingsBufferOverride?: number;
+  /** The user's optional, explicitly-chosen savings allocation — feeds
+   * Available Until Payday, Money Allocation, and Your Future as a
+   * forward-looking estimate input only (PRD ask: "one shared user-selected
+   * Savings allocation model"). Absent, or `mode: 'off'`, means $0 — Navilo
+   * never assumes a percentage on the user's behalf (PRD bug report: a
+   * silent 10%-of-income default read as though Navilo had decided how much
+   * the user should save). Resolve through `resolveSavingsAllocationMonthly`
+   * — never re-derive a percentage or fallback inline. */
+  savingsAllocation?: SavingsAllocationSetting;
+  /** True once the one-time post-first-income "Plan around your income?"
+   * prompt has been shown and handled (allocation saved, "no savings
+   * allocation" chosen, "Not now", or any dismissal route) — sticky
+   * forever after, never reset by deleting/re-adding income (PRD ask). See
+   * `SavingsAllocationPromptContext.tsx` for the presentation coordinator
+   * and `storage.ts`'s `migrateSavingsAllocationPromptFlag` for how
+   * pre-existing profiles are backfilled to `true` on first load so they
+   * are never unexpectedly interrupted. Absent = eligible (new profile, or
+   * a profile the migration couldn't confidently classify as
+   * pre-existing). */
+  savingsAllocationPromptHandled?: boolean;
   /** Set when the user acknowledges the onboarding educational-information
    * disclosure — required before onboarding can finish (PRD ask, §6A:
    * layered disclosure system). ISO date of acknowledgement, not just a

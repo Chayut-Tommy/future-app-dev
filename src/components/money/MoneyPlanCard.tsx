@@ -15,7 +15,7 @@ function formatMoney(value: number): string {
 }
 
 /**
- * "{brand.name} Money Plan" — a waterfall, not a ledger: Income → Bills →
+ * "{brand.name} Money Allocation" — a waterfall, not a ledger: Income → Bills →
  * Savings → Goals → Unallocated, so it's immediately obvious where every
  * dollar is currently allocated (PRD ask, §6). The concrete dated view of
  * salary/bills already lives in the "What happens next" timeline above
@@ -83,7 +83,7 @@ export function MoneyPlanCard() {
 
   return (
     <SectionCard>
-      <Text style={styles.title}>{brand.name} Money Plan</Text>
+      <Text style={styles.title}>{brand.name} Money Allocation</Text>
       <Text style={styles.subtitle}>{plan.monthLabel} — where every dollar is currently allocated</Text>
 
       {income <= 0 ? (
@@ -116,13 +116,11 @@ export function MoneyPlanCard() {
             <Text style={styles.unallocatedLabel}>Unallocated</Text>
             <Text style={styles.unallocatedValue}>{formatMoney(plan.available)}</Text>
           </View>
-          <Text style={styles.unallocatedExplainer}>Remaining after planned bills, savings, and goal commitments.</Text>
+          <Text style={styles.unallocatedExplainer}>Available after planned bills, savings and goals.</Text>
 
           {plan.surplus ? (
             <View style={styles.surplusBox}>
-              <Text style={styles.surplusText}>
-                {formatMoney(plan.surplus)} is not yet assigned to a bill, goal, or savings target this month.
-              </Text>
+              <Text style={styles.surplusText}>Consider putting this toward investing, extra savings or your goals.</Text>
               <View style={styles.surplusActions}>
                 <TouchableOpacity style={styles.surplusButton} onPress={() => setInvestVisible(true)}>
                   <Ionicons name="trending-up-outline" size={13} color={colors.accentStrong} />

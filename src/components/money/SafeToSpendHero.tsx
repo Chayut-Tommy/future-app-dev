@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
 import { InfoSheet } from '../shared/InfoSheet';
-import { MoneyHeroCopy, cashRunwayStatus, CASH_RUNWAY_STATUS_LABEL } from '../../lib/calculations/moneyPersona';
+import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -43,17 +43,20 @@ function BreakdownRow({ label, value, isTotal }: { label: string; value: string;
  */
 export function SafeToSpendHero({
   safeToSpend,
-  monthlyIncome,
   hasActiveGoals,
   onCreateGoal,
   onAddPayday,
+  onSelectBalances,
   heroCopy,
 }: {
   safeToSpend: SafeToSpendResult;
-  monthlyIncome: number;
   hasActiveGoals: boolean;
   onCreateGoal: () => void;
   onAddPayday?: () => void;
+  /** Opens the flow to add or include a cash/savings balance — the action
+   * for the "no recurring income, no included balance" empty state (PRD
+   * ask, §Adaptive hero State 4). */
+  onSelectBalances?: () => void;
   /** Persona-appropriate labels (Employee/Freelancer/Retiree/Investor/
    * Business owner) wrapping this exact same calculation — never changes
    * a number, only which words describe it (PRD ask, §3/§12). */
@@ -99,15 +102,6 @@ export function SafeToSpendHero({
           paddingHorizontal: spacing.lg,
         },
         ctaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
-        statusChip: {
-          alignSelf: 'center',
-          backgroundColor: 'rgba(255,255,255,0.18)',
-          borderRadius: radius.pill,
-          paddingVertical: 4,
-          paddingHorizontal: spacing.md,
-          marginBottom: spacing.xs,
-        },
-        statusChipText: { ...typography.micro, fontSize: 11, color: '#fff', fontWeight: '700' },
         breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
       }),
     [colors, radius, spacing, typography, glow]
@@ -125,12 +119,17 @@ export function SafeToSpendHero({
         label="Next expected payday"
         value={safeToSpend.hasKnownPayday ? safeToSpend.cycleEnd.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : 'Not set'}
       />
-      <BreakdownRow label="Income included" value={`+${formatMoney(monthlyIncome)}`} />
-      <BreakdownRow label="Bills due before that date" value={`-${formatMoney(safeToSpend.fixedExpensesMonthly)}`} />
-      <BreakdownRow label="Spending recorded this cycle" value={`-${formatMoney(safeToSpend.spendSoFarThisCycle)}`} />
-      <BreakdownRow label="Goal allocations" value={`-${formatMoney(safeToSpend.goalContributionsMonthly)}`} />
-      <BreakdownRow label="Navilo Savings Plan allocation" value={`-${formatMoney(safeToSpend.defaultSavingsBuffer)}`} />
-      <BreakdownRow label="Estimated remainder" value={formatMoney(Math.max(0, safeToSpend.remainingPool))} isTotal />
+      <BreakdownRow label="Balances included" value={formatMoney(safeToSpend.includedMoneyBalance)} />
+      {safeToSpend.includedMoneyBalanceAccounts.map((account) => (
+        <BreakdownRow key={account.id} label={`— ${account.label}`} value={formatMoney(account.value)} />
+      ))}
+      <BreakdownRow label="Bills due before that date" value={`-${formatMoney(safeToSpend.cycleBillsExpected)}`} />
+      <BreakdownRow label="Goal allocations (this cycle's share)" value={`-${formatMoney(safeToSpend.cycleGoalsReserved)}`} />
+      <BreakdownRow
+        label="Savings allocation (this cycle's share)"
+        value={safeToSpend.cycleSavingsReserved > 0 ? `-${formatMoney(safeToSpend.cycleSavingsReserved)}` : 'Not set'}
+      />
+      <BreakdownRow label="Estimated remainder" value={formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))} isTotal />
       {safeToSpend.hasKnownPayday ? (
         <BreakdownRow
           label={`Estimated amount per remaining day (${safeToSpend.daysRemaining} days left)`}
@@ -145,43 +144,46 @@ export function SafeToSpendHero({
     </InfoSheet>
   );
 
-  // No known payday: never invent one. Irregular income gets an honest
-  // cash-runway estimate; anything else just asks for a date (PRD ask, §4).
+  // No known payday: never invent one, and never derive an artificial
+  // planning horizon (e.g. "days of runway" from a spend rate) to stand in
+  // for it (PRD ask, §Adaptive hero). Two honest states instead: show the
+  // balances the user has actually included (State 2), or ask them to pick
+  // one if none are included yet (State 4).
   if (!safeToSpend.hasKnownPayday) {
+    const hasIncludedBalance = safeToSpend.includedMoneyBalance > 0;
     return (
       <>
         <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>💰 {heroCopy.eyebrowRunway.toUpperCase()}</Text>
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color="rgba(255,255,255,0.85)" />
-            </TouchableOpacity>
+            <Text style={styles.label}>💰 AVAILABLE MONEY</Text>
           </View>
-          {safeToSpend.cashRunwayDays !== null ? (
+          {hasIncludedBalance ? (
             <>
-              <View style={styles.statusChip}>
-                <Text style={styles.statusChipText}>{CASH_RUNWAY_STATUS_LABEL[cashRunwayStatus(safeToSpend.cashRunwayDays)]}</Text>
-              </View>
-              <Text style={styles.value}>{safeToSpend.cashRunwayDays} days</Text>
-              <Text style={styles.line}>
-                Approximately {Math.max(1, Math.round(safeToSpend.cashRunwayDays / 30))} month
-                {Math.round(safeToSpend.cashRunwayDays / 30) === 1 ? '' : 's'} of recent spending, based on your current cash.
-              </Text>
-              <Text style={styles.explainer}>
-                This is an estimate based on the information entered, not a prediction. {heroCopy.amountLabel}:{' '}
-                {formatMoney(Math.max(0, safeToSpend.remainingPool))}.
-              </Text>
+              <Text style={styles.line}>Based on the balances you selected.</Text>
+              <Text style={styles.value}>{formatMoney(safeToSpend.includedMoneyBalance)}</Text>
+              {safeToSpend.includedMoneyBalanceAccounts.length > 0 ? (
+                <Text style={styles.explainer}>
+                  {safeToSpend.includedMoneyBalanceAccounts.map((a) => `${a.label} (${formatMoney(a.value)})`).join(', ')}
+                </Text>
+              ) : null}
             </>
           ) : (
-            <Text style={styles.line}>Add an expected payday to calculate a daily estimate.</Text>
+            <>
+              <Text style={styles.line}>Choose a balance to estimate your available money</Text>
+              <Text style={styles.explainer}>Add or select a cash balance that Navilo can use for short-term money calculations.</Text>
+            </>
           )}
+          {!hasIncludedBalance && onSelectBalances ? (
+            <TouchableOpacity style={styles.ctaButton} onPress={onSelectBalances}>
+              <Text style={styles.ctaText}>Select balances</Text>
+            </TouchableOpacity>
+          ) : null}
           {onAddPayday ? (
             <TouchableOpacity style={styles.ctaButton} onPress={onAddPayday}>
               <Text style={styles.ctaText}>Add an expected payday</Text>
             </TouchableOpacity>
           ) : null}
         </LinearGradient>
-        {breakdown}
       </>
     );
   }
@@ -197,8 +199,8 @@ export function SafeToSpendHero({
             </TouchableOpacity>
           </View>
           <Text style={styles.lineWarning}>
-            Recorded spending is currently higher than planned this cycle — about {formatMoney(Math.abs(safeToSpend.remainingPool))} over
-            the estimated remainder.
+            Recorded spending is currently higher than planned this cycle — about {formatMoney(Math.abs(safeToSpend.cycleRemainingPool))}{' '}
+            over the estimated remainder.
           </Text>
         </View>
         {breakdown}
@@ -238,7 +240,7 @@ export function SafeToSpendHero({
           </TouchableOpacity>
         </View>
         <Text style={styles.line}>{heroCopy.amountLabel}</Text>
-        <Text style={styles.value}>{formatMoney(Math.max(0, safeToSpend.remainingPool))}</Text>
+        <Text style={styles.value}>{formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))}</Text>
         <Text style={styles.line}>
           ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day
           {safeToSpend.daysRemaining === 1 ? '' : 's'}

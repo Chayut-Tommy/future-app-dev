@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Modal, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -8,21 +8,43 @@ import { useTheme } from '../../theme/ThemeContext';
 import { CelebrationEvent } from '../../lib/celebrations';
 import { Button } from '../shared/Button';
 
+// RN's Modal onDismiss (native dismissal has actually finished) is iOS-only
+// — Android never fires it, so this approximates the same "wait for the
+// dismiss animation" contract there instead of never calling onDismissed.
+const ANDROID_DISMISS_FALLBACK_MS = 300;
+
 /**
  * Medium tier — a bottom sheet with a bouncing badge, for meaningful but
  * routine wins (a goal milestone, a bigger habit). One step up from the
  * small toast, one step below the full-screen "big" celebration.
+ *
+ * `visible` is local state, not a hardcoded `true` — CelebrationContext's
+ * queue must only advance (which can immediately present the *next*
+ * queued Modal) once this Modal has actually finished its native
+ * dismissal, never the instant "Keep going" is tapped. Presenting a new
+ * Modal while this one's native dismiss animation is still running is the
+ * exact iOS two-Modals-in-one-tick race this app has hit twice already
+ * (PRD bug report) — `onDismiss` (fired by RN after the native teardown
+ * completes) is what actually calls `onDismissed`, not the button press.
  */
-export function MediumCelebrationSheet({ event, onClose }: { event: CelebrationEvent; onClose: () => void }) {
+export function MediumCelebrationSheet({ event, onDismissed }: { event: CelebrationEvent; onDismissed: () => void }) {
   const { colors, radius, spacing, typography, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const bounce = useRef(new Animated.Value(0)).current;
+  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     bounce.setValue(0);
     Animated.spring(bounce, { toValue: 1, useNativeDriver: true, friction: 5, tension: 90 }).start();
   }, [event.id, bounce]);
+
+  function requestDismiss() {
+    setVisible(false);
+    if (Platform.OS === 'android') {
+      setTimeout(onDismissed, ANDROID_DISMISS_FALLBACK_MS);
+    }
+  }
 
   const styles = useMemo(
     () =>
@@ -46,7 +68,13 @@ export function MediumCelebrationSheet({ event, onClose }: { event: CelebrationE
   );
 
   return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={requestDismiss}
+      onDismiss={Platform.OS === 'ios' ? onDismissed : undefined}
+    >
       <View style={styles.backdrop}>
         <LinearGradient
           colors={colors.heroGradient}
@@ -70,7 +98,7 @@ export function MediumCelebrationSheet({ event, onClose }: { event: CelebrationE
           </Animated.View>
           <Text style={styles.title}>{event.title}</Text>
           {event.body ? <Text style={styles.subtitle}>{event.body}</Text> : null}
-          <Button label="Keep going" variant="secondary" onPress={onClose} style={styles.button} />
+          <Button label="Keep going" variant="secondary" onPress={requestDismiss} style={styles.button} />
         </LinearGradient>
       </View>
     </Modal>

@@ -28,7 +28,7 @@ export function buildBriefing(
   lastMonth: MonthlySummary | null
 ): string {
   const dayWord = safeToSpend.daysRemaining === 1 ? 'day' : 'days';
-  const base = `You have ${formatMoney(safeToSpend.remainingPool)} available until payday in ${safeToSpend.daysRemaining} ${dayWord}.`;
+  const base = `You have ${formatMoney(safeToSpend.cycleRemainingPool)} available until payday in ${safeToSpend.daysRemaining} ${dayWord}.`;
 
   if (!lastMonth || lastMonth.income === 0) {
     return base;
@@ -83,7 +83,7 @@ export function computeCheckInLine(params: { firstOpenedAt?: string; actedThisSe
       return { topLine: `Welcome to ${brand.name} 👋`, insightOverride: "Let's build your money picture together." };
     }
     if (hoursSince < 24 * 3) {
-      return { topLine: "I'm learning about your money.", insightOverride: 'Add more details so I can guide you better.' };
+      return { topLine: 'Your financial picture is still taking shape.', insightOverride: 'The more you add, the more accurate your financial picture becomes.' };
     }
   }
   return {

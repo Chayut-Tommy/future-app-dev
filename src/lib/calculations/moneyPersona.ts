@@ -16,9 +16,12 @@ export function resolveMoneyPersona(user: UserProfile): MoneyPersona {
 }
 
 export interface MoneyHeroCopy {
-  /** Small uppercase eyebrow label above the headline figure. */
+  /** Small uppercase eyebrow label above the headline figure, shown only
+   * when a real payday/income date is known — the "Available Money" no-
+   * payday state uses fixed copy, not persona variation (PRD ask,
+   * §Adaptive hero: literal "Available Money" / "Choose a balance..."
+   * titles). */
   eyebrowScheduled: string;
-  eyebrowRunway: string;
   /** What to call the estimated lump-sum figure. */
   amountLabel: string;
 }
@@ -26,27 +29,22 @@ export interface MoneyHeroCopy {
 const PERSONA_COPY: Record<MoneyPersona, MoneyHeroCopy> = {
   employee: {
     eyebrowScheduled: 'Available Until Payday',
-    eyebrowRunway: 'Current Cash Position',
     amountLabel: 'Estimated amount remaining',
   },
   freelancer: {
     eyebrowScheduled: 'Available Until Payday',
-    eyebrowRunway: 'Estimated Cash Runway',
     amountLabel: 'Estimated amount remaining',
   },
   retiree: {
     eyebrowScheduled: 'Retirement Income',
-    eyebrowRunway: 'Current Cash Position',
     amountLabel: 'Estimated amount available',
   },
   investor: {
     eyebrowScheduled: 'Passive Income',
-    eyebrowRunway: 'Current Cash Position',
     amountLabel: 'Estimated amount available',
   },
   business_owner: {
     eyebrowScheduled: 'Business Cash Position',
-    eyebrowRunway: 'Business Cash Position',
     amountLabel: 'Estimated amount remaining',
   },
 };
@@ -59,28 +57,9 @@ export const MONEY_PERSONA_LABEL: Record<MoneyPersona, string> = {
   business_owner: 'Business owner',
 };
 
-/** The persona-appropriate copy for the Money hero — pick eyebrowScheduled
- * when a real payday/income date is known, eyebrowRunway when Lulu is
- * falling back to a cash-runway estimate instead (same branching the hero
- * already does; this only supplies the words for each branch). */
+/** The persona-appropriate copy for the Money hero's known-payday state —
+ * the no-payday "Available Money"/"Choose a balance" states use fixed
+ * copy instead (PRD ask, §Adaptive hero). */
 export function computeMoneyHeroCopy(data: AppData): MoneyHeroCopy {
   return PERSONA_COPY[resolveMoneyPersona(data.user)];
 }
-
-export type CashRunwayStatus = 'comfortable' | 'building' | 'running_low';
-
-/** A plain-language band over the existing cashRunwayDays estimate — pure
- * display categorisation of a number already computed by
- * computeSafeToSpend, never a new calculation (PRD ask, §4: "include an
- * overall status: Comfortable / Building / Running Low"). */
-export function cashRunwayStatus(days: number): CashRunwayStatus {
-  if (days >= 90) return 'comfortable';
-  if (days >= 30) return 'building';
-  return 'running_low';
-}
-
-export const CASH_RUNWAY_STATUS_LABEL: Record<CashRunwayStatus, string> = {
-  comfortable: 'Comfortable',
-  building: 'Building',
-  running_low: 'Running Low',
-};
