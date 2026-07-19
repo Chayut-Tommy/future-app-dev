@@ -181,7 +181,25 @@ export interface CreditCard {
   creditLimit: number;
   currentBalance: number;
   dueDay: number; // day of month
+  /** Legacy field, retained for backward compatibility and for the small
+   * set of consumers (reminders.ts's "paying only the minimum" financial-
+   * literacy warning) that specifically need a true contractual-minimum
+   * concept. The Add/Edit Credit Card form no longer collects this — it
+   * only ever gets set by older saved data. Every consumer that wants "what
+   * the user actually plans to repay" must go through
+   * `resolveExpectedMonthlyRepayment()` in creditHealth.ts, not this field
+   * directly (PRD ask: "Minimum payment" was renamed to "Expected monthly
+   * repayment" because a bare contractual minimum materially understated
+   * real planned cashflow for users who pay more than the minimum). */
   minimumPayment: number;
+  /** The amount the user says they normally expect to repay each month —
+   * what drives the What Happens Next repayment event and the bill-like
+   * commitment fed into Available Until Payday / Typical Money Flow /
+   * Typical Monthly Allocation. Optional and additive: undefined for every
+   * card saved before this field existed, resolved via
+   * `resolveExpectedMonthlyRepayment()` (falls back to `minimumPayment` so
+   * an existing user's prior figure is never silently lost or zeroed). */
+  expectedMonthlyRepayment?: number;
   apr?: number;
 }
 

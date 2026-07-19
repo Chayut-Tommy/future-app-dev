@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { AppData, Liability, LiabilityType, RecurringItem } from '../../types/models';
 import { toMonthlyAmount } from './incomeEngine';
+import { resolveExpectedMonthlyRepayment } from './creditHealth';
 
 export type DebtKind = LiabilityType | 'credit_card';
 
@@ -85,8 +86,8 @@ export function computeDebtCoachSummary(data: AppData): DebtCoachSummary {
     // totals here versus every other screen that already normalises (PRD
     // bug report, §D7: figures must reconcile across every screen).
     const monthlyRepayment = linkedCard
-      ? linkedCard.minimumPayment > 0
-        ? linkedCard.minimumPayment
+      ? resolveExpectedMonthlyRepayment(linkedCard) > 0
+        ? resolveExpectedMonthlyRepayment(linkedCard)
         : undefined
       : linkedRecurringItem
       ? toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency)

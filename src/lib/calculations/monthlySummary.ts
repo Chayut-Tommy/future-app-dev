@@ -63,6 +63,21 @@ export function computeAdHocIncome(transactions: AppData['transactions'], from: 
 export interface MonthToDateActivity {
   income: number;
   spend: number;
+  /** Expense transactions dated this calendar month whose paymentSource is
+   * 'cash' or unset (unset already treated as cash by applyTransactionEffect
+   * in AppStateContext — mirrored here, not re-derived). Additive fields
+   * (PRD ask, This Month card, Finding #40) — income/spend keep their exact
+   * existing meaning for every current consumer (Lulu Score, Monthly
+   * Snapshot, Spending Tracker); cashSpend/creditCardSpend/otherSpend are
+   * new, computed once from the same filtered expense list, never a second,
+   * parallel monthly-activity calculation. */
+  cashSpend: number;
+  /** paymentSource === 'credit_card'. */
+  creditCardSpend: number;
+  /** paymentSource === 'loan' or 'other' — deliberately never folded into
+   * cashSpend or creditCardSpend (PRD ask: a loan/debt-funded or
+   * other-funded expense must not silently inflate either of those rows). */
+  otherSpend: number;
 }
 
 /**
@@ -79,10 +94,18 @@ export function computeMonthToDateActivity(data: AppData, today: Date = new Date
   const income = data.transactions
     .filter((t) => t.type === 'income' && new Date(t.date) >= monthStart && new Date(t.date) <= today)
     .reduce((sum, t) => sum + t.amount, 0);
-  const spend = data.transactions
-    .filter((t) => t.type === 'expense' && new Date(t.date) >= monthStart && new Date(t.date) <= today)
+  const monthExpenses = data.transactions.filter(
+    (t) => t.type === 'expense' && new Date(t.date) >= monthStart && new Date(t.date) <= today
+  );
+  const spend = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
+  const cashSpend = monthExpenses
+    .filter((t) => t.paymentSource === 'cash' || t.paymentSource === undefined)
     .reduce((sum, t) => sum + t.amount, 0);
-  return { income, spend };
+  const creditCardSpend = monthExpenses.filter((t) => t.paymentSource === 'credit_card').reduce((sum, t) => sum + t.amount, 0);
+  const otherSpend = monthExpenses
+    .filter((t) => t.paymentSource === 'loan' || t.paymentSource === 'other')
+    .reduce((sum, t) => sum + t.amount, 0);
+  return { income, spend, cashSpend, creditCardSpend, otherSpend };
 }
 
 /**

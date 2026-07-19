@@ -36,6 +36,13 @@ export interface MoneyPlan {
   /** Only set when there's a real, meaningfully positive gap after every
    * known bill, goal and buffer — never a fabricated "extra" figure. */
   surplus: number | null;
+  /** Pure recurring-rate remainder — income minus fixed costs, goals and
+   * Savings Allocation, with no actual-transaction activity mixed in
+   * (passthrough of safeToSpend.discretionaryPool). The basis "Typical
+   * Monthly Allocation"'s Unallocated row must use, never `available` (PRD
+   * ask: that field blends this rate with pay-cycle-to-date spend and
+   * calendar-month ad-hoc income from two different time windows). */
+  discretionaryPool: number;
 }
 
 /**
@@ -113,5 +120,6 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
     emergencySetAside: safeToSpend.savingsAllocationMonthly,
     available,
     surplus,
+    discretionaryPool: safeToSpend.discretionaryPool,
   };
 }

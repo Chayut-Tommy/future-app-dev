@@ -54,6 +54,22 @@ export { computeFixedCosts as computeEssentialExpenses } from './safeToSpend';
  * payments. Deliberately narrower than "essential expenses": rent and
  * utilities are essential but aren't debt repayments, so Debt Health's
  * Repayment Pressure factor needs this, not computeEssentialExpenses.
+ *
+ * Deliberately reads `minimumPayment`, NOT the Expected Monthly Repayment
+ * resolver (PRD ask, regression-protection review): Repayment Pressure
+ * measures debt-servicing burden relative to income, and a higher value
+ * here makes the score WORSE (see luluScore.ts's repaymentFraction — ratio
+ * <=0 scores best, higher ratio scores worse). Expected Monthly Repayment
+ * is a user-editable *intention*, not a contractual obligation or observed
+ * behaviour — routing it here would let a user raise or lower their own
+ * score by editing an unfulfilled plan (understate it to look
+ * lower-pressure, or an unrealistic overstatement would wrongly worsen the
+ * score even though nothing about their real financial position changed).
+ * `minimumPayment` is comparatively harder to game this way: it's no
+ * longer collected by the Add/Edit Credit Card form as a "your normal
+ * plan" figure at all — it specifically represents the contractual minimum
+ * the provider requires, a fact about the card, not the user's stated
+ * intent.
  */
 export function computeDebtRepaymentsMonthly(data: AppData): number {
   const linkedBillRepayments = data.recurringItems

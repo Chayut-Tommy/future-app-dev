@@ -64,7 +64,67 @@ export function SafeToSpendHero({
 }) {
   const { colors, radius, spacing, typography, glow } = useTheme();
   const [breakdownVisible, setBreakdownVisible] = useState(false);
-  const overspent = safeToSpend.hasKnownPayday && safeToSpend.dailyAllowance < 0;
+
+  // Available Until Payday's negative-cycle states are genuinely different
+  // situations that must not share one "you overspent" message (PRD ask,
+  // §Financial state review — a missing/no-balance state is a data-
+  // completeness issue, a real recorded-spending overrun is genuine
+  // overspending, and forward-looking commitments simply exceeding what's
+  // currently held is neither of those — it's the ordinary reality of a
+  // cycle whose income hasn't arrived yet, not a warning sign). Precedence,
+  // highest first: missing balance -> recorded overspend -> commitments
+  // exceed cash -> normal. Missing balance is checked first because the
+  // other two comparisons are unreliable without knowing what cash is even
+  // being compared against — PRD bug report: with $0 recorded spending and
+  // no included balance, the hero was reading "Recorded spending is
+  // currently higher than planned," which recorded spending had nothing to
+  // do with.
+  const hasNegativeCycle = safeToSpend.hasKnownPayday && safeToSpend.dailyAllowance < 0;
+  // A missing balance is a data-completeness problem, not a financial one —
+  // distinguished from "a balance is selected but its value happens to be
+  // low or $0" by whether any account is actually included at all
+  // (includedMoneyBalanceAccounts.length), never by the numeric total alone
+  // (PRD bug report: a selected $0 transaction account was misread as "no
+  // balance selected," pointing the user at a CTA that couldn't fix
+  // anything, since a balance was already selected).
+  const missingBalance = hasNegativeCycle && safeToSpend.includedMoneyBalanceAccounts.length === 0;
+  // Genuine recorded overspend: reconstruct what cycleRemainingPool would
+  // have been without this cycle's recorded variable spending, by adding it
+  // back — spending already reduced includedMoneyBalance dollar-for-dollar,
+  // so this is the actual pre-spend position, not an approximation (PRD ask:
+  // prove the condition rather than assume it; deliberately not
+  // cycleDiscretionaryPool, which is a separate expected-income-rate budget
+  // for Lulu Score's Spending Control factor and can diverge arbitrarily
+  // from the balance-based cycleRemainingPool this hero actually shows).
+  // Uses cashVariableSpendSoFar, not spendSoFarThisCycle — the latter
+  // includes credit-card/loan/other-funded spending, which never actually
+  // reduced includedMoneyBalance, and adding it back would over-credit the
+  // reconstruction (PRD bug report: a commitments-only shortfall with some
+  // credit-card spending recorded was misclassified as a recorded-spending
+  // overrun, since none of that spending ever touched the cash balance this
+  // hero is measuring). Only genuine overspend when the cycle would
+  // otherwise have been non-negative — i.e. recorded spending is
+  // demonstrably the entire cause, not one factor alongside bills/savings/
+  // goals already exceeding cash on their own. This guarantees $0
+  // cash-impacting spend can never trigger this state (pre-spend then
+  // equals post-spend, so a negative post-spend implies a negative pre-spend
+  // too), and a shortfall caused purely by commitments — or entirely by
+  // non-cash spending — is never blamed on cash spending that didn't happen.
+  const cycleRemainingPoolBeforeSpending = safeToSpend.cycleRemainingPool + safeToSpend.cashVariableSpendSoFar;
+  const hasRecordedOverspend =
+    hasNegativeCycle &&
+    !missingBalance &&
+    safeToSpend.cashVariableSpendSoFar > 0 &&
+    cycleRemainingPoolBeforeSpending >= 0;
+  // The portion attributable to spending, not the entire negative balance —
+  // since the pre-spend position was non-negative, the shortfall itself is
+  // exactly what spending is responsible for.
+  const recordedOverspendAmount = -safeToSpend.cycleRemainingPool;
+  // Everything else that keeps the cycle negative: bills, Savings
+  // Allocation and/or goal contributions due before payday simply exceed
+  // the balance currently included — not spending, not missing data.
+  const commitmentsExceedCash = hasNegativeCycle && !missingBalance && !hasRecordedOverspend;
+
   const { goalAllocation } = safeToSpend;
   const hasGoalReservation = safeToSpend.goalContributionsMonthly > 0;
   const goalsUnderfunded = goalAllocation.allocations.length > 0 && !goalAllocation.isFullyFunded;
@@ -102,6 +162,14 @@ export function SafeToSpendHero({
           paddingHorizontal: spacing.lg,
         },
         ctaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
+        warningCtaButton: {
+          marginTop: spacing.md,
+          backgroundColor: colors.warning,
+          borderRadius: radius.pill,
+          paddingVertical: 9,
+          paddingHorizontal: spacing.lg,
+        },
+        warningCtaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
         breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
       }),
     [colors, radius, spacing, typography, glow]
@@ -188,7 +256,11 @@ export function SafeToSpendHero({
     );
   }
 
-  if (overspent) {
+  // State A — no meaningful balance included: a missing-input problem, not
+  // a financial warning. Bills/savings/goals can't be meaningfully compared
+  // against "available cash" until the user has told Navilo which balance
+  // that is (PRD ask).
+  if (missingBalance) {
     return (
       <>
         <View style={[styles.card, styles.cardWarning]}>
@@ -199,8 +271,60 @@ export function SafeToSpendHero({
             </TouchableOpacity>
           </View>
           <Text style={styles.lineWarning}>
-            Recorded spending is currently higher than planned this cycle — about {formatMoney(Math.abs(safeToSpend.cycleRemainingPool))}{' '}
-            over the estimated remainder.
+            Select a balance for Navilo to use in your short-term money estimate — bills, savings and goals can't be compared against
+            your available cash until then.
+          </Text>
+          {onSelectBalances ? (
+            <TouchableOpacity style={styles.warningCtaButton} onPress={onSelectBalances}>
+              <Text style={styles.warningCtaText}>Select balances</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {breakdown}
+      </>
+    );
+  }
+
+  // State C — a genuine recorded-spending overrun: what's actually been
+  // logged this cycle exceeds the cycle's own budget, independent of the
+  // included balance.
+  if (hasRecordedOverspend) {
+    return (
+      <>
+        <View style={[styles.card, styles.cardWarning]}>
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.lineWarning}>
+            Recorded spending is currently about {formatMoney(recordedOverspendAmount)} ahead of the estimated amount for this cycle.
+          </Text>
+        </View>
+        {breakdown}
+      </>
+    );
+  }
+
+  // State B — planned commitments (bills, Savings Allocation, goals)
+  // currently exceed the balance included in this estimate. This is not
+  // overspending and not a missing-input problem — it's the ordinary
+  // reality of a cycle whose income hasn't arrived yet (PRD ask: must not
+  // imply money has moved or that the user did anything wrong).
+  if (commitmentsExceedCash) {
+    return (
+      <>
+        <View style={[styles.card, styles.cardWarning]}>
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.lineWarning}>
+            Your planned bills, savings and goals are currently about {formatMoney(Math.abs(safeToSpend.cycleRemainingPool))} above the
+            balance included in this estimate.
           </Text>
         </View>
         {breakdown}

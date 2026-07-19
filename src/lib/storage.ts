@@ -38,8 +38,22 @@ export function createEmptyAppData(): AppData {
  * (PRD bug report, §10/§P0: "duplicate credit cards"). Only merges cards
  * that match on every real-world field, so two genuinely distinct cards
  * from the same issuer (rare, but real) are never silently combined.
+ *
+ * Deliberately does NOT include `expectedMonthlyRepayment` in the signature
+ * (PRD ask, regression-protection review): it's a mutable planning field, and
+ * cards are addressed by a stable `id` everywhere they're updated
+ * (`updateCreditCard` replaces in place via `.map(c => c.id === id ? ... :
+ * c)`, never appends a second record) — so this function can never actually
+ * encounter "the same card before and after an edit" as two separate array
+ * entries to (mis)merge or fail to merge. The double-tap scenario this
+ * function exists for produces two *freshly created* records from the same
+ * form submission, which share identical values on every field including
+ * this one — so including or excluding it from the signature doesn't change
+ * whether that case is caught. With no demonstrated benefit and a mutable
+ * field's presence in an identity signature being inherently riskier to
+ * reason about, it's left out.
  */
-function dedupeCreditCards(data: AppData): AppData {
+export function dedupeCreditCards(data: AppData): AppData {
   const seen = new Set<string>();
   const creditCards = data.creditCards.filter((c) => {
     const signature = [c.issuer, c.creditLimit, c.currentBalance, c.dueDay, c.minimumPayment, c.apr ?? ''].join('|');

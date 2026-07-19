@@ -49,6 +49,24 @@ export function computeCreditAggregate(cards: CreditCard[]): CreditAggregate {
   return { totalLimit, totalUsed, utilisation, availableCredit: totalLimit - totalUsed };
 }
 
+// Guards against undefined/NaN/Infinity in a per-card balance before
+// summing (PRD ask: malformed legacy data must never render NaN/Infinity/
+// undefined) — negative values pass through unchanged (a card genuinely in
+// credit is real information, not an error to clamp away).
+function sanitizeBalance(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * The single source of truth for "current credit-card balance" totals — used
+ * by both ThisMonthCard's rendered balance row and MoneyScreen's selector
+ * feeding it, so a validation test against this function is a direct test
+ * of what the UI actually shows (PRD ask, regression-protection review §7).
+ */
+export function computeCreditCardBalanceTotal(cards: { currentBalance: number }[]): number {
+  return cards.reduce((sum, c) => sum + sanitizeBalance(c.currentBalance), 0);
+}
+
 /**
  * Basic Phase-1 credit health score: utilisation only. The full 5-component
  * formula (PRD §13 — payment history, debt trend, cash available,
@@ -218,12 +236,81 @@ export function creditCardLiabilityInsight(card: CreditCard, today: Date = new D
   return null;
 }
 
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+// The last real calendar day of a given (year, month) — month may be any
+// integer, including <0 or >11; JS's Date constructor normalizes the
+// year/month rollover correctly on its own (only the *day* argument's
+// overflow was ever the problem here, per effectiveDueDay below).
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+// PRD ask (date audit): a user who enters due day 31 expects an event on
+// the last real day of a short month (e.g. 30 April), not a silent
+// overflow into the following month. JS's raw `new Date(year, month, 31)`
+// for April instead rolls forward to 1 May — correct for a *day count*,
+// wrong for a *monthly billing-day* concept. This clamps the configured
+// day to the target month's actual last day before constructing the date,
+// exactly the `min(configuredDueDay, lastDayOfTargetMonth)` rule.
+function effectiveDueDay(configuredDueDay: number, year: number, month: number): number {
+  return Math.min(configuredDueDay, lastDayOfMonth(year, month));
+}
+
+// PRD bug report (date audit): `today` previously compared directly against
+// `due` (always constructed at local midnight of the target day) without
+// normalizing `today` to midnight first. Since this function is called with
+// the real current moment (never literal midnight in practice), a due day
+// equal to today's date was always found "in the past" (midnight today <
+// right-now) and incorrectly rolled forward a full month — "due today"
+// never actually showed as due today. Normalizing both sides to local
+// midnight fixes this for every consumer (interest estimates, reminders,
+// due-date status, the What Happens Next timeline event).
 export function daysUntilDue(dueDay: number, today: Date = new Date()): number {
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  let due = new Date(year, month, dueDay);
-  if (due < today) {
-    due = new Date(year, month + 1, dueDay);
+  const normalizedToday = startOfDay(today);
+  const year = normalizedToday.getFullYear();
+  const month = normalizedToday.getMonth();
+  let due = new Date(year, month, effectiveDueDay(dueDay, year, month));
+  if (due < normalizedToday) {
+    due = new Date(year, month + 1, effectiveDueDay(dueDay, year, month + 1));
   }
-  return Math.ceil((due.getTime() - today.getTime()) / 86400000);
+  return Math.ceil((due.getTime() - normalizedToday.getTime()) / 86400000);
+}
+
+/** Whether the value is a genuine, usable expected-repayment amount — never
+ * a fabricated $0 event for blank/zero/negative/non-finite input (PRD ask,
+ * Finding #41: a $0 event rendered as a nonsensical "+$0" inflow-styled
+ * outflow). Negative amounts are rejected outright — this field represents
+ * a planned repayment, not a refund/reversal. */
+export function isValidExpectedRepayment(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * The amount the user actually plans to repay each month — what drives the
+ * What Happens Next repayment event and every "bill-like commitment" that
+ * reads a credit card's repayment (Available Until Payday's cycleBillsExpected,
+ * Typical Money Flow / Typical Monthly Allocation's Bills row, Debt Overview's
+ * monthly repayment figure, the payoff-acceleration insight). Prefers the new
+ * `expectedMonthlyRepayment` field; falls back to the legacy `minimumPayment`
+ * so an existing user's prior figure is never silently lost or zeroed just
+ * because they haven't re-saved the card since this field was introduced.
+ * Never used by reminders.ts's "paying only the minimum may cost more in
+ * interest" financial-literacy warning, `computeDebtRepaymentsMonthly`
+ * (Navilo Score's Repayment Pressure factor), or `computeCardPayoffInsight`
+ * — those specifically need the true contractual-minimum concept, which
+ * only `minimumPayment` (its own independently user-editable field, see
+ * AddCreditCardModal.tsx) can represent; applying this resolver there would
+ * either read a user's own unvalidated repayment plan back to them as if it
+ * were "the minimum" (reminders/payoff insight), or let that same editable
+ * plan silently override a debt-servicing-burden score factor a lower
+ * stated figure could otherwise game (Navilo Score) — see wealthDefinitions.ts's
+ * computeDebtRepaymentsMonthly doc comment for the full rationale.
+ */
+export function resolveExpectedMonthlyRepayment(card: CreditCard): number {
+  if (isValidExpectedRepayment(card.expectedMonthlyRepayment)) return card.expectedMonthlyRepayment;
+  if (isValidExpectedRepayment(card.minimumPayment)) return card.minimumPayment;
+  return 0;
 }

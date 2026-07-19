@@ -8,6 +8,20 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { buildDebtReducedCelebration } from '../../lib/celebrations';
 import { brand } from '../../lib/brand';
+import { resolveExpectedMonthlyRepayment } from '../../lib/calculations/creditHealth';
+
+// Strips $, commas, spaces and other non-numeric characters before parsing
+// (PRD ask: handle pasted formatted currency) — scoped to the repayment
+// fields rather than applied app-wide, since the other numeric inputs in
+// this form share a pre-existing, unrelated raw-parseFloat pattern not in
+// scope here. Rejects negative/non-finite values outright — neither
+// repayment field represents a refund or reversal.
+function parseRepaymentAmount(text: string): number {
+  const cleaned = text.replace(/[^0-9.-]/g, '');
+  const value = parseFloat(cleaned);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return value;
+}
 
 export function AddCreditCardModal({
   visible,
@@ -26,7 +40,8 @@ export function AddCreditCardModal({
   const [limit, setLimit] = useState('');
   const [balance, setBalance] = useState('');
   const [dueDay, setDueDay] = useState('');
-  const [minPayment, setMinPayment] = useState('');
+  const [expectedRepayment, setExpectedRepayment] = useState('');
+  const [minRequiredPayment, setMinRequiredPayment] = useState('');
   const [apr, setApr] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -39,14 +54,29 @@ export function AddCreditCardModal({
       setLimit(String(editCard.creditLimit));
       setBalance(String(editCard.currentBalance));
       setDueDay(String(editCard.dueDay));
-      setMinPayment(String(editCard.minimumPayment));
+      // Legacy compatibility bridge, not an equivalence (PRD ask, §3): pre-
+      // fills from whichever the resolver finds — the new field if already
+      // set, otherwise the legacy minimumPayment value — so an existing
+      // user's prior figure is visible and editable here rather than
+      // appearing to have reset to blank, and What Happens Next doesn't
+      // silently lose a commitment the user already told Navilo about. This
+      // does NOT claim the legacy minimum IS the user's normal repayment —
+      // it's shown for the user to confirm or correct, and every save from
+      // this point writes their explicit answer to expectedMonthlyRepayment.
+      const resolved = resolveExpectedMonthlyRepayment(editCard);
+      setExpectedRepayment(resolved > 0 ? String(resolved) : '');
+      // The true contractual minimum — its own field, shown and edited
+      // independently of the above (PRD ask, §2: the two concepts must stay
+      // separate, never merged into one input).
+      setMinRequiredPayment(editCard.minimumPayment > 0 ? String(editCard.minimumPayment) : '');
       setApr(editCard.apr ? String(Math.round(editCard.apr * 10000) / 100) : '');
     } else {
       setIssuer('');
       setLimit('');
       setBalance('');
       setDueDay('');
-      setMinPayment('');
+      setExpectedRepayment('');
+      setMinRequiredPayment('');
       setApr('');
     }
     setSaving(false);
@@ -69,7 +99,14 @@ export function AddCreditCardModal({
       creditLimit,
       currentBalance: parseFloat(balance) || 0,
       dueDay: due,
-      minimumPayment: parseFloat(minPayment) || 0,
+      // Two separate, independently-entered figures (PRD ask, §2) — neither
+      // is derived from or overwrites the other. minimumPayment is the true
+      // contractual minimum (feeds reminders.ts's minimum-payment warning
+      // and computeCardPayoffInsight); expectedMonthlyRepayment is the
+      // user's own planned amount (feeds What Happens Next, Available
+      // Until Payday's in-cycle commitment, Typical Money Flow/Allocation).
+      minimumPayment: parseRepaymentAmount(minRequiredPayment),
+      expectedMonthlyRepayment: parseRepaymentAmount(expectedRepayment),
       apr: !isNaN(aprValue) && aprValue > 0 ? aprValue / 100 : undefined,
     };
     if (editCard) {
@@ -157,16 +194,34 @@ export function AddCreditCardModal({
         </View>
       </View>
 
-      <View style={styles.row}>
-        <View style={styles.half}>
-          <Text style={styles.label}>Due day of month</Text>
-          <TextInput style={styles.input} placeholder="25" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dueDay} onChangeText={setDueDay} />
-        </View>
-        <View style={styles.half}>
-          <Text style={styles.label}>Minimum payment</Text>
-          <TextInput style={styles.input} placeholder="$0" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={minPayment} onChangeText={setMinPayment} />
-        </View>
-      </View>
+      <Text style={styles.label}>Due day of month</Text>
+      <TextInput style={styles.input} placeholder="25" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dueDay} onChangeText={setDueDay} />
+
+      <Text style={styles.label}>Expected monthly repayment</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="$0"
+        placeholderTextColor={colors.textMuted}
+        keyboardType="decimal-pad"
+        value={expectedRepayment}
+        onChangeText={setExpectedRepayment}
+      />
+      <Text style={[styles.benefitLine, { marginTop: -spacing.sm }]}>How much do you normally expect to repay each month?</Text>
+      <Text style={[styles.benefitLine, { marginBottom: spacing.sm }]}>This amount will appear as an upcoming cash outflow in What Happens Next.</Text>
+
+      <Text style={styles.label}>Minimum required payment (optional)</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="$0"
+        placeholderTextColor={colors.textMuted}
+        keyboardType="decimal-pad"
+        value={minRequiredPayment}
+        onChangeText={setMinRequiredPayment}
+      />
+      <Text style={[styles.benefitLine, { marginTop: -spacing.sm, marginBottom: spacing.sm }]}>
+        The minimum amount shown on your statement — used only for minimum-payment interest warnings and payoff comparisons, separate
+        from what you expect to actually repay.
+      </Text>
 
       <Text style={styles.label}>Interest rate / APR % (optional)</Text>
       <TextInput

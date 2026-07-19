@@ -11,6 +11,7 @@ import {
   computeCardPayoffInsight,
   computeCardUtilisationInsight,
   daysUntilDue,
+  resolveExpectedMonthlyRepayment,
   utilisationStatus,
   dueDateStatus,
   Tone,
@@ -174,7 +175,7 @@ export function CardsScreen() {
                 <Text style={[styles.utilLabel, { color: toneColor(utilStatus.tone) }]}>
                   {Math.round(util * 100)}% · {utilStatus.label}
                 </Text>
-                <Text style={styles.minPaymentText}>min ${item.minimumPayment.toLocaleString()}</Text>
+                <Text style={styles.minPaymentText}>repay ${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()}/mo</Text>
               </View>
               {utilisationInsight ? (
                 <View style={styles.insightBox}>

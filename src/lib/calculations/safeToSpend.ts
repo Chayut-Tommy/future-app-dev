@@ -1,10 +1,10 @@
 import { AppData, PayFrequency } from '../../types/models';
 import { computeGoalAllocation, GoalAllocationResult } from './goalAllocation';
 import { toMonthlyAmount } from './incomeEngine';
-import { computeMoneyAvailableBalances, listMoneyAvailableAccounts } from './liquidAssets';
+import { computeMoneyAvailableBalances, listMoneyAvailableAccounts, resolveIncludeInMoneyCalculations } from './liquidAssets';
 import { computeAdHocIncome } from './monthlySummary';
 import { recurringOccurrencesInRange } from './recurringSchedule';
-import { daysUntilDue } from './creditHealth';
+import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { resolveSavingsAllocationMonthly } from './savingsAllocation';
 
 export interface SafeToSpendResult {
@@ -35,8 +35,37 @@ export interface SafeToSpendResult {
   plannedDailyAllowance: number;
   /** Total expense transactions logged so far this cycle — a named field
    * for the "how Lulu calculated this" breakdown, rather than making
-   * callers reverse-engineer it from discretionaryPool - remainingPool. */
+   * callers reverse-engineer it from discretionaryPool - remainingPool.
+   * Includes every payment source (cash, credit card, loan, other) — a
+   * measure of total spending activity regardless of what it was funded
+   * from, used by Lulu Score's Spending Control factor. NOT scoped to what
+   * actually reduced `includedMoneyBalance` — see `cashVariableSpendSoFar`
+   * below for that. */
   spendSoFarThisCycle: number;
+  /** The subset of `spendSoFarThisCycle` that actually reduced the balance
+   * represented in `includedMoneyBalance` — i.e. expenses with
+   * `paymentSource` unset or `'cash'`, and only counted at all if the
+   * single Cash asset those expenses move (`applyTransactionEffect` in
+   * AppStateContext, `data.assets.find(a => a.type === 'cash')`) both
+   * exists and is itself currently included in Money calculations. Credit
+   * card, loan, and 'other'-sourced expenses never reduce
+   * `includedMoneyBalance` (they grow a separate liability, or nothing),
+   * so they're excluded here even though they're part of
+   * `spendSoFarThisCycle`. Data-model limitation: a Transaction doesn't
+   * record which specific asset it affected — this is inferred
+   * structurally from `paymentSource` plus "is there an included Cash
+   * asset," the most precise scope the current model supports. Exists so
+   * Available Until Payday's hero can reconstruct "the cash position
+   * before this cycle's recorded spending" without over-crediting spend
+   * that never touched the cash it's measuring (PRD bug report: a
+   * commitments-only shortfall with $250 of credit-card spending was
+   * misclassified as a recorded-spending overrun, because
+   * `spendSoFarThisCycle` counted the credit-card spend even though it
+   * never reduced `includedMoneyBalance`). Never used for
+   * `spendSoFarThisCycle`, Spending Tracker, Monthly Snapshot, or Navilo
+   * Score — those intentionally keep reading total activity regardless of
+   * funding source. */
+  cashVariableSpendSoFar: number;
   /** True only when the user has an actual confirmed next-payday date.
    * Everything else (irregular income, or a regular income with no date
    * yet entered) must never present a daily figure as if a real payday
@@ -139,8 +168,12 @@ export function computeFixedCosts(data: AppData): number {
   const fixedExpensesMonthly = data.recurringItems
     .filter((item) => item.type === 'expense' && item.isFixed && item.active)
     .reduce((sum, item) => sum + toMonthlyAmount(item.amount, item.frequency), 0);
-  const creditCardMinimums = data.creditCards.reduce((sum, card) => sum + card.minimumPayment, 0);
-  return fixedExpensesMonthly + creditCardMinimums;
+  // Each card's resolved expected repayment (PRD ask, Finding #41) — not
+  // the raw minimumPayment field — so a user who plans to repay more than
+  // the contractual minimum sees that larger, more realistic commitment
+  // reflected in their fixed costs, exactly like any other bill.
+  const creditCardRepayments = data.creditCards.reduce((sum, card) => sum + resolveExpectedMonthlyRepayment(card), 0);
+  return fixedExpensesMonthly + creditCardRepayments;
 }
 
 export function computeSafeToSpend(data: AppData, today: Date = new Date()): SafeToSpendResult {
@@ -186,6 +219,26 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     )
     .reduce((sum, t) => sum + t.amount, 0);
 
+  // The subset that actually reduced includedMoneyBalance — see the
+  // SafeToSpendResult doc comment for why this can't just be "every
+  // paymentSource==='cash' expense": a cash-paid expense only really
+  // touches the balance this file measures if the single Cash asset it
+  // moves (applyTransactionEffect's `data.assets.find(a => a.type ===
+  // 'cash')`) both exists and is itself included in Money calculations.
+  const cashAsset = data.assets.find((a) => a.type === 'cash');
+  const cashAssetIsIncluded = !!cashAsset && resolveIncludeInMoneyCalculations(cashAsset);
+  const cashVariableSpendSoFar = cashAssetIsIncluded
+    ? data.transactions
+        .filter(
+          (t) =>
+            t.type === 'expense' &&
+            (t.paymentSource === 'cash' || t.paymentSource === undefined) &&
+            new Date(t.date) >= cycleStart &&
+            new Date(t.date) <= today
+        )
+        .reduce((sum, t) => sum + t.amount, 0)
+    : 0;
+
   const remainingPool = discretionaryPool - variableSpendSoFar;
 
   const daysRemaining = Math.max(
@@ -215,12 +268,17 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     cycleEnd
   );
   const cycleRecurringBills = billOccurrences.reduce((sum, o) => sum + o.item.amount, 0);
-  const cycleCreditCardMinimums = data.creditCards.reduce((sum, card) => {
+  // Each card's resolved expected repayment (PRD ask, Finding #41), counted
+  // only when its due date actually falls within this cycle — same
+  // resolver used everywhere else a credit card's repayment commitment
+  // feeds a calculation, so Available Until Payday can never disagree with
+  // Typical Money Flow/Allocation about what a card "costs" this cycle.
+  const cycleCreditCardRepayments = data.creditCards.reduce((sum, card) => {
     const daysUntil = daysUntilDue(card.dueDay, today);
     const dueDate = new Date(startOfDay(today).getTime() + daysUntil * 86400000);
-    return dueDate.getTime() <= cycleEnd.getTime() ? sum + card.minimumPayment : sum;
+    return dueDate.getTime() <= cycleEnd.getTime() ? sum + resolveExpectedMonthlyRepayment(card) : sum;
   }, 0);
-  const cycleBillsExpected = cycleRecurringBills + cycleCreditCardMinimums;
+  const cycleBillsExpected = cycleRecurringBills + cycleCreditCardRepayments;
 
   // Savings/goal targets are a monthly policy, not a dated event of their
   // own — this cycle's fair share is the monthly figure prorated by how
@@ -282,6 +340,7 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     todaysSpend,
     plannedDailyAllowance,
     spendSoFarThisCycle: variableSpendSoFar,
+    cashVariableSpendSoFar,
     hasKnownPayday,
     includedMoneyBalance,
     includedMoneyBalanceAccounts,

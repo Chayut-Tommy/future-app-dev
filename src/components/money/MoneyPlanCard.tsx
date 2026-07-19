@@ -5,6 +5,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { computeMoneyPlan } from '../../lib/calculations/moneyPlan';
+import { deriveDisplayedWaterfall } from '../../lib/calculations/moneyWaterfall';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { DebtCoachSheet } from '../debt/DebtCoachSheet';
 import { brand } from '../../lib/brand';
@@ -15,14 +16,24 @@ function formatMoney(value: number): string {
 }
 
 /**
- * "{brand.name} Money Allocation" — a waterfall, not a ledger: Income → Bills →
+ * "Typical Monthly Allocation" — a waterfall, not a ledger: Income → Bills →
  * Savings → Goals → Unallocated, so it's immediately obvious where every
- * dollar is currently allocated (PRD ask, §6). The concrete dated view of
- * salary/bills already lives in the "What happens next" timeline above
- * this card — repeating it here just duplicated the same information, so
- * this card now only answers "where does it go," not "when." Every number
- * reuses the exact same computeMoneyPlan/computeSafeToSpend engines as
- * Money Flow and the hero, so nothing here can contradict them.
+ * dollar of a typical month is allocated (PRD ask, §6). The concrete dated
+ * view of salary/bills already lives in the "What happens next" timeline
+ * above this card — repeating it here just duplicated the same information,
+ * so this card now only answers "where does it typically go," not "when."
+ *
+ * Every row here is a pure recurring-rate figure (income/bills/savings/
+ * goals/unallocated-or-shortfall) — deliberately never blended with actual
+ * transaction activity from any calendar window (PRD ask: "Typical" must not
+ * silently mix in ad-hoc income or pay-cycle-to-date spend, which is what the
+ * old `plan.available` did — `plan.available` stays untouched for Wealth's
+ * "Estimated wealth change this month," which intentionally wants the
+ * actual-activity-inclusive figure). Unallocated/Plan shortfall reads a
+ * locally derived signed `typicalNet` (income − bills − savings − goals),
+ * not `plan.discretionaryPool` — that field floors at 0 for callers that
+ * need a non-negative allowance (e.g. the hero's cycle math), which would
+ * hide a genuine shortfall behind a misleading $0 here (PRD ask).
  */
 export function MoneyPlanCard() {
   const { data } = useAppState();
@@ -34,12 +45,28 @@ export function MoneyPlanCard() {
   const plan = useMemo(() => computeMoneyPlan(data), [data]);
   const hasDebt = data.liabilities.length > 0;
   const income = data.user.monthlyIncome;
+  // Bills/Savings/Goals rounded INDEPENDENTLY (never as a combined figure —
+  // Savings and Goals are separate displayed rows here, unlike Typical
+  // Money Flow's single combined row), then Unallocated/Plan shortfall is
+  // derived as a balancing plug from those already-rounded values —
+  // guarantees the five numbers actually on screen always sum exactly (PRD
+  // bug report: independently rounding a combined Savings+Goals figure, or
+  // independently rounding the raw net, can each disagree from the sum of
+  // the separately-displayed rows by $1). Shared with Typical Money Flow
+  // via deriveDisplayedWaterfall so the two cards can't drift onto
+  // different rounding behaviour.
+  const { displayedIncome, displayedDeductions, displayedNet: typicalNet } = deriveDisplayedWaterfall(income, [
+    plan.billsSetAside,
+    plan.emergencySetAside,
+    plan.goalsSetAside,
+  ]);
+  const [displayedBills, displayedSavings, displayedGoals] = displayedDeductions;
 
   const steps = [
-    { key: 'income', label: 'Income', value: income, icon: 'cash' as const, iconColor: colors.accent, iconBg: colors.accentSoft, sign: 1 },
-    { key: 'bills', label: 'Bills', value: plan.billsSetAside, icon: 'calendar' as const, iconColor: colors.navy, iconBg: colors.navySoft, sign: -1 },
-    { key: 'savings', label: 'Savings', value: plan.emergencySetAside, icon: 'trending-up' as const, iconColor: colors.aiBlue, iconBg: colors.aiBlueSoft, sign: -1 },
-    { key: 'goals', label: 'Goals', value: plan.goalsSetAside, icon: 'flag' as const, iconColor: colors.purple, iconBg: colors.purpleSoft, sign: -1 },
+    { key: 'income', label: 'Income', value: displayedIncome, icon: 'cash' as const, iconColor: colors.accent, iconBg: colors.accentSoft, sign: 1 },
+    { key: 'bills', label: 'Bills', value: displayedBills, icon: 'calendar' as const, iconColor: colors.navy, iconBg: colors.navySoft, sign: -1 },
+    { key: 'savings', label: 'Savings', value: displayedSavings, icon: 'trending-up' as const, iconColor: colors.aiBlue, iconBg: colors.aiBlueSoft, sign: -1 },
+    { key: 'goals', label: 'Goals', value: displayedGoals, icon: 'flag' as const, iconColor: colors.purple, iconBg: colors.purpleSoft, sign: -1 },
   ];
 
   const styles = useMemo(
@@ -83,8 +110,8 @@ export function MoneyPlanCard() {
 
   return (
     <SectionCard>
-      <Text style={styles.title}>{brand.name} Money Allocation</Text>
-      <Text style={styles.subtitle}>{plan.monthLabel} — where every dollar is currently allocated</Text>
+      <Text style={styles.title}>Typical Monthly Allocation</Text>
+      <Text style={styles.subtitle}>Based on your typical monthly setup.</Text>
 
       {income <= 0 ? (
         <Text style={styles.emptyText}>Add your income and {brand.name} will map out your money plan here.</Text>
@@ -113,12 +140,16 @@ export function MoneyPlanCard() {
           <View style={styles.divider} />
 
           <View style={styles.unallocatedRow}>
-            <Text style={styles.unallocatedLabel}>Unallocated</Text>
-            <Text style={styles.unallocatedValue}>{formatMoney(plan.available)}</Text>
+            <Text style={styles.unallocatedLabel}>{typicalNet >= 0 ? 'Unallocated' : 'Plan shortfall'}</Text>
+            <Text style={[styles.unallocatedValue, typicalNet < 0 ? { color: colors.warning } : null]}>{formatMoney(Math.abs(typicalNet))}</Text>
           </View>
-          <Text style={styles.unallocatedExplainer}>Available after planned bills, savings and goals.</Text>
+          <Text style={styles.unallocatedExplainer}>
+            {typicalNet >= 0
+              ? 'Typically left over after planned bills, savings and goals.'
+              : 'Planned bills, savings and goals typically add up to more than a normal month\'s income.'}
+          </Text>
 
-          {plan.surplus ? (
+          {typicalNet > 50 ? (
             <View style={styles.surplusBox}>
               <Text style={styles.surplusText}>Consider putting this toward investing, extra savings or your goals.</Text>
               <View style={styles.surplusActions}>

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { AppData } from '../../types/models';
 import { computeSafeToSpend, cycleLengthDays } from './safeToSpend';
-import { daysUntilDue } from './creditHealth';
+import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { recurringOccurrencesInRange } from './recurringSchedule';
 
 export type TimelineEventKind = 'income' | 'bill' | 'mortgage' | 'credit_card' | 'savings' | 'goal';
@@ -100,8 +100,18 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
     });
   }
 
+  // A credit-card repayment only ever appears here when the user has told
+  // Navilo they actually plan to repay a positive amount (PRD bug report,
+  // Finding #41: a $0 event rendered as a nonsensical "+$0" — the fix is to
+  // never generate the event at all for zero/blank/invalid/negative input,
+  // not just to fix its sign). Deliberately not gated on currentBalance > 0
+  // — a planned repayment the user has explicitly set is real information
+  // even if the balance happens to be zero right now (it may change before
+  // the due date; PRD ask: never silently suppress a user's own entered
+  // plan).
   for (const card of data.creditCards) {
-    if (card.currentBalance <= 0) continue;
+    const expectedRepayment = resolveExpectedMonthlyRepayment(card);
+    if (expectedRepayment <= 0) continue;
     const daysUntil = daysUntilDue(card.dueDay, today);
     if (daysUntil > horizonDays) continue;
     const dueDate = new Date(today.getTime() + daysUntil * 86400000);
@@ -111,9 +121,9 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
       daysUntil,
       kind: 'credit_card',
       icon: 'card',
-      label: `${card.label} payment due`,
-      sublabel: card.minimumPayment > 0 ? `Minimum ${Math.round(card.minimumPayment).toLocaleString()}` : undefined,
-      amount: -card.minimumPayment,
+      label: `${card.label} credit card repayment`,
+      sublabel: 'Based on what you expect to repay',
+      amount: -expectedRepayment,
     });
   }
 
