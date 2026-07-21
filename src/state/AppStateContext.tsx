@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import {
   AppData,
+  AppliedBalanceEffect,
   Asset,
+  BalanceEffectMode,
   CreditCard,
   Goal,
   Liability,
@@ -119,19 +121,16 @@ function ensureCashAsset(data: AppData): { assets: Asset[]; cashAssetId: string 
   return { assets: [...data.assets, created], cashAssetId: created.id };
 }
 
-// Applies (sign=1) or reverses (sign=-1) one transaction's effect on the
-// Wealth picture. Income always grows Cash (creating it on first use — money
-// arriving is unambiguous). Expenses only move Wealth when there's somewhere
-// real for them to come from:
-//  - paid from Cash: only if a Cash asset already exists (PRD ask: never
-//    invent a negative Cash asset just because an expense was logged before
-//    any starting balance was set — the expense still shows in Money, it
-//    just doesn't touch Wealth yet).
-//  - paid from a credit card / loan: increases that specific liability,
-//    which is the only case where debt should grow from a purchase.
-//  - 'other': tracked in Money only, by design (e.g. a cash gift spent
-//    immediately, or a source the user doesn't want reflected in Wealth).
-function applyTransactionEffect(data: AppData, t: Omit<Transaction, 'id'> | Transaction, sign: 1 | -1): AppData {
+// Legacy fallback ONLY (regression-protection review, Stream B1): re-derives
+// an effect from a transaction's current fields, byte-for-byte the same
+// logic every transaction was handled with before appliedBalanceEffect
+// existed. Used exclusively when reversing a transaction whose
+// balanceEffect is undefined — i.e. it predates this model and never had a
+// snapshot captured. Every transaction created or edited from here on
+// always carries an explicit balanceEffect and a maintained
+// appliedBalanceEffect, so this path never runs for new data; it exists
+// purely so old, unmigrated data keeps behaving exactly as it always has.
+function legacyApplyTransactionEffect(data: AppData, t: Omit<Transaction, 'id'> | Transaction, sign: 1 | -1): AppData {
   if (t.type === 'income') {
     const { assets, cashAssetId } = ensureCashAsset(data);
     const updatedAssets = assets.map((a) => (a.id === cashAssetId ? { ...a, currentValue: a.currentValue + sign * t.amount } : a));
@@ -143,10 +142,6 @@ function applyTransactionEffect(data: AppData, t: Omit<Transaction, 'id'> | Tran
   if (source === 'cash') {
     const existing = data.assets.find((a) => a.type === 'cash');
     if (!existing) return data;
-    // Floored at 0 — Cash should never read as a negative asset (PRD ask).
-    // Applying an expense larger than the current balance is treated as
-    // spending the cash down to zero; the same floor applies symmetrically
-    // when reversing on edit/delete.
     const updatedAssets = data.assets.map((a) =>
       a.id === existing.id ? { ...a, currentValue: Math.max(0, a.currentValue - sign * t.amount) } : a
     );
@@ -171,6 +166,162 @@ function applyTransactionEffect(data: AppData, t: Omit<Transaction, 'id'> | Tran
   return data;
 }
 
+// Decides what balance effect a transaction SHOULD have — pure, never
+// mutates anything, and never itself decides what was already applied
+// (that's what appliedBalanceEffect records, and applyEffectDelta below
+// acts on). paymentSource stays a purely factual record of how the money
+// moved regardless of this decision; balanceEffect is the separate,
+// independent question of whether Navilo should act on that fact by
+// updating a stored balance (regression-protection review, Stream B1 §1-2).
+// Returns undefined when balanceEffect is 'none', or when the relevant
+// target (Cash asset / linked card / linked liability) doesn't exist —
+// never fabricates one on the expense side (matches the long-standing rule
+// that an expense never conjures a Cash asset out of nowhere).
+function computeBalanceEffect(
+  data: AppData,
+  t: { type: 'income' | 'expense'; amount: number; paymentSource?: Transaction['paymentSource']; creditCardId?: string; liabilityId?: string; balanceEffect: BalanceEffectMode }
+): AppliedBalanceEffect | undefined {
+  if (t.balanceEffect === 'none') return undefined;
+
+  if (t.type === 'income') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return undefined;
+    return { targetKind: 'asset', targetId: cashAsset.id, delta: t.amount };
+  }
+
+  const source = t.paymentSource ?? 'cash';
+
+  if (source === 'cash') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return undefined;
+    return { targetKind: 'asset', targetId: cashAsset.id, delta: -t.amount };
+  }
+
+  if (source === 'credit_card' && t.creditCardId) {
+    const card = data.creditCards.find((c) => c.id === t.creditCardId);
+    if (!card) return undefined;
+    return { targetKind: 'credit_card', targetId: card.id, delta: t.amount };
+  }
+
+  if (source === 'loan' && t.liabilityId) {
+    const liability = data.liabilities.find((l) => l.id === t.liabilityId);
+    if (!liability) return undefined;
+    return { targetKind: 'liability', targetId: liability.id, delta: t.amount };
+  }
+
+  return undefined;
+}
+
+// Applies (sign=1) or reverses (sign=-1) an already-decided effect — never
+// re-derives what the effect should be (computeBalanceEffect's job), and
+// never re-derives it from a transaction's current fields either, which is
+// exactly the gap that let a "record only" edit's stale effect get reversed
+// against the wrong balance (regression-protection review, Stream B1 §2-3:
+// "a reversal must always negate the last balance delta Navilo actually
+// applied, not derive an effect from the transaction's current editable
+// fields"). A target that no longer exists (deleted independently) is a
+// safe, silent no-op — never an error, never redirected to a different
+// target, never fabricated against a new one.
+function applyEffectDelta(data: AppData, effect: AppliedBalanceEffect | undefined, sign: 1 | -1): AppData {
+  if (!effect) return data;
+
+  if (effect.targetKind === 'asset') {
+    const existing = data.assets.find((a) => a.id === effect.targetId);
+    if (!existing) return data;
+    // Floored at 0 — Cash should never read as a negative asset (PRD ask).
+    const updatedAssets = data.assets.map((a) =>
+      a.id === existing.id ? { ...a, currentValue: Math.max(0, a.currentValue + sign * effect.delta) } : a
+    );
+    return { ...data, assets: updatedAssets };
+  }
+
+  if (effect.targetKind === 'credit_card') {
+    const card = data.creditCards.find((c) => c.id === effect.targetId);
+    if (!card) return data;
+    const updatedCard: CreditCard = { ...card, currentBalance: card.currentBalance + sign * effect.delta };
+    const withCard = { ...data, creditCards: data.creditCards.map((c) => (c.id === card.id ? updatedCard : c)) };
+    return upsertCreditCardLiability(withCard, updatedCard);
+  }
+
+  if (effect.targetKind === 'liability') {
+    const existing = data.liabilities.find((l) => l.id === effect.targetId);
+    if (!existing) return data;
+    const updatedLiabilities = data.liabilities.map((l) =>
+      l.id === existing.id ? { ...l, currentBalance: Math.max(0, l.currentBalance + sign * effect.delta) } : l
+    );
+    return { ...data, liabilities: updatedLiabilities };
+  }
+
+  return data;
+}
+
+// The three functions below are the entire transaction-effect orchestration,
+// deliberately lifted out of the AppStateProvider component and exported as
+// plain, pure (data in, data out) functions — not because the app needs them
+// outside the provider, but so the invariants documented above (regression-
+// protection review, Stream B1) can be exercised directly in a standalone
+// test harness against the exact code the app runs, rather than a
+// re-implementation that could silently drift from it. Each React callback
+// below is a thin wrapper: call the pure function, then persist.
+
+/** Creates a transaction and applies its balance effect, exactly once. */
+export function applyNewTransaction(data: AppData, t: Omit<Transaction, 'id'>): AppData {
+  const balanceEffect: BalanceEffectMode = t.balanceEffect ?? 'update';
+  // Income always ensures a Cash asset exists first, even when balanceEffect
+  // is 'none' — so a later edit back to 'update' has something to resolve
+  // against. Matches ensureCashAsset's existing, income-only fabrication
+  // rule; expenses never create a Cash asset.
+  let workingData = data;
+  if (t.type === 'income') {
+    const { assets } = ensureCashAsset(workingData);
+    workingData = { ...workingData, assets };
+  }
+  const effect = computeBalanceEffect(workingData, { ...t, balanceEffect });
+  const withEffect = applyEffectDelta(workingData, effect, 1);
+  const newTransaction: Transaction = { ...t, id: generateId(), balanceEffect, appliedBalanceEffect: effect };
+  return { ...withEffect, transactions: [...workingData.transactions, newTransaction] };
+}
+
+/** Always reconciles — see the updateTransaction doc comment on
+ * AppStateContextValue below for the full invariant this implements. */
+export function applyTransactionUpdate(data: AppData, id: string, patch: Partial<Omit<Transaction, 'id'>>): AppData {
+  const old = data.transactions.find((t) => t.id === id);
+  if (!old) return data;
+  const merged: Transaction = { ...old, ...patch };
+
+  // Reverse whatever was actually applied before, from the stored snapshot
+  // — never from old's current fields, which may have already diverged from
+  // what was actually applied. Legacy transactions (balanceEffect ===
+  // undefined) fall back to re-deriving from old's fields instead, the one
+  // narrow, documented exception.
+  let workingData: AppData =
+    old.balanceEffect === undefined ? legacyApplyTransactionEffect(data, old, -1) : applyEffectDelta(data, old.appliedBalanceEffect, -1);
+
+  const balanceEffect: BalanceEffectMode = merged.balanceEffect ?? 'update';
+  if (merged.type === 'income' && balanceEffect === 'update') {
+    const { assets } = ensureCashAsset(workingData);
+    workingData = { ...workingData, assets };
+  }
+  const effect = computeBalanceEffect(workingData, { ...merged, balanceEffect });
+  workingData = applyEffectDelta(workingData, effect, 1);
+
+  const finalTransaction: Transaction = { ...merged, balanceEffect, appliedBalanceEffect: effect };
+  return { ...workingData, transactions: data.transactions.map((t) => (t.id === id ? finalTransaction : t)) };
+}
+
+/** `reverseEffect` (default true) — false deliberately leaves whatever
+ * balance effect the transaction last had applied in place, discarding only
+ * the record itself. */
+export function applyTransactionDelete(data: AppData, id: string, reverseEffect: boolean = true): AppData {
+  const old = data.transactions.find((t) => t.id === id);
+  if (!old || !reverseEffect) {
+    return { ...data, transactions: data.transactions.filter((t) => t.id !== id) };
+  }
+  const reverted =
+    old.balanceEffect === undefined ? legacyApplyTransactionEffect(data, old, -1) : applyEffectDelta(data, old.appliedBalanceEffect, -1);
+  return { ...reverted, transactions: data.transactions.filter((t) => t.id !== id) };
+}
+
 interface AppStateContextValue {
   data: AppData;
   isLoading: boolean;
@@ -179,11 +330,24 @@ interface AppStateContextValue {
   updateRecurringItem: (id: string, patch: Partial<Omit<RecurringItem, 'id'>>) => void;
   deleteRecurringItem: (id: string) => void;
   addTransaction: (t: Omit<Transaction, 'id'>) => void;
-  /** `adjustWealth` (default true) — false skips reversing/reapplying the
-   * transaction's cash/liability effect, for when the user says the money
-   * was already spent/moved and only the record itself is wrong. */
-  updateTransaction: (id: string, patch: Partial<Omit<Transaction, 'id'>>, adjustWealth?: boolean) => void;
-  deleteTransaction: (id: string, adjustWealth?: boolean) => void;
+  /** Always reconciles: reverses whatever balance effect the transaction's
+   * prior state actually had applied (via its stored appliedBalanceEffect
+   * snapshot — or, only for a transaction that predates that field, by
+   * re-deriving from its previous fields), then applies whatever the merged
+   * fields newly resolve to, including a fresh balanceEffect if the patch
+   * changes it. Reconciliation is now always correct, so there is no longer
+   * a separate "skip touching balances" toggle for edits — changing
+   * balanceEffect to 'none' is itself how an edit stops affecting a balance,
+   * and it does so by properly reversing whatever was there rather than
+   * leaving a stale effect under a since-changed funding source
+   * (regression-protection review, Stream B1 §3/§5). See deleteTransaction
+   * for the one remaining, deliberate "leave the balance as-is" capability. */
+  updateTransaction: (id: string, patch: Partial<Omit<Transaction, 'id'>>) => void;
+  /** `reverseEffect` (default true) — false deliberately leaves whatever
+   * balance effect this transaction last had applied in place, discarding
+   * only the record itself, for when the user has already accounted for the
+   * money elsewhere. */
+  deleteTransaction: (id: string, reverseEffect?: boolean) => void;
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
@@ -291,39 +455,26 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // picture — this is the "automatic financial model" behavior: log
   // +$5,000 income, cash goes up by $5,000; log an expense paid by credit
   // card, that card's balance (and its linked liability) goes up instead.
+  // The actual logic lives in the exported, directly-testable
+  // applyNewTransaction/applyTransactionUpdate/applyTransactionDelete
+  // functions above — these callbacks are thin wrappers over them.
   const addTransaction = useCallback(
     (t: Omit<Transaction, 'id'>) => {
-      const withEffect = applyTransactionEffect(data, t, 1);
-      persist(upsertNetWorthHistory({ ...withEffect, transactions: [...data.transactions, { ...t, id: generateId() }] }));
+      persist(upsertNetWorthHistory(applyNewTransaction(data, t)));
     },
     [data, persist]
   );
 
   const updateTransaction = useCallback(
-    (id: string, patch: Partial<Omit<Transaction, 'id'>>, adjustWealth: boolean = true) => {
-      const old = data.transactions.find((t) => t.id === id);
-      if (!old) return;
-      const merged = { ...old, ...patch };
-      if (!adjustWealth) {
-        persist({ ...data, transactions: data.transactions.map((t) => (t.id === id ? merged : t)) });
-        return;
-      }
-      const reverted = applyTransactionEffect(data, old, -1);
-      const applied = applyTransactionEffect(reverted, merged, 1);
-      persist(upsertNetWorthHistory({ ...applied, transactions: data.transactions.map((t) => (t.id === id ? merged : t)) }));
+    (id: string, patch: Partial<Omit<Transaction, 'id'>>) => {
+      persist(upsertNetWorthHistory(applyTransactionUpdate(data, id, patch)));
     },
     [data, persist]
   );
 
   const deleteTransaction = useCallback(
-    (id: string, adjustWealth: boolean = true) => {
-      const old = data.transactions.find((t) => t.id === id);
-      if (!old || !adjustWealth) {
-        persist({ ...data, transactions: data.transactions.filter((t) => t.id !== id) });
-        return;
-      }
-      const reverted = applyTransactionEffect(data, old, -1);
-      persist(upsertNetWorthHistory({ ...reverted, transactions: data.transactions.filter((t) => t.id !== id) }));
+    (id: string, reverseEffect: boolean = true) => {
+      persist(upsertNetWorthHistory(applyTransactionDelete(data, id, reverseEffect)));
     },
     [data, persist]
   );

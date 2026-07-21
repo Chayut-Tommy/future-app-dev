@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { PaymentSource, Transaction } from '../../types/models';
+import { BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
@@ -17,10 +18,14 @@ const DATE_PRESETS = [
   { label: 'Last week', daysAgo: 7 },
 ];
 
+// "Loan-funded purchase" (not "Loan / debt") — this option records a
+// purchase made using borrowed money, which increases the selected loan's
+// balance. It is not a repayment concept and never decreases a liability
+// (regression-protection review, Stream B1 §6).
 const PAYMENT_SOURCES: { value: PaymentSource; label: string }[] = [
   { value: 'cash', label: 'Cash' },
   { value: 'credit_card', label: 'Credit card' },
-  { value: 'loan', label: 'Loan / debt' },
+  { value: 'loan', label: 'Loan-funded purchase' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -55,6 +60,11 @@ export function QuickAddModal({
   const [paymentSource, setPaymentSource] = useState<PaymentSource>('cash');
   const [creditCardId, setCreditCardId] = useState<string | null>(null);
   const [liabilityId, setLiabilityId] = useState<string | null>(null);
+  // The user's explicit choice, independent of paymentSource (regression-
+  // protection review, Stream B1 UI integration) — expense-only; income
+  // stays implicitly 'update' this pass (record-only income is out of
+  // scope). Synced from the edited transaction, or defaulted, below.
+  const [balanceEffect, setBalanceEffect] = useState<BalanceEffectMode>('update');
   const [addCashVisible, setAddCashVisible] = useState(false);
   // Category-first flow (PRD ask: "adding money should feel quick and
   // satisfying, not like accounting software") — picking a category is its
@@ -69,6 +79,16 @@ export function QuickAddModal({
   const nonCreditLiabilities = data.liabilities.filter((l) => l.type !== 'credit_card');
   const isDirty = amount !== initialSnapshot.current.amount || categoryId !== initialSnapshot.current.categoryId;
 
+  // Whether a real, addressable balance exists for the currently-selected
+  // funding source — 'other' never has one; 'cash'/'credit_card'/'loan' only
+  // have one once their respective target (Cash asset / selected card /
+  // selected liability) actually exists (regression-protection review,
+  // Stream B1 UI integration §3: never silently offer or apply "update" with
+  // no real target).
+  const hasValidBalanceTarget =
+    paymentSource === 'cash' ? hasCashAsset : paymentSource === 'credit_card' ? !!creditCardId : paymentSource === 'loan' ? !!liabilityId : false;
+  const prevHasValidBalanceTarget = useRef(hasValidBalanceTarget);
+
   useEffect(() => {
     if (!visible) return;
     if (editTransaction) {
@@ -82,6 +102,7 @@ export function QuickAddModal({
       setPaymentSource(editTransaction.paymentSource ?? 'cash');
       setCreditCardId(editTransaction.creditCardId ?? null);
       setLiabilityId(editTransaction.liabilityId ?? null);
+      setBalanceEffect(editTransaction.balanceEffect ?? 'update');
       initialSnapshot.current = { amount: String(editTransaction.amount), categoryId: editTransaction.categoryId };
       setFormStep('details');
     } else {
@@ -95,10 +116,27 @@ export function QuickAddModal({
       setPaymentSource('cash');
       setCreditCardId(null);
       setLiabilityId(null);
+      setBalanceEffect('update');
       initialSnapshot.current = { amount: '', categoryId: null };
       setFormStep('category');
     }
   }, [visible, editTransaction, initialType]);
+
+  // Keeps the tracked-balance choice honest as the user changes funding
+  // source or which card/liability is selected: force it to "record only"
+  // the moment there's no real target to update, and default it back to
+  // "update" the moment a target newly becomes available — never leaving a
+  // stale "update" selection pointed at nothing (regression-protection
+  // review, Stream B1 UI integration §3/§8: "no stale selection remains when
+  // changing to a source without a valid target").
+  useEffect(() => {
+    if (!hasValidBalanceTarget) {
+      setBalanceEffect('none');
+    } else if (!prevHasValidBalanceTarget.current) {
+      setBalanceEffect('update');
+    }
+    prevHasValidBalanceTarget.current = hasValidBalanceTarget;
+  }, [hasValidBalanceTarget]);
 
   function chooseCategory(id: string) {
     setCategoryId(id);
@@ -123,6 +161,12 @@ export function QuickAddModal({
   function handleSave() {
     if (!canSave || !categoryId) return;
     const isoDate = new Date(yearValue, monthValue - 1, dayValue).toISOString();
+    // Defensive re-check, not just a read of state: never let balanceEffect
+    // resolve to 'update' when there's no real target, even if the
+    // auto-defaulting effect above hasn't re-run yet for some reason
+    // (regression-protection review, Stream B1 UI integration §3: "do not
+    // silently use balanceEffect: 'update' when no balance target exists").
+    const effectiveBalanceEffect: BalanceEffectMode = hasValidBalanceTarget ? balanceEffect : 'none';
     const payload =
       type === 'expense'
         ? {
@@ -133,32 +177,19 @@ export function QuickAddModal({
             paymentSource,
             creditCardId: paymentSource === 'credit_card' ? creditCardId ?? undefined : undefined,
             liabilityId: paymentSource === 'loan' ? liabilityId ?? undefined : undefined,
+            balanceEffect: effectiveBalanceEffect,
           }
         : { type, amount: amountValue, categoryId, date: isoDate };
 
+    // The tracked-balance choice is now made explicitly, inline, before Save
+    // is ever pressed — updateTransaction always reconciles correctly from
+    // it (regression-protection review, Stream B1), so the old post-save
+    // "should we also adjust your balance?" alert is no longer the only way
+    // to reach or change this choice, and keeping both would leave two
+    // mechanisms answering the same question. Retired here; deleting a
+    // transaction still asks separately, below — a genuinely different,
+    // destructive-action decision.
     if (editTransaction) {
-      // Amount/type/payment-source changes move real money in Wealth — the
-      // user may have already spent or moved that cash elsewhere, so ask
-      // rather than silently re-adjusting balances (PRD ask).
-      const financiallyChanged =
-        payload.amount !== editTransaction.amount ||
-        payload.type !== editTransaction.type ||
-        ('paymentSource' in payload && payload.paymentSource !== (editTransaction.paymentSource ?? 'cash')) ||
-        ('creditCardId' in payload && payload.creditCardId !== editTransaction.creditCardId) ||
-        ('liabilityId' in payload && payload.liabilityId !== editTransaction.liabilityId);
-
-      if (financiallyChanged) {
-        Alert.alert(
-          `Should ${brand.name} also adjust your cash balance?`,
-          `You changed the amount or how this was paid. ${brand.name} can update your Wealth picture to match, or just fix the record if you've already handled the money elsewhere.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'No, only update record', onPress: () => { updateTransaction(editTransaction.id, payload, false); onClose(); } },
-            { text: 'Yes, adjust my balances', onPress: () => { updateTransaction(editTransaction.id, payload, true); onClose(); } },
-          ]
-        );
-        return;
-      }
       updateTransaction(editTransaction.id, payload);
     } else {
       addTransaction(payload);
@@ -263,6 +294,13 @@ export function QuickAddModal({
           color: colors.textPrimary,
         },
         hintText: { ...typography.micro, color: colors.textSecondary, marginTop: -4, marginBottom: spacing.md, lineHeight: 15 },
+        balanceEffectGroup: { gap: spacing.xs, marginBottom: spacing.xs },
+        // Selection is signalled by both the icon swap (checkmark vs
+        // outline) and the label's weight/colour — never by colour alone.
+        balanceEffectOption: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 9 },
+        balanceEffectOptionDisabled: { opacity: 0.4 },
+        balanceEffectLabel: { ...typography.body, fontSize: 14, color: colors.textSecondary },
+        balanceEffectLabelActive: { color: colors.textPrimary, fontWeight: '600' },
         cashPromptBox: { backgroundColor: colors.warningSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
         cashPromptTitle: { ...typography.caption, fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 2 },
         cashPromptBody: { ...typography.micro, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
@@ -443,12 +481,67 @@ export function QuickAddModal({
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-                <Text style={styles.hintText}>This liability's balance will increase to reflect the new debt.</Text>
+                <Text style={styles.hintText}>Record a purchase that increased a selected loan balance.</Text>
               </>
             ) : (
               <Text style={styles.hintText}>No loans added yet — add one in Wealth to link this expense to a liability.</Text>
             )
           ) : null}
+
+          {/* Tracked balance — deliberately its own, separately-labelled
+              section (regression-protection review, Stream B1 UI
+              integration §2): funding source is a factual record of how the
+              money moved; this is the separate, independent choice of
+              whether Navilo also updates a stored balance to match. Inline,
+              always visible before Save — never a post-save alert. */}
+          <Text style={styles.sectionLabel}>Tracked balance</Text>
+          <View style={styles.balanceEffectGroup}>
+            <TouchableOpacity
+              style={[styles.balanceEffectOption, !hasValidBalanceTarget ? styles.balanceEffectOptionDisabled : null]}
+              onPress={() => hasValidBalanceTarget && setBalanceEffect('update')}
+              disabled={!hasValidBalanceTarget}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: hasValidBalanceTarget && balanceEffect === 'update', disabled: !hasValidBalanceTarget }}
+              accessibilityLabel="Update tracked balance"
+            >
+              <Ionicons
+                name={hasValidBalanceTarget && balanceEffect === 'update' ? 'checkmark-circle' : 'ellipse-outline'}
+                size={20}
+                color={hasValidBalanceTarget && balanceEffect === 'update' ? colors.accentStrong : colors.textMuted}
+              />
+              <Text style={[styles.balanceEffectLabel, hasValidBalanceTarget && balanceEffect === 'update' ? styles.balanceEffectLabelActive : null]}>
+                Update tracked balance
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.balanceEffectOption}
+              onPress={() => setBalanceEffect('none')}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: !hasValidBalanceTarget || balanceEffect === 'none' }}
+              accessibilityLabel="Record only"
+            >
+              <Ionicons
+                name={!hasValidBalanceTarget || balanceEffect === 'none' ? 'checkmark-circle' : 'ellipse-outline'}
+                size={20}
+                color={!hasValidBalanceTarget || balanceEffect === 'none' ? colors.accentStrong : colors.textMuted}
+              />
+              <Text style={[styles.balanceEffectLabel, !hasValidBalanceTarget || balanceEffect === 'none' ? styles.balanceEffectLabelActive : null]}>
+                Record only
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.hintText}>
+            {hasValidBalanceTarget
+              ? `Record only saves this transaction without changing a balance tracked in ${brand.name}.`
+              : paymentSource === 'credit_card'
+              ? 'No cards added yet. This transaction will be recorded without changing a card balance.'
+              : paymentSource === 'loan'
+              ? 'No loans added yet. This transaction will be recorded without changing a liability balance.'
+              : paymentSource === 'cash'
+              ? 'Add a cash balance above to track this against it, or continue recording only.'
+              : `Record only saves this transaction without changing a balance tracked in ${brand.name}.`}
+          </Text>
         </>
       ) : null}
 

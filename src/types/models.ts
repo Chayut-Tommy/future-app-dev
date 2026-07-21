@@ -76,6 +76,31 @@ export interface Category {
 
 export type PaymentSource = 'cash' | 'credit_card' | 'loan' | 'other';
 
+/** Whether Navilo should keep a tracked balance (Cash asset, credit card, or
+ * liability) in sync with a transaction — deliberately independent of
+ * paymentSource. paymentSource is a purely factual record of how the money
+ * moved; balanceEffect is the user's separate intent about whether Navilo
+ * should act on that fact by updating a stored balance. Undefined on any
+ * transaction created before this field existed (see Transaction.balanceEffect
+ * and AppliedBalanceEffect's own doc comments for the full model). */
+export type BalanceEffectMode = 'update' | 'none';
+
+/** The balance effect Navilo actually last applied for a transaction — the
+ * single source of truth for reversing that effect on a later edit or
+ * delete. Never re-derived from a transaction's current paymentSource/
+ * creditCardId/liabilityId, which can change independently (e.g. a user
+ * correcting the funding source on a record-only transaction) without ever
+ * having touched a balance. `delta` is signed from the target's own
+ * perspective: negative means the target's stored value decreased, positive
+ * means it increased (so an expense against Cash is negative, but an
+ * expense against a credit card or liability — more debt — is positive,
+ * matching how those balances have always been interpreted). */
+export interface AppliedBalanceEffect {
+  targetKind: 'asset' | 'credit_card' | 'liability';
+  targetId: string;
+  delta: number;
+}
+
 export interface Transaction {
   id: string;
   type: 'income' | 'expense';
@@ -84,15 +109,18 @@ export interface Transaction {
   date: string; // ISO date
   note?: string;
   /** Expense only. Absent = 'cash' (backward compatible with pre-existing
-   * transactions, which always reduced Cash). Determines which part of the
-   * Wealth picture this expense actually affects — an expense is not always
-   * a cash outflow. */
+   * transactions). Purely factual — how the money actually moved. Never
+   * reinterpreted based on whether a balance was updated; see
+   * BalanceEffectMode for that separate concept. */
   paymentSource?: PaymentSource;
-  /** Set when paymentSource === 'credit_card' — the card whose balance this
-   * expense increased. */
+  /** Set when paymentSource === 'credit_card' — the card this expense was
+   * charged to. Factual, independent of whether a balance effect was ever
+   * applied against it. */
   creditCardId?: string;
-  /** Set when paymentSource === 'loan' — the liability whose balance this
-   * expense increased. */
+  /** Set when paymentSource === 'loan' — the liability this expense was
+   * charged to (a loan-funded purchase, increasing what's owed — never a
+   * repayment). Factual, independent of whether a balance effect was ever
+   * applied against it. */
   liabilityId?: string;
   /** Absent/'manual' today (every transaction is user-entered). Reserved so a
    * future bank-feed integration can flow through the same addTransaction
@@ -107,6 +135,18 @@ export interface Transaction {
    * ask, §5: keep recurring income and one-off income transactions
    * completely separate). */
   recurringItemId?: string;
+  /** The user's intent for this transaction — see BalanceEffectMode. Every
+   * transaction created going forward has this set explicitly ('update' by
+   * default, matching prior behaviour); undefined only on data that predates
+   * this field, which is the exact signal addTransaction/updateTransaction/
+   * deleteTransaction use to fall back to legacy re-derivation instead of
+   * reading appliedBalanceEffect. */
+  balanceEffect?: BalanceEffectMode;
+  /** What was actually applied — see AppliedBalanceEffect. Absent means no
+   * effect is currently in force for this transaction (either balanceEffect
+   * is 'none', or balanceEffect is 'update' but no valid target existed to
+   * apply one against, e.g. no Cash asset yet). */
+  appliedBalanceEffect?: AppliedBalanceEffect;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
