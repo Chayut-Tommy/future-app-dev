@@ -74,6 +74,14 @@ export function KeyboardSheet({
           springBack();
         }
       },
+      // If responder ownership is revoked mid-drag (e.g. the ScrollView
+      // reclaims it during a rapid direction change) rather than released
+      // cleanly, onPanResponderRelease never fires — without this, translateY
+      // stays wherever onPanResponderMove last left it, stranding the sheet
+      // (and its footer, since both are inside the same transformed view)
+      // below its intended position (regression-protection review: rapid
+      // up/down swiping reported leaving Cancel/Save unreachable).
+      onPanResponderTerminate: () => springBack(),
     })
   ).current;
 

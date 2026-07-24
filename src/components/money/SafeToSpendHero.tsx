@@ -171,6 +171,21 @@ export function SafeToSpendHero({
         },
         warningCtaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
         breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
+        // Stacked, single-column presentation for the daily-estimate row
+        // specifically (Stream A follow-up §2) — replaces the generic
+        // two-column BreakdownRow only here, since that row's dynamic label
+        // ("...(N days left)") plus a wide value ("$99,999/day") can exceed
+        // the sheet's fixed width with no shrink/wrap allowed by default.
+        // Every other BreakdownRow usage in this file is untouched.
+        dailyEstimateBlock: {
+          paddingVertical: spacing.sm,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          marginTop: spacing.xs,
+        },
+        dailyEstimateLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700' },
+        dailyEstimateValue: { ...typography.title, fontSize: 22, color: colors.textPrimary, fontWeight: '700', marginTop: 2 },
+        dailyEstimateContext: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
       }),
     [colors, radius, spacing, typography, glow]
   );
@@ -199,11 +214,13 @@ export function SafeToSpendHero({
       />
       <BreakdownRow label="Estimated remainder" value={formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))} isTotal />
       {safeToSpend.hasKnownPayday ? (
-        <BreakdownRow
-          label={`Estimated amount per remaining day (${safeToSpend.daysRemaining} days left)`}
-          value={`${formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day`}
-          isTotal
-        />
+        <View style={styles.dailyEstimateBlock}>
+          <Text style={styles.dailyEstimateLabel}>Estimated daily amount</Text>
+          <Text style={styles.dailyEstimateValue}>{formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day</Text>
+          <Text style={styles.dailyEstimateContext}>
+            {safeToSpend.daysRemaining} day{safeToSpend.daysRemaining === 1 ? '' : 's'} remaining
+          </Text>
+        </View>
       ) : null}
       <Text style={styles.breakdownFooter}>
         This estimate updates automatically whenever your income, bills, or spending change. Educational only — not personal financial

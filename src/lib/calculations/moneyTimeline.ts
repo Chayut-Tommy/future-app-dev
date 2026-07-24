@@ -21,6 +21,16 @@ export interface TimelineEvent {
    * opens the right editor (PRD ask, §2/§4: a recurring event should keep
    * showing up, and every occurrence should stay editable). */
   recurringItemId?: string;
+  /** Present for goal events — the underlying Goal's own stable id, so
+   * tapping a goal event opens the correct goal via GoalDetailSheet rather
+   * than being unresolvable (regression-protection review, Stream A §4:
+   * previously only embedded, unparsed, inside the composite event id).
+   * Never identified by goal name/label/array position. */
+  goalId?: string;
+  /** Present for credit_card events — the underlying CreditCard's own
+   * stable id, mirroring goalId (regression-protection review, Stream A
+   * §4). */
+  creditCardId?: string;
 }
 
 function startOfDay(d: Date): Date {
@@ -124,6 +134,7 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
       label: `${card.label} credit card repayment`,
       sublabel: 'Based on what you expect to repay',
       amount: -expectedRepayment,
+      creditCardId: card.id,
     });
   }
 
@@ -220,6 +231,7 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
           label: `${allocation.goal.name} contribution`,
           sublabel: 'Reserved from this pay',
           amount: -(allocation.allocatedMonthly * cycleFraction),
+          goalId: allocation.goal.id,
         });
       }
     }

@@ -19,6 +19,8 @@ import { ThisMonthCard } from '../../components/money/ThisMonthCard';
 import { computeCreditCardBalanceTotal } from '../../lib/calculations/creditHealth';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
+import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
+import { AddCreditCardModal } from '../../components/credit/AddCreditCardModal';
 import { computeMonthToDateActivity } from '../../lib/calculations/monthlySummary';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
@@ -65,6 +67,15 @@ export function MoneyScreen() {
   const [mortgageModalVisible, setMortgageModalVisible] = useState(false);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
+  // Opened by tapping a goal event in What Happens Next — reuses the one
+  // shared GoalDetailSheet already mounted on Today/Goals, never a second
+  // implementation (regression-protection review, Stream A §3/§4). Resolved
+  // by stable goal id every render, so a deleted goal safely closes this
+  // sheet rather than leaving it open on stale data.
+  const [viewGoalId, setViewGoalId] = useState<string | null>(null);
+  // Opened by tapping a credit_card event — same pattern, reusing the
+  // existing card editor.
+  const [viewCreditCardId, setViewCreditCardId] = useState<string | null>(null);
   const [flowPeriod, setFlowPeriod] = useState<FlowPeriod>('monthly');
   const [flowInfoVisible, setFlowInfoVisible] = useState(false);
   const [thisMonthInfoVisible, setThisMonthInfoVisible] = useState(false);
@@ -111,6 +122,12 @@ export function MoneyScreen() {
   // balance movement can include prior-month activity, repayments, refunds,
   // interest and fees, none of which are "what I spent this month").
   const currentCreditCardBalance = useMemo(() => computeCreditCardBalanceTotal(data.creditCards), [data.creditCards]);
+  // Resolved live by stable id every render — a goal/card deleted elsewhere
+  // simply resolves to null next render, closing GoalDetailSheet/
+  // AddCreditCardModal safely rather than leaving stale data open
+  // (regression-protection review, Stream A §3).
+  const viewGoal = viewGoalId ? data.goals.find((g) => g.id === viewGoalId) ?? null : null;
+  const viewCreditCard = viewCreditCardId ? data.creditCards.find((c) => c.id === viewCreditCardId) ?? null : null;
   const categoryMap = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories]);
   const recentTransactions = useMemo(
     () => [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3),
@@ -127,7 +144,7 @@ export function MoneyScreen() {
     setEditBill(null);
   }
 
-  function handleTimelineEventPress(event: { kind: string; id: string; date: Date; recurringItemId?: string }) {
+  function handleTimelineEventPress(event: { kind: string; id: string; date: Date; recurringItemId?: string; goalId?: string; creditCardId?: string }) {
     // A Savings Allocation row is a display of the one shared user-level
     // setting on a given cycle date, not an independently editable
     // transaction (PRD ask) — handled before the recurringItemId guard
@@ -135,6 +152,18 @@ export function MoneyScreen() {
     if (event.kind === 'savings') {
       setSavingsAllocationDetailDate(event.date);
       setSavingsAllocationDetailVisible(true);
+      return;
+    }
+    // Goal and credit_card events resolve through their own stable id, not
+    // recurringItemId (regression-protection review, Stream A §4) — a
+    // deleted goal/card simply fails to resolve below and nothing opens,
+    // rather than opening stale data.
+    if (event.kind === 'goal') {
+      if (event.goalId) setViewGoalId(event.goalId);
+      return;
+    }
+    if (event.kind === 'credit_card') {
+      if (event.creditCardId) setViewCreditCardId(event.creditCardId);
       return;
     }
     // Matched by recurringItemId, not the event id — the timeline now
@@ -592,6 +621,8 @@ export function MoneyScreen() {
         onEditAllocation={() => setEditSavingsAllocationVisible(true)}
       />
       <EditSavingsAllocationModal visible={editSavingsAllocationVisible} onClose={() => setEditSavingsAllocationVisible(false)} />
+      <GoalDetailSheet goal={viewGoal} onClose={() => setViewGoalId(null)} />
+      <AddCreditCardModal visible={!!viewCreditCard} editCard={viewCreditCard} onClose={() => setViewCreditCardId(null)} />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <InfoSheet visible={flowInfoVisible} onClose={() => setFlowInfoVisible(false)} title="About Typical Money Flow">

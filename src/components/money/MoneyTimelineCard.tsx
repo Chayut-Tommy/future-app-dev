@@ -3,6 +3,7 @@ import { NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, 
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { TimelineEvent, TimelineEventKind } from '../../lib/calculations/moneyTimeline';
+import { reconcileDisplayedAmounts } from '../../lib/calculations/displayReconciliation';
 
 // Roughly 5-6 rows tall — enough to see what's immediately coming up
 // without the timeline pushing the rest of the Money page far down the
@@ -150,6 +151,19 @@ export function MoneyTimelineCard({
   const groupViews = groups.map((group, groupIndex) => {
     const isLastGroup = groupIndex === groups.length - 1;
     const isUrgentGroup = group.daysUntil <= 3;
+    // Reconciles only this group's goal-contribution rows so their displayed
+    // amounts sum exactly to their own displayed combined total (Stream A
+    // final correction pass §2) — salary, bills, credit-card and savings
+    // events in the same day-group are untouched, and goal events from a
+    // different occurrence never participate (each group is exactly one
+    // occurrence, since moneyTimeline.ts pushes every goal event for a given
+    // cycle date with the identical Date value). Raw `event.amount` is only
+    // read here, never mutated.
+    const goalEventsInGroup = group.events.filter((e) => e.kind === 'goal');
+    const reconciledGoalAmounts =
+      goalEventsInGroup.length > 0
+        ? new Map(reconcileDisplayedAmounts(goalEventsInGroup.map((e) => ({ id: e.id, amount: e.amount }))).map((r) => [r.id, r.displayAmount]))
+        : null;
     return (
       <View key={group.key} style={styles.group}>
         <View style={styles.groupHeader}>
@@ -160,6 +174,7 @@ export function MoneyTimelineCard({
           const colorKey = KIND_COLOR_KEY[event.kind];
           const dotColor = colors[colorKey];
           const dotBg = colors[`${colorKey}Soft` as keyof typeof colors] as string;
+          const displayAmount = event.kind === 'goal' ? reconciledGoalAmounts?.get(event.id) ?? event.amount : event.amount;
           return (
             <View key={event.id} style={styles.row}>
               <View style={[styles.dot, { backgroundColor: dotBg }]}>
@@ -175,8 +190,8 @@ export function MoneyTimelineCard({
                   <Text style={styles.label}>{event.label}</Text>
                   {event.sublabel ? <Text style={styles.sublabel}>{event.sublabel}</Text> : null}
                 </View>
-                <Text style={[styles.amount, { color: event.amount >= 0 ? colors.accent : colors.textPrimary }]}>
-                  {formatMoney(event.amount)}
+                <Text style={[styles.amount, { color: displayAmount >= 0 ? colors.accent : colors.textPrimary }]}>
+                  {formatMoney(displayAmount)}
                 </Text>
                 {event.kind === 'savings' ? <Ionicons name="chevron-forward" size={14} color={colors.textMuted} /> : null}
               </TouchableOpacity>

@@ -30,6 +30,34 @@ function monthsUntil(targetDate: string | null): number {
   return Math.max(1, months);
 }
 
+export type GoalDateFieldState = 'empty' | 'valid' | 'partial' | 'invalid' | 'past';
+
+/**
+ * Classifies the two raw MM/YYYY text-input values behind a goal's target
+ * date — shared by GoalDetailSheet's and AddGoalModal's live
+ * validation/persistence, and by their regression tests, so "what counts as
+ * a valid future date" is defined exactly once (Stream A follow-up §3, and
+ * the New Goal correction pass §5, which needed the extra 'invalid' state to
+ * give "exactly one field filled" and "both filled but impossible/malformed"
+ * their own distinct copy rather than sharing one message). Uses local
+ * calendar month/year (Date.getFullYear/getMonth, not UTC) to match how the
+ * date is already constructed and displayed elsewhere in this file.
+ */
+export function classifyGoalDateFields(month: string, year: string): GoalDateFieldState {
+  const monthTrim = month.trim();
+  const yearTrim = year.trim();
+  if (monthTrim === '' && yearTrim === '') return 'empty';
+  if (monthTrim === '' || yearTrim === '') return 'partial';
+  const m = parseInt(monthTrim, 10);
+  const y = parseInt(yearTrim, 10);
+  if (isNaN(m) || isNaN(y) || m < 1 || m > 12 || yearTrim.length !== 4) return 'invalid';
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  if (y < currentYear || (y === currentYear && m < currentMonth)) return 'past';
+  return 'valid';
+}
+
 /** The monthly amount Lulu calculates is needed to hit this goal on time —
  * works even without a target date (falls back to a 3-year horizon) so
  * every goal with a target amount is always part of the calculation. */

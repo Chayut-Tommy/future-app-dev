@@ -282,6 +282,10 @@ export function TodayScreen() {
         sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm, marginTop: spacing.sm },
         sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
         sectionLink: { ...typography.micro, color: colors.accent, fontWeight: '700' },
+        // Visually secondary — smaller, muted, wraps naturally (no
+        // numberOfLines) — placed once above the goal list, not repeated
+        // per row (Stream A follow-up §5).
+        goalsProgressHint: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, lineHeight: 16 },
         goalRow: { marginBottom: spacing.lg },
         goalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
         goalName: { ...typography.body, fontSize: 13, color: colors.textPrimary },
@@ -401,15 +405,30 @@ export function TodayScreen() {
       </View>
       {activeGoals.length > 0 ? (
         <SectionCard>
+          <Text style={styles.goalsProgressHint}>Updates progress only — no money is moved.</Text>
           {activeGoals.map((g) => {
             const pct = g.targetAmount ? Math.min(1, g.currentAmount / g.targetAmount) : 0;
             return (
               <View key={g.id} style={styles.goalRow}>
-                <View style={styles.goalHeaderRow}>
-                  <Text style={styles.goalName}>{g.name}</Text>
-                  {g.targetAmount ? <Text style={styles.goalPercent}>{Math.round(pct * 100)}%</Text> : null}
-                </View>
-                <ProgressBar progress={pct} />
+                {/* The name+percent+bar area is the tappable "card" — a
+                    sibling of the quick-contribute row below, never a
+                    parent of it, so the two never produce a conflicting
+                    nested-touchable tap (regression-protection review,
+                    Stream A §3, same pattern already proven for This
+                    Month's card + sibling info icon). Resolved by stable
+                    goal id (g.id), never name/position. */}
+                <TouchableOpacity
+                  onPress={() => setContributeGoalId(g.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${g.name}${g.targetAmount ? `, ${Math.round(pct * 100)} percent complete` : ''}`}
+                  accessibilityHint="Opens goal details"
+                >
+                  <View style={styles.goalHeaderRow}>
+                    <Text style={styles.goalName}>{g.name}</Text>
+                    {g.targetAmount ? <Text style={styles.goalPercent}>{Math.round(pct * 100)}%</Text> : null}
+                  </View>
+                  <ProgressBar progress={pct} />
+                </TouchableOpacity>
                 {g.targetAmount ? (
                   <View style={styles.quickContributeRow}>
                     {QUICK_CONTRIBUTE_AMOUNTS.map((amount) => (

@@ -5,6 +5,7 @@ import { computeAssetAllocation, computeDiversificationScore } from './wealthPro
 import { computeMonthlySummary } from './monthlySummary';
 import { computeCategoryDeltas } from './spendingInsights';
 import { computeLiquidCash } from './liquidAssets';
+import { requiredMonthlyForGoal } from './goalAllocation';
 import { ACCESSIBLE_INVESTMENT_TYPES } from './assetGroups';
 import { brand } from '../brand';
 
@@ -224,15 +225,21 @@ export function buildGoalImpactOpportunity(data: AppData): Opportunity | null {
   const biggestIncrease = deltas.find((d) => d.changePct >= 0.15 && d.delta > 0);
   if (!biggestIncrease) return null;
 
-  const goal = data.goals.find(
-    (g) => g.status === 'active' && g.targetAmount && g.estimatedMonthlyContribution && g.estimatedMonthlyContribution > 0
-  );
-  if (!goal || !goal.targetAmount || !goal.estimatedMonthlyContribution) return null;
+  // Derived live from the goal's current fields via the same canonical
+  // helper GoalDetailSheet/Available Until Payday/What Happens Next all
+  // read (Stream A follow-up §6) — never the cached
+  // Goal.estimatedMonthlyContribution snapshot, which can go stale after a
+  // progress-only update (neither Today's quick-contribute buttons nor
+  // GoalDetailSheet's "Update goal progress" refresh that cache, since
+  // they're deliberately a planning action only, not a field edit).
+  const goal = data.goals.find((g) => g.status === 'active' && g.targetAmount && requiredMonthlyForGoal(g) > 0);
+  if (!goal || !goal.targetAmount) return null;
 
+  const canonicalMonthly = requiredMonthlyForGoal(goal);
   const remaining = Math.max(0, goal.targetAmount - goal.currentAmount);
-  const currentMonths = remaining / goal.estimatedMonthlyContribution;
+  const currentMonths = remaining / canonicalMonthly;
   const potentialMonthlySaving = biggestIncrease.delta;
-  const improvedMonths = remaining / (goal.estimatedMonthlyContribution + potentialMonthlySaving);
+  const improvedMonths = remaining / (canonicalMonthly + potentialMonthlySaving);
   const monthsSaved = Math.round(currentMonths - improvedMonths);
 
   if (monthsSaved < 1) return null;
