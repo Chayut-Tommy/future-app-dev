@@ -1,5 +1,6 @@
-import { AppData, PayFrequency } from '../../types/models';
+import { AppData, RecurringItem } from '../../types/models';
 import { computeCreditCardInterestEstimateForCard, daysUntilDue } from './creditHealth';
+import { advanceOneOccurrence } from './recurringSchedule';
 import { brand } from '../brand';
 
 export type SmartReminderKind = 'salary_check' | 'bill_overdue' | 'bill_due_soon' | 'card_due_soon';
@@ -26,22 +27,23 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
-/** Moves a date forward by one pay/bill cycle — used once a payday or bill
- * has been confirmed, so Lulu stops asking about the same one. */
-export function stepFrequency(dateISO: string, frequency: PayFrequency): string {
-  const d = new Date(dateISO);
-  switch (frequency) {
-    case 'weekly':
-      d.setDate(d.getDate() + 7);
-      break;
-    case 'fortnightly':
-      d.setDate(d.getDate() + 14);
-      break;
-    default:
-      d.setMonth(d.getMonth() + 1);
-      break;
-  }
-  return d.toISOString();
+/** Advances a recurring item by exactly one pay/bill cycle — used once a
+ * payday or bill has been confirmed, so Lulu stops asking about the same
+ * one. Delegates to recurringSchedule.ts's anchor-aware date math (the one
+ * shared implementation of monthly clamp-and-restore logic in the app).
+ * Returns both the new nextDueDate and the item's own (unchanged)
+ * scheduleAnchorDay so a caller can pass both into a single
+ * updateRecurringItem patch — this is the explicit "internal automatic
+ * advancement preserves the existing anchor" contract (regression-
+ * protection review, B2.0A follow-up §3C): the anchor is threaded through by
+ * the caller, never re-inferred from the advanced date. */
+export function advanceRecurringItemSchedule(
+  item: Pick<RecurringItem, 'nextDueDate' | 'frequency' | 'scheduleAnchorDay'>
+): { nextDueDate: string; scheduleAnchorDay?: number } {
+  return {
+    nextDueDate: advanceOneOccurrence(item).toISOString(),
+    scheduleAnchorDay: item.scheduleAnchorDay,
+  };
 }
 
 /**

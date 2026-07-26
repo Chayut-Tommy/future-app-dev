@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppData } from '../types/models';
 import { DEFAULT_CATEGORIES } from './defaultCategories';
 import { generateId } from './id';
+import { isValidScheduleAnchorDay, usesScheduleAnchor } from './calculations/recurringSchedule';
 
 const STORAGE_KEY = 'moneycoach.appdata.v1';
 
@@ -73,7 +74,7 @@ export function dedupeCreditCards(data: AppData): AppData {
  * pipeline keeps `user.monthlyIncome` etc. in sync from `recurringItems`
  * going forward, so this never has anything left to do on later loads.
  */
-function migrateIncomeToRecurringItems(data: AppData): AppData {
+export function migrateIncomeToRecurringItems(data: AppData): AppData {
   const hasIncomeItem = data.recurringItems.some((r) => r.type === 'income');
   const legacyAmount = data.user.incomeAmount ?? data.user.monthlyIncome;
   if (hasIncomeItem || !legacyAmount || legacyAmount <= 0) return data;
@@ -133,16 +134,56 @@ function isGenuinelyEstablishedProfile(data: AppData): boolean {
  * reset profile reads as not-yet-established until it has genuinely been
  * used again on a later day.
  */
-function migrateSavingsAllocationPromptFlag(data: AppData): AppData {
+export function migrateSavingsAllocationPromptFlag(data: AppData): AppData {
   if (data.user.savingsAllocationPromptHandled !== undefined) return data;
   if (!isGenuinelyEstablishedProfile(data)) return data;
   return { ...data, user: { ...data.user, savingsAllocationPromptHandled: true } };
 }
 
-export async function loadAppData(): Promise<AppData> {
+/**
+ * Idempotent default/repair for `RecurringItem.scheduleAnchorDay` on data
+ * that predates it, or that somehow carries a corrupt value (regression-
+ * protection review, B2.0A) — every monthly/irregular item whose anchor is
+ * missing OR fails isValidScheduleAnchorDay (not an integer 1-31) gets one
+ * derived from its current `nextDueDate`'s day-of-month, once. This is a
+ * best-effort default, not a reconstruction: if an item's `nextDueDate` had
+ * already silently drifted under the old sequential month-stepping bug
+ * before this fix shipped, the anchor derived here inherits that drift
+ * rather than recovering the user's true original day — there is no way to
+ * distinguish "this item's stored day is correct" from "it already
+ * drifted" using only what's persisted. Never touches an item whose
+ * `scheduleAnchorDay` already passes validation (including on every
+ * subsequent app launch), so it does not alter behaviour that a user or an
+ * already-applied edit has already established.
+ */
+export function migrateRecurringItemAnchors(data: AppData): AppData {
+  let changed = false;
+  const recurringItems = data.recurringItems.map((item) => {
+    if (!usesScheduleAnchor(item.frequency)) return item;
+    if (isValidScheduleAnchorDay(item.scheduleAnchorDay)) return item;
+    changed = true;
+    return { ...item, scheduleAnchorDay: new Date(item.nextDueDate).getDate() };
+  });
+  return changed ? { ...data, recurringItems } : data;
+}
+
+/** `migrated: true` only when at least one migration in the chain actually
+ * changed something — every migration function here (dedupeCreditCards,
+ * migrateIncomeToRecurringItems, migrateSavingsAllocationPromptFlag,
+ * migrateRecurringItemAnchors) already returns its input object by
+ * reference, unmodified, whenever it makes no change, so a single
+ * `!== merged` reference check after the whole chain correctly detects "did
+ * anything change" without a JSON.stringify comparison — deliberately
+ * avoided since a full-object deep-compare on every launch would be
+ * disproportionate to what a handful of cheap, already-reference-stable
+ * functions already tell us for free (regression-protection review,
+ * B2.0A follow-up §2). A fresh install (`!raw`) or corrupt data (`catch`)
+ * never reports `migrated: true` — there is nothing migrated to persist in
+ * either case, only defaults. */
+export async function loadAppData(): Promise<{ data: AppData; migrated: boolean }> {
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
   const defaults = createEmptyAppData();
-  if (!raw) return defaults;
+  if (!raw) return { data: defaults, migrated: false };
   try {
     const parsed = JSON.parse(raw) as Partial<AppData>;
     const merged = {
@@ -153,9 +194,12 @@ export async function loadAppData(): Promise<AppData> {
       // when loading data saved by an older schema version.
       user: { ...defaults.user, ...parsed.user },
     };
-    return migrateSavingsAllocationPromptFlag(migrateIncomeToRecurringItems(dedupeCreditCards(merged)));
+    const migratedData = migrateRecurringItemAnchors(
+      migrateSavingsAllocationPromptFlag(migrateIncomeToRecurringItems(dedupeCreditCards(merged)))
+    );
+    return { data: migratedData, migrated: migratedData !== merged };
   } catch {
-    return defaults;
+    return { data: defaults, migrated: false };
   }
 }
 

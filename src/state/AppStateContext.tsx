@@ -8,6 +8,7 @@ import {
   Goal,
   Liability,
   LiabilityType,
+  PayFrequency,
   RecurringItem,
   SavingsComparisonEntry,
   Transaction,
@@ -17,6 +18,7 @@ import { createEmptyAppData, loadAppData, saveAppData } from '../lib/storage';
 import { generateId } from '../lib/id';
 import { computeLuluScore } from '../lib/calculations/luluScore';
 import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
+import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 
 export type TransferTarget = { kind: 'asset'; assetId: string } | { kind: 'liability'; liabilityId: string };
 
@@ -255,6 +257,72 @@ function applyEffectDelta(data: AppData, effect: AppliedBalanceEffect | undefine
   return data;
 }
 
+/** Resolves what scheduleAnchorDay a recurring item should have after being
+ * created (`existing: null`) or patched (`existing`: the item as it is
+ * before this patch) — the single source of truth for whether an edit
+ * should preserve, replace, or freshly derive the stored monthly/irregular
+ * anchor day (regression-protection review, B2.0A). Exported and pure, same
+ * pattern as applyNewTransaction below, so the anchor-preservation
+ * invariants can be tested directly against the exact code the app runs.
+ *
+ * Explicit contract (B2.0A follow-up §3 — no calendar-shape heuristics):
+ *  A. Ordinary full-form resubmission — patch.nextDueDate is exactly equal to
+ *     the currently stored nextDueDate (both modals always resend the full
+ *     form, whether or not the user touched the date field): preserve the
+ *     existing anchor.
+ *  B. Intentional user date edit — patch.nextDueDate differs from the stored
+ *     date, and the caller did not pass its own scheduleAnchorDay: the new
+ *     day-of-month becomes the new anchor, even if it happens to be the
+ *     final day of a shorter month. There is no way to distinguish "the user
+ *     picked this day on purpose" from "this looks like a clamp" using the
+ *     date alone, so this resolver no longer tries to — see rule C.
+ *  C. Internal automatic advancement — the caller (e.g.
+ *     advanceRecurringItemSchedule's result) passes its own
+ *     scheduleAnchorDay explicitly in the patch: that value always wins,
+ *     regardless of what day-of-month the advanced date landed on. This is
+ *     how automatic advancement is kept out of rule B's "new day = new
+ *     anchor" path — the caller states its intent instead of the resolver
+ *     inferring it. A frequency that doesn't use an anchor (weekly/
+ *     fortnightly) leaves whatever anchor is already stored untouched
+ *     (dormant, not read by anything). Entering monthly/irregular from a
+ *     different frequency always derives a fresh anchor from the
+ *     now-effective nextDueDate, never reusing a stale anchor from the last
+ *     time this item was monthly. Every anchor value this function reads
+ *     back off `existing` is validated via resolveValidAnchorDay first, so a
+ *     corrupt/out-of-range stored value can never propagate forward. */
+export function resolveScheduleAnchorDay(
+  existing: Pick<RecurringItem, 'frequency' | 'nextDueDate' | 'scheduleAnchorDay'> | null,
+  patch: { frequency?: PayFrequency; nextDueDate?: string; scheduleAnchorDay?: number }
+): number | undefined {
+  const newFrequency = patch.frequency ?? existing?.frequency;
+  if (!newFrequency || !usesScheduleAnchor(newFrequency)) return existing?.scheduleAnchorDay;
+
+  // Rule C — an explicitly passed anchor always wins, validated.
+  if (patch.scheduleAnchorDay !== undefined) {
+    const fallbackDate = patch.nextDueDate ?? existing?.nextDueDate;
+    return fallbackDate ? resolveValidAnchorDay(patch.scheduleAnchorDay, fallbackDate) : undefined;
+  }
+
+  if (!existing) {
+    return patch.nextDueDate ? new Date(patch.nextDueDate).getDate() : undefined;
+  }
+
+  const frequencyBecameAnchored = !usesScheduleAnchor(existing.frequency) && usesScheduleAnchor(newFrequency);
+  if (frequencyBecameAnchored) {
+    const effectiveNextDueDate = patch.nextDueDate ?? existing.nextDueDate;
+    return new Date(effectiveNextDueDate).getDate();
+  }
+
+  const existingAnchor = resolveValidAnchorDay(existing.scheduleAnchorDay, existing.nextDueDate);
+  if (patch.nextDueDate === undefined) return existingAnchor;
+
+  // Rule A — exact resubmission of the same date preserves the anchor.
+  if (patch.nextDueDate === existing.nextDueDate) return existingAnchor;
+
+  // Rule B — any other date change is a genuine, intentional edit.
+  return new Date(patch.nextDueDate).getDate();
+}
+
 // The three functions below are the entire transaction-effect orchestration,
 // deliberately lifted out of the AppStateProvider component and exported as
 // plain, pure (data in, data out) functions — not because the app needs them
@@ -410,7 +478,34 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadAppData().then((loaded) => {
+    loadAppData().then(async ({ data: loaded, migrated }) => {
+      // Only write back when a migration actually changed something (e.g.
+      // B2.0A's scheduleAnchorDay default) — an unmigrated load is a no-op,
+      // never a write (regression-protection review, B2.0A follow-up §1).
+      // The write is awaited and its rejection handled BEFORE isLoading
+      // becomes false: RootNavigator renders nothing interactive while
+      // isLoading is true, so no user action can schedule a newer
+      // persist() call while this migration write is still in flight —
+      // the race is removed by this ordering, not by assuming anything
+      // about AsyncStorage's own write ordering (regression-protection
+      // review, B2.0A follow-up §4).
+      if (migrated) {
+        try {
+          await saveAppData(loaded);
+        } catch (error) {
+          // Don't crash, don't fall back to defaults, don't show a
+          // misleading success state — the correctly migrated `loaded`
+          // object is still used for this session below. Nothing durable
+          // was written, so on-disk data still lacks (or still has an
+          // invalid) scheduleAnchorDay, meaning the exact same migration
+          // will be attempted again next launch with no extra bookkeeping
+          // needed. console.warn is the smallest existing diagnostic
+          // convention in this codebase — no error-reporting service
+          // exists to route through, and adding one is explicitly out of
+          // scope for this pass (B2.0C).
+          console.warn('Migration write failed; will retry next launch', error);
+        }
+      }
       setData(loaded);
       setIsLoading(false);
     });
@@ -432,14 +527,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const addRecurringItem = useCallback(
     (item: Omit<RecurringItem, 'id'>) => {
-      persist({ ...data, recurringItems: [...data.recurringItems, { ...item, id: generateId() }] });
+      const scheduleAnchorDay = resolveScheduleAnchorDay(null, item);
+      persist({ ...data, recurringItems: [...data.recurringItems, { ...item, scheduleAnchorDay, id: generateId() }] });
     },
     [data, persist]
   );
 
   const updateRecurringItem = useCallback(
     (id: string, patch: Partial<Omit<RecurringItem, 'id'>>) => {
-      persist({ ...data, recurringItems: data.recurringItems.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+      persist({
+        ...data,
+        recurringItems: data.recurringItems.map((r) =>
+          r.id === id ? { ...r, ...patch, scheduleAnchorDay: resolveScheduleAnchorDay(r, patch) } : r
+        ),
+      });
     },
     [data, persist]
   );

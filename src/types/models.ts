@@ -65,6 +65,15 @@ export interface RecurringItem {
    * flag rather than trusting that date at face value (PRD ask: Navilo
    * never guesses a payday for irregular income). */
   nextDueDateUnknown?: boolean;
+  /** Monthly/irregular only (see usesScheduleAnchor) — the day-of-month this
+   * source is meant to recur on, independent of nextDueDate. Needed because
+   * a short month clamps that occurrence (e.g. day 31 lands on Feb 28), and
+   * without a separately-stored anchor, stepping forward from the clamped
+   * date would permanently lose the original day instead of restoring it
+   * once a long-enough month comes around (regression-protection review,
+   * B2.0A). Absent on data created before this field existed; every reader
+   * falls back to the current nextDueDate's own day-of-month in that case. */
+  scheduleAnchorDay?: number;
 }
 
 export interface Category {

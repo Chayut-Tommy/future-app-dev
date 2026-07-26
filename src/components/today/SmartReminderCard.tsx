@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
-import { computeTopReminder, stepFrequency } from '../../lib/calculations/reminders';
+import { computeTopReminder, advanceRecurringItemSchedule } from '../../lib/calculations/reminders';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
 
 /**
@@ -70,7 +70,7 @@ export function SmartReminderCard() {
       date: new Date().toISOString(),
       recurringItemId: item.id,
     });
-    updateRecurringItem(item.id, { nextDueDate: stepFrequency(item.nextDueDate, item.frequency) });
+    updateRecurringItem(item.id, advanceRecurringItemSchedule(item));
     dismiss();
   }
 
@@ -87,7 +87,7 @@ export function SmartReminderCard() {
       creditCardId: source === 'credit_card' ? data.creditCards[0]?.id : undefined,
       recurringItemId: item.id,
     });
-    updateRecurringItem(item.id, { nextDueDate: stepFrequency(item.nextDueDate, item.frequency) });
+    updateRecurringItem(item.id, advanceRecurringItemSchedule(item));
     dismiss();
   }
 
