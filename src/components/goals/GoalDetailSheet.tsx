@@ -3,15 +3,14 @@ import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'reac
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { useCelebration } from '../../state/CelebrationContext';
 import { Goal, GoalPriority } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
 import { requiredMonthlyForGoal, computeGoalAllocation, classifyGoalDateFields } from '../../lib/calculations/goalAllocation';
 import { computeFixedCosts } from '../../lib/calculations/safeToSpend';
-import { buildGoalMilestoneCelebration } from '../../lib/celebrations';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { spacing } from '../../theme/tokens';
 
 const PRIORITIES: { value: GoalPriority; label: string }[] = [
   { value: 'high', label: '⭐ High' },
@@ -19,27 +18,64 @@ const PRIORITIES: { value: GoalPriority; label: string }[] = [
   { value: 'flexible', label: 'Flexible' },
 ];
 
-// Generous, content-agnostic clearance below Delete goal so it's never too
-// close to the shared KeyboardSheet's fixed Done footer (Stream A final
-// correction pass §5). KeyboardSheet's ScrollView isn't flex-bounded (see
-// its own implementation), so it doesn't reliably reserve exact space above
-// the footer — the amount of content above Delete varies by state (an
-// undated goal's two-line planning-horizon copy, a visible date-validation
-// message, larger accessibility text all change the total height
-// differently). Rather than sizing this margin to the shortest case (as the
-// prior, insufficient fix did), this is deliberately oversized to clear the
-// footer across all of those states — a local, content-side buffer, not a
-// KeyboardSheet change.
-const DELETE_ROW_BOTTOM_CLEARANCE = 96;
+// KeyboardSheet's footer sits as an in-flow sibling directly below the
+// ScrollView, not an overlay — so this margin is the entire gap between
+// Delete goal and the footer regardless of how much content sits above it.
+// One layout interval (spacing.xxl) is enough.
+const DELETE_ROW_BOTTOM_CLEARANCE = spacing.xxl;
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
+}
+
+// AUD has no sub-cent denomination — every amount in the contribution flow
+// below is normalised to whole cents before arithmetic or comparison, so
+// raw binary floating-point drift (e.g. 0.10 + 0.20 === 0.30000000000000004
+// in plain JS) can never misclassify an exact target as over-target, or
+// silently round a genuine one-cent overage away to nothing (currency-
+// precision correction). Local to this sheet's contribution/over-target
+// flow only — no shared calculation engine touched, no historical data
+// migrated, no other money field in this file changed.
+function toCents(value: number): number {
+  return Math.round(value * 100);
+}
+function fromCents(cents: number): number {
+  return cents / 100;
+}
+
+// Navilo's established whole-dollar convention (formatMoney) is kept for
+// any amount that's actually a whole number of dollars — this only adds
+// cents when the value genuinely has them, so a $0.01 overage reads as
+// "$0.01" rather than being silently rounded to "$0" the way formatMoney
+// alone would (currency-precision correction, §4). Local to this sheet's
+// contribution/over-target flow only — the rest of the app's whole-dollar
+// planning figures are untouched.
+function formatCurrencyPrecise(value: number): string {
+  const cents = toCents(value);
+  if (cents % 100 === 0) return formatMoney(value);
+  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function dateParts(iso: string | null): { month: string; year: string } {
   if (!iso) return { month: '', year: '' };
   const d = new Date(iso);
   return { month: String(d.getMonth() + 1), year: String(d.getFullYear()) };
+}
+
+// Stricter than parseFloat's permissive numeric-prefix parsing, which would
+// accept "2500abc" as 2500 or treat the "Infinity" keyword as a valid
+// finite number (invalid-contribution-handling correction). The whole
+// trimmed string must be a plain non-negative decimal number with at most
+// two decimal places — AUD has no smaller denomination, so "10.123" or
+// "0.001" are rejected outright rather than silently truncated (currency-
+// precision correction, §2). Local to the contribution field only — the
+// sibling targetAmount field keeps its existing, unrelated parseFloat
+// convention unchanged this pass.
+function parsePositiveContributionAmount(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return isFinite(value) && value > 0 ? value : null;
 }
 
 export function GoalDetailSheet({
@@ -54,9 +90,14 @@ export function GoalDetailSheet({
   onCreateAnother?: () => void;
 }) {
   const { data, updateGoal, deleteGoal } = useAppState();
-  const { celebrate } = useCelebration();
   const { colors, radius, spacing, typography } = useTheme();
   const [contribution, setContribution] = useState('');
+  // Inline validation feedback for a non-empty contribution that fails
+  // parsePositiveContributionAmount (invalid-contribution-handling
+  // correction) — deliberately separate from isDirty/discardConfirmation,
+  // since an invalid amount must never be routed through the generic
+  // "Discard changes?" prompt (§2).
+  const [contributionError, setContributionError] = useState(false);
   const [name, setName] = useState(goal?.name ?? '');
   const [targetAmount, setTargetAmount] = useState(goal?.targetAmount ? String(goal.targetAmount) : '');
   const [targetMonth, setTargetMonth] = useState(dateParts(goal?.targetDate ?? null).month);
@@ -70,6 +111,19 @@ export function GoalDetailSheet({
   // Guards against a double-tap on Delete firing the confirmation (and the
   // deletion itself) twice (regression-protection review, Stream A §7).
   const deletingRef = useRef(false);
+  // Guards against two same-frame Update presses both running
+  // handleAddContribution off the same pre-update goal/contribution
+  // snapshot (freeze-correction follow-up: neither the Button nor a
+  // synchronous release at the end of the handler can prevent this, since
+  // a second native press is dispatched as its own JS event — by the time
+  // it runs, a same-call `finally` reset would already have cleared the
+  // guard). Deliberately NOT released synchronously inside the handler,
+  // and NOT keyed to goal.id (which stays the same across a contribution
+  // and would otherwise lock out every later update in this sheet
+  // session) — released instead by the effect below once either side of
+  // what the update actually changed has come back around: the
+  // authoritative currentAmount, or a fresh contribution value.
+  const submittingContributionRef = useRef(false);
 
   useEffect(() => {
     setContribution('');
@@ -81,7 +135,13 @@ export function GoalDetailSheet({
     setPriority(goal?.priority ?? 'medium');
     setShowSaved(false);
     deletingRef.current = false;
+    submittingContributionRef.current = false;
+    setContributionError(false);
   }, [goal?.id]);
+
+  useEffect(() => {
+    submittingContributionRef.current = false;
+  }, [goal?.currentAmount, contribution]);
 
   useEffect(() => {
     return () => {
@@ -159,6 +219,12 @@ export function GoalDetailSheet({
         completedActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
         completedAction: { flex: 1, minWidth: '30%', alignItems: 'center', paddingVertical: 10, borderRadius: radius.control, backgroundColor: colors.surface },
         completedActionText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
+        // Neutral, not celebratory — an archived goal isn't necessarily an
+        // achievement (it may have been archived below target), so this
+        // deliberately doesn't reuse completedBanner's gold treatment.
+        archivedBanner: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
+        archivedTitle: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginBottom: 2 },
+        archivedBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
       }),
     [colors, radius, spacing, typography]
   );
@@ -217,6 +283,18 @@ export function GoalDetailSheet({
   // protect for those (regression-protection review, Stream A §6).
   const isDirty =
     contribution.trim().length > 0 || dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past';
+  // Drives the footer's state-aware label (pending-contribution UX
+  // correction) — the same strict parse handleAddContribution itself
+  // uses, so the button's presence never promises something the handler
+  // wouldn't actually apply. A dirty target date (partial/invalid/past)
+  // deliberately keeps the footer at "Done" even with a valid pending
+  // amount — "Add & close" only ever shows when it can safely deliver
+  // exactly what it says (invalid-contribution-handling correction, §3D):
+  // it must never close over a still-unresolved date issue.
+  const hasOtherDirtyField = dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past';
+  const hasValidPendingContribution = parsePositiveContributionAmount(contribution) !== null;
+  const hasInvalidPendingContribution = contribution.trim().length > 0 && !hasValidPendingContribution;
+  const showAddAndClose = hasValidPendingContribution && !hasOtherDirtyField;
 
   function persistCalculatedFields(patch: Partial<Omit<Goal, 'id'>>) {
     const merged: Goal = { ...goal!, ...patch };
@@ -224,15 +302,113 @@ export function GoalDetailSheet({
     flashSaved();
   }
 
-  function handleAddContribution() {
-    const amount = parseFloat(contribution);
-    if (isNaN(amount) || amount <= 0) return;
-    const newAmount = goal!.currentAmount + amount;
-    const wasComplete = goal!.targetAmount !== null && goal!.currentAmount >= goal!.targetAmount;
-    const isNowComplete = goal!.targetAmount !== null && newAmount >= goal!.targetAmount;
-    updateGoal(goal!.id, { currentAmount: newAmount, status: isNowComplete ? 'completed' : goal!.status });
-    if (isNowComplete && !wasComplete) celebrate(buildGoalMilestoneCelebration(goal!.name));
+  // A completion reached from in here is announced by the in-sheet "Goal
+  // achieved" banner below only — not the global BigCelebrationOverlay.
+  // That overlay is itself a native Modal, and presenting it while this
+  // sheet's own KeyboardSheet Modal is still open is the two-native-
+  // Modals-in-one-tick freeze this app has hit before (see
+  // CelebrationContext.tsx's comment on the same class of bug). Today's
+  // inline quick-contribute buttons aren't inside a Modal, so they keep
+  // the global celebration unaffected by this.
+  // Single submission path for both the inline "Add" button and the
+  // footer's state-aware "Add & close" button (pending-contribution UX
+  // correction) — `closeAfter` is the only difference between them, so the
+  // calculation/guard/completion logic is never duplicated. Invalid input
+  // returns above without touching the guard or closing the sheet, so
+  // neither button can silently discard or apply a bad entry.
+  // The actual write, shared by the direct (no-confirmation) path and the
+  // "Add anyway" confirmation path below — never duplicated. `newAmount` is
+  // passed in rather than recomputed, so both paths are guaranteed to
+  // apply the exact figure the user was told about (over-target
+  // confirmation correction).
+  // `newAmount` is a whole-cent-normalised dollar figure already (see
+  // handleAddContribution below) — re-normalised here again defensively so
+  // this function's own completion comparison never depends on the
+  // caller having done so (currency-precision correction).
+  function applyContribution(newAmount: number, closeAfter: boolean) {
+    try {
+      const newAmountCents = toCents(newAmount);
+      const targetCents = goal!.targetAmount !== null ? toCents(goal!.targetAmount) : null;
+      const isNowComplete = targetCents !== null && newAmountCents >= targetCents;
+      updateGoal(goal!.id, { currentAmount: fromCents(newAmountCents), status: isNowComplete ? 'completed' : goal!.status });
+    } catch (e) {
+      submittingContributionRef.current = false;
+      throw e;
+    }
     setContribution('');
+    if (closeAfter) onClose();
+  }
+
+  function handleAddContribution(closeAfter: boolean) {
+    const amount = parsePositiveContributionAmount(contribution);
+    if (amount === null) {
+      // A non-empty-but-invalid entry gets inline feedback instead of
+      // silently no-opping; a genuinely empty field stays a silent no-op,
+      // same as before (invalid-contribution-handling correction, §2) —
+      // the guard below is never touched either way.
+      if (contribution.trim().length > 0) setContributionError(true);
+      return;
+    }
+    setContributionError(false);
+    // Engaged here — before the over-target confirmation, not just before
+    // the eventual updateGoal call — so a rapid repeated tap is rejected
+    // immediately and can never open a second confirmation alert (over-
+    // target confirmation correction). Once engaged, only the effect above
+    // (goal's currentAmount or contribution actually changing) releases it
+    // on the applied path; Cancel below releases it synchronously instead,
+    // since neither of those would otherwise change.
+    if (submittingContributionRef.current) return;
+    submittingContributionRef.current = true;
+
+    // Whole-cents arithmetic throughout — see toCents/fromCents above for
+    // why (currency-precision correction, §1). newAmount is derived back
+    // to a dollar figure only for display/storage; every comparison below
+    // operates on the integer cent values.
+    const amountCents = toCents(amount);
+    const currentCents = toCents(goal!.currentAmount);
+    const newAmountCents = currentCents + amountCents;
+    const newAmount = fromCents(newAmountCents);
+    const targetCents = goal!.targetAmount !== null ? toCents(goal!.targetAmount) : null;
+    const goesOverTarget = targetCents !== null && newAmountCents > targetCents;
+
+    if (goesOverTarget) {
+      const overage = fromCents(newAmountCents - targetCents!);
+      Alert.alert(
+        'This goes above your target',
+        `Adding ${formatCurrencyPrecise(amount)} will bring this goal to ${formatCurrencyPrecise(newAmount)}, which is ${formatCurrencyPrecise(overage)} above your ${formatCurrencyPrecise(goal!.targetAmount!)} target.`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => {
+              submittingContributionRef.current = false;
+            },
+          },
+          { text: 'Add anyway', onPress: () => applyContribution(newAmount, closeAfter) },
+        ]
+      );
+      return;
+    }
+
+    applyContribution(newAmount, closeAfter);
+  }
+
+  // The footer's non-"Add & close" state (empty contribution, invalid
+  // contribution, or a valid contribution alongside a still-dirty target
+  // date — see showAddAndClose above). An invalid contribution is caught
+  // here FIRST and unconditionally, before the generic dirty check, so it
+  // never falls through to the generic "Discard changes?" prompt (§2) —
+  // the only way to reach that prompt from this button is an empty field
+  // (closes immediately) or a genuinely dirty *other* field with a valid
+  // or empty contribution (protects both, §3D, reusing the existing,
+  // unmodified confirmDiscardIfDirty exactly as before "Add & close"
+  // existed).
+  function handleClosePress() {
+    if (hasInvalidPendingContribution) {
+      setContributionError(true);
+      return;
+    }
+    confirmDiscardIfDirty(isDirty, onClose);
   }
 
   function handleExtend() {
@@ -245,6 +421,38 @@ export function GoalDetailSheet({
   function handleArchive() {
     updateGoal(goal!.id, { status: 'archived' });
     onClose();
+  }
+
+  // Archived-goal recovery (visibility correction follow-up): Archive
+  // organises a goal, it must not be a dead end. Both actions are a single
+  // status-only updateGoal call — same id, name, target, currentAmount,
+  // targetDate and priority preserved untouched; no transaction, asset or
+  // liability; persisted once, same as handleArchive/handleExtend above.
+  function handleRestoreToCompleted() {
+    Alert.alert(
+      'Restore completed goal?',
+      'This will move the goal back to Completed Goals. It will not add it to your active goal plan.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Restore', onPress: () => updateGoal(goal!.id, { status: 'completed' }) },
+      ]
+    );
+  }
+
+  // Only for an archived goal that never reached its target — returning it
+  // to 'active' makes it eligible for active goal allocation again
+  // (goalAllocation.ts's existing status==='active' filter), so this is
+  // flagged to the user before applying, unlike Restore (which never
+  // re-enters active allocation).
+  function handleReopenAsActive() {
+    Alert.alert(
+      'Reopen this goal?',
+      'This returns the goal to active planning and may affect your goal allocations.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reopen', onPress: () => updateGoal(goal!.id, { status: 'active' }) },
+      ]
+    );
   }
 
   // Deleting a goal is a planning action only — it never touches
@@ -322,12 +530,23 @@ export function GoalDetailSheet({
       title="Goal details"
       isDirty={isDirty}
       footer={
-        <Button
-          label="Done"
-          variant="secondary"
-          onPress={() => confirmDiscardIfDirty(isDirty, onClose)}
-          style={styles.footerButton}
-        />
+        // State-aware bottom action (pending-contribution UX correction):
+        // "Add & close" only ever shows when it can safely deliver exactly
+        // what it says — a valid amount AND no other dirty field (see
+        // showAddAndClose above) — so the label never promises a close
+        // that a still-dirty date would then have to silently swallow.
+        // Every other case (empty, invalid, or valid-but-date-dirty)
+        // renders "Close" (renamed from "Done" so it reads distinctly from
+        // the keyboard's own "Done" accessory when both are visible at
+        // once — keyboard-vs-sheet-action correction); handleClosePress
+        // itself distinguishes an invalid entry (inline error, never the
+        // generic prompt) from everything else (the existing, unmodified
+        // confirmDiscardIfDirty).
+        showAddAndClose ? (
+          <Button label="Add & close" onPress={() => handleAddContribution(true)} style={styles.footerButton} />
+        ) : (
+          <Button label="Close" variant="secondary" onPress={handleClosePress} style={styles.footerButton} />
+        )
       }
     >
       {showSaved ? (
@@ -340,14 +559,33 @@ export function GoalDetailSheet({
       <View style={styles.ringRow}>
         <GoalProgressRing progress={progress} size={110} />
         <Text style={styles.amounts}>
-          {formatMoney(goal.currentAmount)} of {goal.targetAmount ? formatMoney(goal.targetAmount) : 'no target set'}
+          {formatCurrencyPrecise(goal.currentAmount)} of {goal.targetAmount !== null ? formatCurrencyPrecise(goal.targetAmount) : 'no target set'}
         </Text>
       </View>
 
       {goal.status === 'completed' ? (
         <View style={styles.completedBanner}>
-          <Text style={styles.completedTitle}>🎉 Goal achieved — {goal.name} completed!</Text>
-          <Text style={styles.completedBody}>This goal is saved in your history. What's next?</Text>
+          {/* Over-target is manually recorded goal progress, not investment
+              performance or a verified balance — factual, not celebratory
+              (over-target confirmation correction, §4). Falls back to the
+              exact-target treatment if targetAmount somehow became null
+              after completion (e.g. cleared via the Target amount field
+              below) — overage can't be computed without one. Compared in
+              whole cents, not raw currentAmount/targetAmount floats, so
+              this can never be pushed into the over-target branch by
+              binary drift on values that are actually exactly equal
+              (currency-precision correction). */}
+          {goal.targetAmount !== null && toCents(goal.currentAmount) > toCents(goal.targetAmount) ? (
+            <>
+              <Text style={styles.completedTitle}>Target exceeded by {formatCurrencyPrecise(fromCents(toCents(goal.currentAmount) - toCents(goal.targetAmount)))}</Text>
+              <Text style={styles.completedBody}>You recorded {formatCurrencyPrecise(goal.currentAmount)} against your {formatCurrencyPrecise(goal.targetAmount)} target.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.completedTitle}>🎉 Goal achieved — {goal.name} completed!</Text>
+              <Text style={styles.completedBody}>This goal is saved in your history. What's next?</Text>
+            </>
+          )}
           <View style={styles.completedActionsRow}>
             {onCreateAnother ? (
               <TouchableOpacity
@@ -370,6 +608,39 @@ export function GoalDetailSheet({
         </View>
       ) : null}
 
+      {/* Archived-goal recovery (visibility correction follow-up) — Archive
+          organises a goal, it must not be a dead end. Which recovery
+          action applies depends only on the goal's own recorded amounts,
+          never on invented previous-status metadata: an archived goal that
+          had already reached its target offers Restore (back to
+          Completed), one that hadn't offers Reopen (back to active
+          planning, which re-enters active goal allocation — flagged in the
+          confirmation copy below, unlike Restore). */}
+      {goal.status === 'archived' ? (
+        <View style={styles.archivedBanner}>
+          <Text style={styles.archivedTitle}>Archived</Text>
+          {goal.targetAmount !== null && goal.currentAmount >= goal.targetAmount ? (
+            <>
+              <Text style={styles.archivedBody}>This goal was archived after being completed. It stays out of Completed Goals unless you restore it.</Text>
+              <View style={styles.completedActionsRow}>
+                <TouchableOpacity style={styles.completedAction} onPress={handleRestoreToCompleted}>
+                  <Text style={styles.completedActionText}>Restore to completed</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.archivedBody}>This goal was archived before reaching its target. Reopening it returns it to active planning.</Text>
+              <View style={styles.completedActionsRow}>
+                <TouchableOpacity style={styles.completedAction} onPress={handleReopenAsActive}>
+                  <Text style={styles.completedActionText}>Reopen as active</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      ) : null}
+
       <Text style={styles.label}>Goal name</Text>
       <TextInput style={styles.input} value={name} onChangeText={handleSaveName} placeholderTextColor={colors.textMuted} />
 
@@ -381,7 +652,6 @@ export function GoalDetailSheet({
         keyboardType="decimal-pad"
         value={targetAmount}
         onChangeText={handleSaveTarget}
-        returnKeyType="done"
       />
 
       <Text style={styles.label}>Target date</Text>
@@ -404,18 +674,18 @@ export function GoalDetailSheet({
           value={targetYear}
           onChangeText={(y) => handleSaveDate(targetMonth, y)}
           maxLength={4}
-          returnKeyType="done"
           accessibilityLabel="Target year"
         />
       </View>
 
-      {/* "Update goal progress" (Stream A §8) — a planning action only:
-          changes currentAmount alone, creates no transaction, touches no
-          asset or liability. "Record a money contribution" was deferred by
-          product decision (not a Stream A implementation gap) — it needs a
+      {/* "Add to goal progress" (Stream A §8, pending-contribution UX
+          correction) — a planning action only: adds the entered amount to
+          currentAmount, creates no transaction, touches no asset or
+          liability. "Record a money contribution" was deferred by product
+          decision (not an implementation gap) — it needs a
           source/destination and activity-classification model this app
           doesn't have yet. */}
-      <Text style={styles.label}>Update goal progress</Text>
+      <Text style={styles.label}>Add to goal progress</Text>
       <View style={styles.row}>
         <TextInput
           style={styles.input}
@@ -423,13 +693,20 @@ export function GoalDetailSheet({
           placeholderTextColor={colors.textMuted}
           keyboardType="decimal-pad"
           value={contribution}
-          onChangeText={setContribution}
-          returnKeyType="done"
-          accessibilityLabel="Amount to update goal progress by"
+          onChangeText={(text) => {
+            setContribution(text);
+            if (contributionError) setContributionError(false);
+          }}
+          accessibilityLabel="Amount to add to goal progress"
         />
-        <Button label="Update" onPress={handleAddContribution} style={styles.addButton} />
+        <Button label="Add" onPress={() => handleAddContribution(false)} style={styles.addButton} />
       </View>
-      <Text style={styles.hintText}>This updates your progress only. It does not move money or change a balance tracked in Navilo.</Text>
+      {contributionError ? (
+        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
+          Enter a valid amount greater than $0, using up to two decimal places.
+        </Text>
+      ) : null}
+      <Text style={styles.hintText}>Enter the amount to add. This records progress only—it does not move money or change a balance tracked in Navilo.</Text>
 
       {goal.targetAmount ? (
         <>

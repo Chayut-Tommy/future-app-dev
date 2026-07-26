@@ -228,7 +228,6 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
         keyboardType="decimal-pad"
         value={targetAmount}
         onChangeText={setTargetAmount}
-        returnKeyType="done"
         accessibilityLabel="Target amount, optional"
       />
       {/* Amount guidance sits directly beneath its own field, driven only by
@@ -262,7 +261,6 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
           value={targetYear}
           onChangeText={setTargetYear}
           maxLength={4}
-          returnKeyType="done"
           accessibilityLabel="Target year"
         />
       </View>

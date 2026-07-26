@@ -24,7 +24,6 @@ import { InfoSheet } from '../../components/shared/InfoSheet';
 import { getUnlockStatus } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType, CreditCard, Liability, LiabilityType } from '../../types/models';
-import { brand } from '../../lib/brand';
 
 function formatMoney(value: number): string {
   const sign = value < 0 ? '-' : '';
@@ -119,7 +118,6 @@ export function WealthScreen() {
   // independent income-minus-expenses figure that could disagree with it
   // (PRD ask: only one "surplus" number across the app).
   const plan = useMemo(() => computeMoneyPlan(data), [data]);
-  const activeGoals = data.goals.filter((g) => g.status === 'active');
   const [creditCardModalVisible, setCreditCardModalVisible] = useState(false);
   const [wealthChangeSheetVisible, setWealthChangeSheetVisible] = useState(false);
   const [editCreditCard, setEditCreditCard] = useState<CreditCard | null>(null);
@@ -228,8 +226,6 @@ export function WealthScreen() {
           padding: spacing.md,
         },
         debtFreeText: { ...typography.caption, fontSize: 13, color: colors.accentStrong, fontWeight: '600' },
-        goalsCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-        goalsSummary: { ...typography.body, fontSize: 14, color: colors.textPrimary },
       }),
     [colors, spacing, typography, cardShadow, radius, glow]
   );
@@ -303,14 +299,10 @@ export function WealthScreen() {
 
       {unlockStatus.wealth_projection ? <YourFutureCard /> : null}
 
-      <TouchableOpacity onPress={() => navigation.navigate('Goals')} activeOpacity={0.8}>
-        <SectionCard style={styles.goalsCard}>
-          <Text style={styles.goalsSummary}>
-            {activeGoals.length > 0 ? `${activeGoals.length} active ${brand.name} Goal${activeGoals.length > 1 ? 's' : ''}` : 'No goals yet'}
-          </Text>
-          <Ionicons name="chevron-forward" size={20} color={colors.accent} />
-        </SectionCard>
-      </TouchableOpacity>
+      {/* Goal discovery and management now lives in Grow ("What am I working
+          toward?"), not Wealth ("What do I own and owe?") — Goals-to-Grow
+          §7A. The internal `Goals` root route itself is untouched; Wealth
+          simply no longer links to it. */}
 
       <View style={styles.heroSectionHeader}>
         <View>

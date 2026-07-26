@@ -26,6 +26,12 @@ export function GoalsScreen() {
 
   const activeGoals = data.goals.filter((g) => g.status === 'active');
   const completedGoals = data.goals.filter((g) => g.status === 'completed');
+  // Goals the user archived from an already-completed goal's detail sheet
+  // (GoalDetailSheet's "Archive" action) — shown here, separately from
+  // active/completed, so Archive organises a goal rather than making it
+  // disappear (Goals-to-Grow visibility correction). Same authoritative
+  // data.goals array, same array order, no new status or field.
+  const archivedGoals = data.goals.filter((g) => g.status === 'archived');
   // Derived live from data.goals by id, not a snapshot taken at tap-time —
   // otherwise a contribution that completes a goal wouldn't be reflected
   // in the already-open sheet (PRD bug report: "still behaves like active"
@@ -109,6 +115,19 @@ export function GoalsScreen() {
             <>
               <Text style={styles.sectionTitle}>🎉 Completed Goals</Text>
               {completedGoals.map((g) => renderGoalCard(g, true))}
+            </>
+          ) : null}
+
+          {/* Archived goals stay visible and tappable here — Archive
+              organises a goal (out of the active/completed lists), it does
+              not remove it from the user's data (Goals-to-Grow visibility
+              correction). Rendered with the same (non-"completed") card
+              styling as an active row, since an archived goal isn't
+              necessarily completed. */}
+          {archivedGoals.length > 0 ? (
+            <>
+              <Text style={styles.sectionTitle}>Archived goals</Text>
+              {archivedGoals.map((g) => renderGoalCard(g, false))}
             </>
           ) : null}
         </>
