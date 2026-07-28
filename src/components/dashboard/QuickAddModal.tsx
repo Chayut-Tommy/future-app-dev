@@ -332,11 +332,23 @@ export function QuickAddModal({
         selectedCategoryEmoji: { fontSize: 20 },
         selectedCategoryLabel: { ...typography.body, fontSize: 14, color: colors.accentStrong, fontWeight: '700', flex: 1 },
         selectedCategoryChange: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '700' },
+        sourceLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
+        sourceLabelValue: { fontWeight: '700', color: colors.textPrimary },
       }),
     [colors, radius, spacing, typography]
   );
 
   const selectedCategory = categoryId ? data.categories.find((c) => c.id === categoryId) ?? null : null;
+  // Read-only — the transaction's own primary identity (e.g. "Internet
+  // test"), kept visibly separate from the editable category picker below
+  // (regression-protection review, B2.0B transaction-identity correction
+  // §1). `note` is an immutable confirmation-time snapshot; recurringItemId
+  // is only a display fallback for pre-existing linked transactions from
+  // before this snapshot existed. Never rendered as an editable field —
+  // this pass does not add note-editing.
+  const editTransactionDisplayLabel = editTransaction
+    ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
+    : null;
 
   if (formStep === 'category') {
     return (
@@ -393,6 +405,17 @@ export function QuickAddModal({
         </>
       }
     >
+      {/* Read-only — this transaction's own primary identity, kept visibly
+          separate from the editable category picker below (regression-
+          protection review, B2.0B transaction-identity correction §1). Only
+          shown when editing an existing transaction that has one; never
+          shown for a new/manual transaction, and never itself editable. */}
+      {editTransactionDisplayLabel ? (
+        <Text style={styles.sourceLabel}>
+          Source: <Text style={styles.sourceLabelValue}>{editTransactionDisplayLabel}</Text>
+        </Text>
+      ) : null}
+
       <View style={styles.selectedCategoryRow}>
         <Text style={styles.selectedCategoryEmoji}>{selectedCategory ? categoryEmoji(selectedCategory.id) : '💰'}</Text>
         <Text style={styles.selectedCategoryLabel}>{selectedCategory?.name ?? 'Select a category'}</Text>
@@ -409,7 +432,6 @@ export function QuickAddModal({
         value={amount}
         onChangeText={setAmount}
         autoFocus
-        returnKeyType="done"
       />
 
       {type === 'expense' ? (
@@ -564,7 +586,7 @@ export function QuickAddModal({
       <View style={styles.dateRow}>
         <TextInput style={styles.dateInput} placeholder="DD" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={day} onChangeText={setDay} maxLength={2} />
         <TextInput style={styles.dateInput} placeholder="MM" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={month} onChangeText={setMonth} maxLength={2} />
-        <TextInput style={styles.dateInput} placeholder="YYYY" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={year} onChangeText={setYear} maxLength={4} returnKeyType="done" />
+        <TextInput style={styles.dateInput} placeholder="YYYY" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={year} onChangeText={setYear} maxLength={4} />
       </View>
 
       {isEditing ? (

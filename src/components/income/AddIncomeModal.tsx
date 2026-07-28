@@ -9,6 +9,7 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { PayFrequency, RecurringItem } from '../../types/models';
 import { toMonthlyAmount } from '../../lib/calculations/incomeEngine';
+import { parseMoneyInput } from '../../lib/calculations/money';
 import { categoryEmoji } from '../../lib/categoryEmoji';
 import { brand } from '../../lib/brand';
 
@@ -29,6 +30,19 @@ function formatMoney(value: number): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// `minimumDate={new Date()}` compares the picker's date-only value against a
+// live timestamp — on a date-only picker that treats "today" as today's
+// local midnight, that midnight value is always earlier than the current
+// moment (any time after 00:00:00), so today was incorrectly excluded and
+// the earliest selectable date became tomorrow (confirmed device defect,
+// B2.0B due-today boundary correction). Start-of-day is unambiguous
+// regardless of what time the modal happens to be opened, so today remains
+// selectable while yesterday and earlier stay excluded.
+function startOfToday(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 // "Irregular" is real, recurring-but-unpredictable income (freelance,
@@ -103,16 +117,23 @@ export function AddIncomeModal({
     setPickerOpen(false);
   }, [visible, editItem]);
 
-  const incomeNumber = parseFloat(income);
+  // Strict money-input contract (regression-protection review, B2.0B
+  // recurring-money precision correction §2/§3) — replaces the old
+  // permissive parseFloat-based check, which accepted trailing garbage,
+  // multiple decimal points, and more than two decimal places with no
+  // signal that anything was silently dropped. `income.trim().length > 0`
+  // gates the inline error so an untouched/empty field never shows one.
+  const parsedIncome = parseMoneyInput(income);
+  const incomeAmountError = income.trim().length > 0 && !parsedIncome.valid;
   // A known next payment is required for regular/predictable frequencies
   // (Navilo needs a real date to schedule Money Plan and Available Until
   // Payday around) but is genuinely optional for irregular income — never
   // invented when the user says they don't know it (PRD ask, §1/§5).
-  const canSave = label.trim().length > 0 && !isNaN(incomeNumber) && incomeNumber > 0 && (isIrregular || unknownDate || !!nextDueDate);
-  const monthlyPreview = !isNaN(incomeNumber) && incomeNumber > 0 ? toMonthlyAmount(incomeNumber, frequency) : null;
+  const canSave = label.trim().length > 0 && parsedIncome.valid && (isIrregular || unknownDate || !!nextDueDate);
+  const monthlyPreview = parsedIncome.valid ? toMonthlyAmount(parsedIncome.amount, frequency) : null;
 
   function handleSave() {
-    if (!canSave) return;
+    if (!canSave || !parsedIncome.valid) return;
     // Qualification and the request itself are computed and fired
     // synchronously, before any state mutation below — the request must
     // survive regardless of what happens to this component afterward
@@ -133,7 +154,7 @@ export function AddIncomeModal({
     const payload = {
       type: 'income' as const,
       label: label.trim(),
-      amount: incomeNumber,
+      amount: parsedIncome.amount,
       frequency,
       nextDueDate: unknownDate || !nextDueDate ? new Date().toISOString() : nextDueDate,
       nextDueDateUnknown: unknownDate,
@@ -201,6 +222,7 @@ export function AddIncomeModal({
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
         preview: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.sm },
+        amountError: { ...typography.caption, fontSize: 12, color: colors.danger, marginTop: -spacing.xs, marginBottom: spacing.sm },
         sourceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
         sourceCard: {
           flexBasis: '30%',
@@ -276,6 +298,11 @@ export function AddIncomeModal({
         value={income}
         onChangeText={setIncome}
       />
+      {incomeAmountError ? (
+        <Text style={styles.amountError} accessibilityLiveRegion="polite">
+          Enter an amount to the nearest cent (up to 2 decimal places).
+        </Text>
+      ) : null}
       {monthlyPreview !== null && frequency !== 'monthly' ? <Text style={styles.preview}>≈ {formatMoney(monthlyPreview)}/month estimated</Text> : null}
 
       <Text style={styles.label}>Pay frequency</Text>
@@ -301,7 +328,7 @@ export function AddIncomeModal({
               value={nextDueDate ? new Date(nextDueDate) : new Date()}
               mode="date"
               display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              minimumDate={new Date()}
+              minimumDate={startOfToday()}
               onChange={(event, date) => {
                 if (Platform.OS === 'android') setPickerOpen(false);
                 if (event.type === 'dismissed') return;
@@ -324,7 +351,7 @@ export function AddIncomeModal({
               value={nextDueDate ? new Date(nextDueDate) : new Date()}
               mode="date"
               display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              minimumDate={new Date()}
+              minimumDate={startOfToday()}
               onChange={(event, date) => {
                 if (Platform.OS === 'android') setPickerOpen(false);
                 if (event.type === 'dismissed') return;

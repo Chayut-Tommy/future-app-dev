@@ -206,7 +206,6 @@ export function SavingsAllocationPickerBody({
               keyboardType="decimal-pad"
               value={customPercentText}
               onChangeText={handleCustomPercentChange}
-              returnKeyType="done"
             />
           ) : null}
           <Text style={styles.calcOnlyText}>These are calculation options, not recommendations.</Text>
@@ -234,7 +233,6 @@ export function SavingsAllocationPickerBody({
             keyboardType="decimal-pad"
             value={amountText}
             onChangeText={handleAmountChange}
-            returnKeyType="done"
           />
           <Text style={styles.calcOnlyText}>
             Applied as a monthly figure, then shared out across your pay cycle — not the amount deducted from a single payday.

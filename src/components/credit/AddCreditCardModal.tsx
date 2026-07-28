@@ -231,7 +231,6 @@ export function AddCreditCardModal({
         keyboardType="decimal-pad"
         value={apr}
         onChangeText={setApr}
-        returnKeyType="done"
       />
       <Text style={[styles.benefitLine, { marginTop: -spacing.sm, marginBottom: spacing.sm }]}>
         {apr.trim().length > 0

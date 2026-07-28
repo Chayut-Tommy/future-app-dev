@@ -55,6 +55,22 @@ export function TransactionsScreen() {
   const { colors, spacing, typography, cardShadow, radius } = useTheme();
 
   const categoryMap = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories]);
+  const recurringItemsMap = useMemo(() => new Map(data.recurringItems.map((r) => [r.id, r])), [data.recurringItems]);
+  // The transaction's own primary display identity (e.g. "Internet test"),
+  // separate from its spending category — never overloads categoryId with
+  // an arbitrary bill name (regression-protection review, B2.0B transaction-
+  // identity correction §1). `note` is an immutable snapshot taken at
+  // confirmation time, so a later rename/delete of the source never changes
+  // it. Pre-existing linked transactions from before this snapshot existed
+  // fall back to the recurring item's CURRENT label, purely for display —
+  // this never writes anything back to the transaction itself. Manual,
+  // non-recurring transactions have neither, so this returns null and the
+  // row falls back to category-only display exactly as before.
+  function transactionDisplayLabel(t: Transaction): string | null {
+    if (t.note) return t.note;
+    if (t.recurringItemId) return recurringItemsMap.get(t.recurringItemId)?.label ?? null;
+    return null;
+  }
   const monthGroups = useMemo(() => groupByMonth(data.transactions), [data.transactions]);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set(monthGroups[0] ? [monthGroups[0].key] : []));
   const insights = useMemo(() => computeSpendingInsights(data), [data]);
@@ -112,7 +128,9 @@ export function TransactionsScreen() {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
         },
-        txnLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
+        txnLeft: { flexDirection: 'column', alignItems: 'flex-start', gap: 2, flex: 1 },
+        txnDescription: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        txnMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         categoryChip: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         categoryChipText: { ...typography.micro, fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
         txnDate: { ...typography.micro, color: colors.textMuted },
@@ -210,6 +228,7 @@ export function TransactionsScreen() {
                 <View style={styles.txnList}>
                   {group.transactions.map((item) => {
                     const category = categoryMap.get(item.categoryId);
+                    const displayLabel = transactionDisplayLabel(item);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -221,10 +240,13 @@ export function TransactionsScreen() {
                         }}
                       >
                         <View style={styles.txnLeft}>
-                          <View style={styles.categoryChip}>
-                            <Text style={styles.categoryChipText}>{category?.name ?? 'Other'}</Text>
+                          {displayLabel ? <Text style={styles.txnDescription}>{displayLabel}</Text> : null}
+                          <View style={styles.txnMetaRow}>
+                            <View style={styles.categoryChip}>
+                              <Text style={styles.categoryChipText}>{category?.name ?? 'Other'}</Text>
+                            </View>
+                            <Text style={styles.txnDate}>{new Date(item.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</Text>
                           </View>
-                          <Text style={styles.txnDate}>{new Date(item.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Text style={[styles.rowAmount, { color: item.type === 'income' ? colors.success : colors.danger }]}>

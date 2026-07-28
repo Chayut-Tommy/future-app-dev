@@ -91,6 +91,38 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
     }
   }
 
+  // A bill due exactly today — factual, never "overdue"/"late" (PRD ask,
+  // B2.0B due-today reminder correction §4): the payment window has only
+  // just opened, not passed. Checked after the overdue and income blocks
+  // above (both unchanged, both still take priority exactly as before —
+  // income's own condition and position are untouched, so a scenario where
+  // income already won stays exactly as it was) but before the tomorrow/
+  // future `dueSoon` block below, giving it the §3 priority: overdue >
+  // due-today > tomorrow/future. Deliberately reuses kind: 'bill_overdue' —
+  // the only SmartReminder kind SmartReminderCard.tsx wires to the real
+  // "Yes, I paid it" → payment-source → confirm flow — so the existing
+  // actionable path (and the existing pre-confirmation transparency
+  // disclosure, unmodified) renders unchanged; only the title/body text
+  // here distinguishes "due today" from a genuinely late bill. The
+  // recurring item's own current label/amount are read fresh from `data`
+  // here, and its own nextDueDate is what SmartReminderCard.tsx's
+  // confirmRecurringOccurrence call re-reads directly from `data` at
+  // confirm-time — this function never fabricates or caches a stale
+  // amount/date of its own.
+  const dueTodayBill = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense')
+    .find((r) => daysBetween(new Date(r.nextDueDate), today) === 0);
+  if (dueTodayBill) {
+    return {
+      id: `bill-overdue-${dueTodayBill.id}-${dueTodayBill.nextDueDate}`,
+      kind: 'bill_overdue',
+      title: `Did you pay your ${dueTodayBill.label}?`,
+      body: "It's due today.",
+      recurringItemId: dueTodayBill.id,
+      amount: dueTodayBill.amount,
+    };
+  }
+
   const dueSoon = data.recurringItems
     .filter((r) => r.active && r.type === 'expense')
     .find((r) => daysBetween(today, new Date(r.nextDueDate)) === 1);

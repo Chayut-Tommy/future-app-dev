@@ -136,7 +136,6 @@ export function TransferModal({ visible, onClose }: { visible: boolean; onClose:
         keyboardType="decimal-pad"
         value={amount}
         onChangeText={setAmount}
-        returnKeyType="done"
       />
     </KeyboardSheet>
   );

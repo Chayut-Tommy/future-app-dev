@@ -7,6 +7,8 @@ import { useAppState } from '../../state/AppStateContext';
 import { RecurringItem, PayFrequency } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
+import { parseMoneyInput } from '../../lib/calculations/money';
+import { anchoredMonthlyDate } from '../../lib/calculations/recurringSchedule';
 
 // Rent and Mortgage are deliberately separate presets, not one combined
 // entry (PRD ask): rent is a pure expense, mortgage also builds/reduces a
@@ -30,10 +32,34 @@ const FREQUENCIES: { value: PayFrequency; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
 ];
 
-function nextOccurrence(dayOfMonth: number): string {
+// `new Date(year, month, dayOfMonth).getTime() < now.getTime()` compared a
+// midnight-of-today candidate against a live timestamp — for
+// dayOfMonth === today's date, midnight is always earlier than "now" (any
+// time after 00:00:00), so a same-day bill was always incorrectly rolled to
+// next month (confirmed device defect, B2.0B due-today boundary
+// correction). Comparing against start-of-day instead makes today resolve
+// to today, not next month.
+function startOfToday(): Date {
   const now = new Date();
-  const candidate = new Date(now.getFullYear(), now.getMonth(), dayOfMonth);
-  if (candidate.getTime() < now.getTime()) candidate.setMonth(candidate.getMonth() + 1);
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+// Reuses recurringSchedule.ts's anchoredMonthlyDate — the same
+// B2.0A-established clamp-and-restore helper already used for every later
+// schedule advancement — instead of the bare `new Date(year, month, day)`
+// constructor, which silently overflows past the end of a short month
+// (e.g. day 31 in February rolling into March) rather than clamping. Using
+// the same shared helper for this first-occurrence date means a
+// short-month day-of-month is clamped exactly the same way a later
+// advancement would clamp it — never an unrelated day in the following
+// month (regression-protection review, B2.0B due-today boundary
+// correction §5 — month-end safety).
+function nextOccurrence(dayOfMonth: number): string {
+  const today = startOfToday();
+  const candidate = anchoredMonthlyDate(today.getFullYear(), today.getMonth(), dayOfMonth);
+  if (candidate.getTime() < today.getTime()) {
+    return anchoredMonthlyDate(today.getFullYear(), today.getMonth() + 1, dayOfMonth).toISOString();
+  }
   return candidate.toISOString();
 }
 
@@ -116,12 +142,16 @@ export function AddRecurringItemModal({
     setPickerOpen(false);
   }
 
-  const amountValue = parseFloat(amount);
+  // Strict money-input contract (regression-protection review, B2.0B
+  // recurring-money precision correction §2/§3) — same replacement as
+  // AddIncomeModal.tsx: no trailing-garbage prefix parsing, no multiple
+  // decimal points, no more than two typed decimal places.
+  const parsedAmount = parseMoneyInput(amount);
+  const amountError = amount.trim().length > 0 && !parsedAmount.valid;
   const dayValue = parseInt(dayOfMonth, 10);
   const canSave =
     label.trim().length > 0 &&
-    !isNaN(amountValue) &&
-    amountValue > 0 &&
+    parsedAmount.valid &&
     (usesDayOfMonth ? dayValue >= 1 && dayValue <= 31 : !!nextDueDate);
 
   function chooseBillType(p: (typeof BILL_PRESETS)[number]) {
@@ -139,13 +169,23 @@ export function AddRecurringItemModal({
   }
 
   function handleSave() {
-    if (!canSave) return;
+    if (!canSave || !parsedAmount.valid) return;
     const payload = {
       type: 'expense' as const,
       label: label.trim(),
-      amount: amountValue,
+      amount: parsedAmount.amount,
       frequency,
       nextDueDate: usesDayOfMonth ? nextOccurrence(dayValue) : (nextDueDate as string),
+      // Explicit, not re-derived from nextDueDate's own day-of-month — a
+      // short-month first occurrence can be clamped (e.g. day 31 requested
+      // in February resolves to Feb 28), and without this the anchor would
+      // silently become 28 instead of the user's true selected day (31),
+      // permanently losing it. resolveScheduleAnchorDay (AppStateContext.tsx,
+      // unmodified) already treats an explicitly-supplied scheduleAnchorDay
+      // as authoritative, so this alone is sufficient — no change needed
+      // there (regression-protection review, B2.0B due-today boundary
+      // correction §5 — month-end safety).
+      scheduleAnchorDay: usesDayOfMonth ? dayValue : undefined,
       isFixed: true,
       active: true,
       icon,
@@ -195,6 +235,7 @@ export function AddRecurringItemModal({
         footerButton: { flex: 1 },
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
+        amountError: { ...typography.caption, fontSize: 12, color: colors.danger, marginTop: -spacing.xs, marginBottom: spacing.sm },
         categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
         categoryCard: {
           flexBasis: '30%',
@@ -271,6 +312,11 @@ export function AddRecurringItemModal({
 
       <Text style={styles.label}>Amount</Text>
       <TextInput style={styles.input} placeholder="$0" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+      {amountError ? (
+        <Text style={styles.amountError} accessibilityLiveRegion="polite">
+          Enter an amount to the nearest cent (up to 2 decimal places).
+        </Text>
+      ) : null}
 
       <Text style={styles.label}>How often</Text>
       <View style={styles.chipRow}>
@@ -287,7 +333,7 @@ export function AddRecurringItemModal({
       {usesDayOfMonth ? (
         <>
           <Text style={styles.label}>Day of month due</Text>
-          <TextInput style={styles.input} placeholder="1" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dayOfMonth} onChangeText={setDayOfMonth} returnKeyType="done" />
+          <TextInput style={styles.input} placeholder="1" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dayOfMonth} onChangeText={setDayOfMonth} />
         </>
       ) : (
         <>

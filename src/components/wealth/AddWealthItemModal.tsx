@@ -510,7 +510,6 @@ export function AddWealthItemModal({
         keyboardType="decimal-pad"
         value={value}
         onChangeText={setValue}
-        returnKeyType="done"
       />
       {kind === 'asset' && (assetType === 'cash' || assetType === 'savings') ? (
         <>
@@ -522,7 +521,6 @@ export function AddWealthItemModal({
             keyboardType="decimal-pad"
             value={interestRate}
             onChangeText={setInterestRate}
-            returnKeyType="done"
           />
           <View style={styles.moneyIncludeBox}>
             <Text style={styles.moneyIncludeTitle}>Should {brand.name} include this balance when estimating your available money?</Text>
@@ -553,7 +551,6 @@ export function AddWealthItemModal({
             keyboardType="decimal-pad"
             value={liabilityInterestRate}
             onChangeText={setLiabilityInterestRate}
-            returnKeyType="done"
           />
         </>
       ) : null}
@@ -610,7 +607,6 @@ export function AddWealthItemModal({
                 keyboardType="decimal-pad"
                 value={newPropertyValue}
                 onChangeText={setNewPropertyValue}
-                returnKeyType="done"
               />
             </>
           ) : null}
@@ -632,7 +628,6 @@ export function AddWealthItemModal({
             keyboardType="decimal-pad"
             value={repaymentAmount}
             onChangeText={setRepaymentAmount}
-            returnKeyType="done"
           />
           <Text style={styles.label}>Repayment frequency</Text>
           <View style={styles.freqRow}>
@@ -660,7 +655,6 @@ export function AddWealthItemModal({
                   keyboardType="number-pad"
                   value={repaymentDayOfMonth}
                   onChangeText={setRepaymentDayOfMonth}
-                  returnKeyType="done"
                 />
               </>
             ) : (

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   AppData,
   AppliedBalanceEffect,
@@ -9,6 +9,7 @@ import {
   Liability,
   LiabilityType,
   PayFrequency,
+  PaymentSource,
   RecurringItem,
   SavingsComparisonEntry,
   Transaction,
@@ -19,6 +20,8 @@ import { generateId } from '../lib/id';
 import { computeLuluScore } from '../lib/calculations/luluScore';
 import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
+import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
+import { moneyAmountToCents } from '../lib/calculations/money';
 
 export type TransferTarget = { kind: 'asset'; assetId: string } | { kind: 'liability'; liabilityId: string };
 
@@ -332,8 +335,18 @@ export function resolveScheduleAnchorDay(
 // re-implementation that could silently drift from it. Each React callback
 // below is a thin wrapper: call the pure function, then persist.
 
-/** Creates a transaction and applies its balance effect, exactly once. */
-export function applyNewTransaction(data: AppData, t: Omit<Transaction, 'id'>): AppData {
+/** Creates a transaction and applies its balance effect, exactly once.
+ * `transactionId` defaults to a freshly generated id, exactly as before —
+ * every existing caller that omits it keeps its current behaviour
+ * unchanged. A caller that has already generated its own id ahead of time
+ * (confirmRecurringOccurrenceTransition below, which needs the id fixed
+ * before this call so it can look up the exact transaction just appended)
+ * may supply it instead. This function remains the SOLE owner of
+ * ensureCashAsset / computeBalanceEffect / applyEffectDelta / Transaction
+ * construction / appliedBalanceEffect — nothing else in this file
+ * re-implements this pipeline (regression-protection review, B2.0B
+ * correction §1). */
+export function applyNewTransaction(data: AppData, t: Omit<Transaction, 'id'>, transactionId: string = generateId()): AppData {
   const balanceEffect: BalanceEffectMode = t.balanceEffect ?? 'update';
   // Income always ensures a Cash asset exists first, even when balanceEffect
   // is 'none' — so a later edit back to 'update' has something to resolve
@@ -346,8 +359,214 @@ export function applyNewTransaction(data: AppData, t: Omit<Transaction, 'id'>): 
   }
   const effect = computeBalanceEffect(workingData, { ...t, balanceEffect });
   const withEffect = applyEffectDelta(workingData, effect, 1);
-  const newTransaction: Transaction = { ...t, id: generateId(), balanceEffect, appliedBalanceEffect: effect };
+  const newTransaction: Transaction = { ...t, id: transactionId, balanceEffect, appliedBalanceEffect: effect };
   return { ...withEffect, transactions: [...workingData.transactions, newTransaction] };
+}
+
+export type ConfirmRecurringOccurrenceResult =
+  | { applied: true; data: AppData }
+  | {
+      applied: false;
+      reason: 'not_found' | 'stale' | 'invalid_date' | 'invalid_amount' | 'invalid_input' | 'invalid_source' | 'balance_target_missing';
+    };
+
+/** Days in `month` (1-12) of `year`, via Date.UTC so it never depends on the
+ * runtime's local offset — used only to bound-check a literal day-of-month
+ * digit before trusting it, never to construct the date being validated
+ * (regression-protection review, B2.0B correction §3). */
+function daysInCalendarMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+const CANONICAL_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+
+/** Strict validity check for Navilo's canonical recurring-schedule date
+ * format — a full ISO datetime string from Date.prototype.toISOString(),
+ * which is what RecurringItem.nextDueDate is always set to (see
+ * AddRecurringItemModal.tsx/AddIncomeModal.tsx, both call a real
+ * DateTimePicker selection's .toISOString()).
+ *
+ * `!Number.isNaN(new Date(x).getTime())` is NOT sufficient here: JS's Date
+ * constructor does not reject an impossible calendar date such as
+ * "2026-02-30" — it silently rolls it forward into the next month
+ * ("2026-03-02"), and does so even with a full "...T00:00:00.000Z" suffix
+ * (confirmed empirically this round). This function instead bound-checks
+ * the literal year/month/day digits from the string itself — before they
+ * are ever handed to the Date constructor — so an impossible date is
+ * rejected outright rather than silently renormalized. It never
+ * reinterprets the string through a different UTC/local frame to decide
+ * validity, so it cannot itself introduce a local-day shift
+ * (regression-protection review, B2.0B correction §3). */
+function isValidCanonicalDate(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = CANONICAL_DATE_RE.exec(value);
+  if (!match) return false;
+  const [, y, mo, d, h, mi, s] = match;
+  const year = Number(y);
+  const month = Number(mo);
+  const day = Number(d);
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > daysInCalendarMonth(year, month)) return false;
+  if (h !== undefined && (Number(h) > 23 || Number(mi) > 59 || Number(s) > 59)) return false;
+  return !Number.isNaN(new Date(value).getTime());
+}
+
+/** Looser check for the generated transaction timestamp only — a technical
+ * bookkeeping value (always `new Date().toISOString()` from the calling
+ * context action, never user-picked), not a calendar date the user chose,
+ * so it only needs to be a genuine parseable instant. Never read back as a
+ * calendar day for schedule purposes (regression-protection review, B2.0B
+ * correction §3 — "do not reinterpret it as the scheduled local date"). */
+function isValidISOTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !Number.isNaN(new Date(value).getTime());
+}
+
+/** The entire B2.0B combined transition: confirming that a recurring
+ * income/bill occurrence happened, as one atomic AppData result — the same
+ * transaction/balance-effect pipeline addTransaction uses (via
+ * applyNewTransaction itself, not a re-implementation of it),
+ * upsertNetWorthHistory, and the recurring item's schedule advancement, all
+ * in one committed state (regression-protection review, B2.0B correction).
+ * Exported and pure, same testability pattern as applyNewTransaction above.
+ *
+ * Every source-owned fact — type, amount, label-derived category, schedule
+ * — is read from `data`'s LATEST matching recurring item, never trusted
+ * from the caller. The caller supplies only recurringItemId (which
+ * occurrence), expectedNextDueDate (the staleness check), and
+ * paymentSource (the one genuine confirmation-time choice that cannot be
+ * derived from the source — bills only). `transactionId` and `date` are
+ * generated once by the calling context action (never inside this pure
+ * function, and never by the component), so this function stays fully
+ * deterministic and directly testable.
+ *
+ * Calls applyNewTransaction exactly once, passing its own pre-generated
+ * transactionId so the transaction it appends can be located
+ * deterministically afterward. applyNewTransaction remains the SOLE owner
+ * of ensureCashAsset / computeBalanceEffect / applyEffectDelta / Transaction
+ * construction / appliedBalanceEffect — this function no longer
+ * re-orchestrates that pipeline independently, so the ordinary transaction
+ * path and this recurring-confirmation path can never diverge (regression-
+ * protection review, B2.0B correction §1). A defensive assertion
+ * immediately after that call catches the case where a requested 'update'
+ * balanceEffect could not actually be resolved (missing target) — the
+ * prevalidation below should make this unreachable, but it must never
+ * silently proceed if it somehow is, and on failure discards
+ * applyNewTransaction's result in full rather than partially retaining it
+ * (regression-protection review, B2.0B correction §2). upsertNetWorthHistory
+ * is applied on the result, matching addTransaction's existing composition
+ * exactly — never omitted.
+ *
+ * Validates before mutating anything; every rejected path returns the
+ * original `data` object unchanged by reference, with no transaction, no
+ * balance effect, no schedule advancement, and no scheduleAnchorDay
+ * change. */
+export function confirmRecurringOccurrenceTransition(
+  data: AppData,
+  input: {
+    recurringItemId: string;
+    expectedNextDueDate: string;
+    paymentSource?: PaymentSource;
+    transactionId: string;
+    date: string;
+  }
+): ConfirmRecurringOccurrenceResult {
+  const item = data.recurringItems.find((r) => r.id === input.recurringItemId);
+  if (!item) return { applied: false, reason: 'not_found' };
+
+  if (!isValidCanonicalDate(item.nextDueDate) || !isValidCanonicalDate(input.expectedNextDueDate)) {
+    return { applied: false, reason: 'invalid_date' };
+  }
+  if (item.nextDueDate !== input.expectedNextDueDate) return { applied: false, reason: 'stale' };
+
+  if (!isValidISOTimestamp(input.date)) return { applied: false, reason: 'invalid_date' };
+
+  // Defensive — TypeScript already constrains RecurringItem.type, but this
+  // function must never trust unmodelled/corrupt data over its own checks.
+  if (item.type !== 'income' && item.type !== 'expense') return { applied: false, reason: 'invalid_input' };
+  // Boundary safeguard for legacy or otherwise malformed data — NOT a
+  // storage migration. A stored amount that fails this (e.g. a pre-existing
+  // 120.1234 saved before the strict form-level contract existed) is
+  // rejected outright rather than silently rounded; the source itself is
+  // never rewritten here (regression-protection review, B2.0B recurring-
+  // money precision correction §4/§5). The validated integer-cent amount is
+  // what the transaction/balance-effect path below actually uses, never the
+  // raw item.amount float.
+  const validatedAmount = moneyAmountToCents(item.amount);
+  if (!validatedAmount.valid) return { applied: false, reason: 'invalid_amount' };
+
+  if (item.type === 'income' && input.paymentSource !== undefined) return { applied: false, reason: 'invalid_input' };
+  if (item.type === 'expense' && input.paymentSource !== 'cash' && input.paymentSource !== 'credit_card') {
+    return { applied: false, reason: 'invalid_source' };
+  }
+
+  let creditCardId: string | undefined;
+  if (item.type === 'expense' && input.paymentSource === 'cash' && !data.assets.some((a) => a.type === 'cash')) {
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+  if (item.type === 'expense' && input.paymentSource === 'credit_card') {
+    creditCardId = data.creditCards[0]?.id;
+    if (!creditCardId) return { applied: false, reason: 'balance_target_missing' };
+  }
+
+  const advance = advanceRecurringItemSchedule(item);
+  if (!isValidCanonicalDate(advance.nextDueDate)) return { applied: false, reason: 'invalid_date' };
+  // Forward-only — an advancement that lands on or before the current
+  // nextDueDate is a defect in the schedule math, not a legitimate result;
+  // never advance backward or in place (regression-protection review,
+  // B2.0B correction §3).
+  if (new Date(advance.nextDueDate).getTime() <= new Date(item.nextDueDate).getTime()) {
+    return { applied: false, reason: 'invalid_date' };
+  }
+
+  // --- success path only from here; nothing above this line ever mutates,
+  // and no rejection above ever calls applyNewTransaction. ---
+  const categoryId =
+    item.type === 'income'
+      ? data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === item.label.toLowerCase())?.id ?? 'cat-other-income'
+      : 'cat-other-expense';
+
+  const transactionInput: Omit<Transaction, 'id'> = {
+    type: item.type,
+    amount: validatedAmount.cents / 100,
+    categoryId,
+    date: input.date,
+    // An immutable snapshot of the source's label AT CONFIRMATION TIME —
+    // the transaction's primary display identity (e.g. "Internet test"),
+    // kept entirely separate from categoryId (still real spending-category
+    // analytics, e.g. "Other"). Never rewritten afterward: renaming or
+    // deleting the RecurringItem later has no effect on this already-
+    // created Transaction, since nothing re-reads item.label once this
+    // transaction exists (regression-protection review, B2.0B transaction-
+    // identity correction §1). Reuses the existing, previously-unused
+    // Transaction.note field — no model or storage change.
+    note: item.label,
+    paymentSource: input.paymentSource,
+    creditCardId,
+    recurringItemId: item.id,
+    balanceEffect: 'update',
+  };
+
+  const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
+
+  const appended = withTransaction.transactions.find((t) => t.id === input.transactionId);
+  if (!appended || appended.appliedBalanceEffect === undefined) {
+    // applyNewTransaction's result is discarded here in full — data (the
+    // original, untouched input) is what gets returned, never a partial
+    // mix of the two.
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+
+  const withHistory = upsertNetWorthHistory(withTransaction);
+
+  const scheduleAnchorDay = resolveScheduleAnchorDay(item, advance);
+  const updatedItem: RecurringItem = { ...item, nextDueDate: advance.nextDueDate, scheduleAnchorDay };
+
+  const finalData: AppData = {
+    ...withHistory,
+    recurringItems: withHistory.recurringItems.map((r) => (r.id === item.id ? updatedItem : r)),
+  };
+
+  return { applied: true, data: finalData };
 }
 
 /** Always reconciles — see the updateTransaction doc comment on
@@ -416,6 +635,18 @@ interface AppStateContextValue {
    * only the record itself, for when the user has already accounted for the
    * money elsewhere. */
   deleteTransaction: (id: string, reverseEffect?: boolean) => void;
+  /** The B2.0B combined confirmation action — creates the transaction,
+   * applies the existing B1 balance effect, and advances the recurring
+   * schedule (preserving scheduleAnchorDay) as one committed transition.
+   * Every source-owned fact (type, amount, category, schedule) is read
+   * from the latest matching recurring item, never trusted from the
+   * caller. Returns the full result so the caller can branch on
+   * `applied`/`reason` for dismissal and error-messaging decisions. */
+  confirmRecurringOccurrence: (input: {
+    recurringItemId: string;
+    expectedNextDueDate: string;
+    paymentSource?: PaymentSource;
+  }) => ConfirmRecurringOccurrenceResult;
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
@@ -477,6 +708,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<AppData>(createEmptyAppData());
   const [isLoading, setIsLoading] = useState(true);
 
+  // Always holds the latest AppData accepted by this provider, updated
+  // synchronously — never via a React state updater — so a context action
+  // that fires immediately after another one in the same handler (before
+  // React has re-rendered) reads the first action's already-applied result
+  // instead of a stale closure (regression-protection review, B2.0B §5).
+  // commitData is the ONLY place setData is called in this component; every
+  // path that replaces `data` (initial load, persist, reset) routes through
+  // it, so the invariant holds by construction rather than by convention at
+  // each call site.
+  const dataRef = useRef(data);
+  const commitData = useCallback((next: AppData) => {
+    dataRef.current = next;
+    setData(next);
+  }, []);
+
   useEffect(() => {
     loadAppData().then(async ({ data: loaded, migrated }) => {
       // Only write back when a migration actually changed something (e.g.
@@ -506,17 +752,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           console.warn('Migration write failed; will retry next launch', error);
         }
       }
-      setData(loaded);
+      commitData(loaded);
       setIsLoading(false);
     });
-  }, []);
+  }, [commitData]);
 
-  const persist = useCallback((next: AppData) => {
-    const withIncome = syncIncomeAggregate(next);
-    const withScoreHistory = upsertLuluScoreHistory(withIncome);
-    setData(withScoreHistory);
-    saveAppData(withScoreHistory);
-  }, []);
+  const persist = useCallback(
+    (next: AppData) => {
+      const withIncome = syncIncomeAggregate(next);
+      const withScoreHistory = upsertLuluScoreHistory(withIncome);
+      commitData(withScoreHistory);
+      saveAppData(withScoreHistory);
+    },
+    [commitData]
+  );
 
   const updateUser = useCallback(
     (patch: Partial<UserProfile>) => {
@@ -578,6 +827,27 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       persist(upsertNetWorthHistory(applyTransactionDelete(data, id, reverseEffect)));
     },
     [data, persist]
+  );
+
+  // The B2.0B combined confirmation action (regression-protection review) —
+  // reads dataRef.current, not `data`, so a call fired immediately after
+  // another one in the same handler sees that prior call's already-applied
+  // result rather than a stale render closure. transactionId and date are
+  // generated exactly once here, in a plain callback React never
+  // re-invokes speculatively — never inside confirmRecurringOccurrenceTransition
+  // itself. persist is only called when the transition actually applied;
+  // a rejected result never touches storage.
+  const confirmRecurringOccurrence = useCallback(
+    (input: { recurringItemId: string; expectedNextDueDate: string; paymentSource?: PaymentSource }): ConfirmRecurringOccurrenceResult => {
+      const transactionId = generateId();
+      const date = new Date().toISOString();
+      const result = confirmRecurringOccurrenceTransition(dataRef.current, { ...input, transactionId, date });
+      if (result.applied) {
+        persist(result.data);
+      }
+      return result;
+    },
+    [persist]
   );
 
   const addGoal = useCallback(
@@ -834,9 +1104,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // journey again rather than landing on an empty-but-onboarded app.
   const resetAllData = useCallback(() => {
     const fresh = createEmptyAppData();
-    setData(fresh);
+    commitData(fresh);
     saveAppData(fresh);
-  }, []);
+  }, [commitData]);
 
   const value = useMemo(
     () => ({
@@ -849,6 +1119,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addTransaction,
       updateTransaction,
       deleteTransaction,
+      confirmRecurringOccurrence,
       addGoal,
       updateGoal,
       deleteGoal,
@@ -882,6 +1153,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addTransaction,
       updateTransaction,
       deleteTransaction,
+      confirmRecurringOccurrence,
       addGoal,
       updateGoal,
       deleteGoal,
