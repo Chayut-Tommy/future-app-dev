@@ -22,6 +22,16 @@ import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calcula
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
 import { moneyAmountToCents } from '../lib/calculations/money';
+import {
+  initialPersistenceState,
+  issueWrite,
+  settleWrite,
+  canIssueReset,
+  canRetry,
+  retryWriteKind,
+  PersistenceState,
+  WriteKind,
+} from '../lib/persistenceState';
 
 export type TransferTarget = { kind: 'asset'; assetId: string } | { kind: 'liability'; liabilityId: string };
 
@@ -370,6 +380,22 @@ export type ConfirmRecurringOccurrenceResult =
       reason: 'not_found' | 'stale' | 'invalid_date' | 'invalid_amount' | 'invalid_input' | 'invalid_source' | 'balance_target_missing';
     };
 
+/** B2.0C — the context action's return shape, separate from the pure
+ * transition's result above. `persistence` is the exact Promise the
+ * confirmation's own write produced (via `persist`), so a caller can know
+ * precisely when ITS OWN confirmation lands on disk without re-running
+ * confirmRecurringOccurrenceTransition or inferring durability from the
+ * coarse app-wide persistence status. Pre-resolved when the transition
+ * itself did not apply (nothing was written). Never used by
+ * SmartReminderCard's own UI today (see its caller for why: the confirmed
+ * occurrence's reminder is already gone from view the instant the schedule
+ * advances in memory, independent of persistence timing) — the type exists
+ * so any caller, now or later, can await its own write's durability. */
+export type ConfirmationCommitResult = {
+  transition: ConfirmRecurringOccurrenceResult;
+  persistence: Promise<void>;
+};
+
 /** Days in `month` (1-12) of `year`, via Date.UTC so it never depends on the
  * runtime's local offset — used only to bound-check a literal day-of-month
  * digit before trusting it, never to construct the date being validated
@@ -612,6 +638,18 @@ export function applyTransactionDelete(data: AppData, id: string, reverseEffect:
 interface AppStateContextValue {
   data: AppData;
   isLoading: boolean;
+  /** B2.0C — app-wide AppData persistence bookkeeping (pendingCount/status/
+   * resetState). Drives the app-level unsaved-change surface and the
+   * reset-pending blocking overlay (both rendered from App.tsx's AppShell,
+   * not from any individual screen — see resetAllData/retryPersist below
+   * for why no screen-local state can be trusted for this). */
+  persistenceState: PersistenceState;
+  /** Re-issues a save of the CURRENT dataRef.current — never a captured/
+   * stale snapshot, and never a business-transition replay. Safe to call
+   * repeatedly; a no-op while the relevant write is already pending
+   * (ordinary retry while nothing is in `'error'`, or a duplicate tap while
+   * a reset write is already `'pending'`). */
+  retryPersist: () => void;
   updateUser: (patch: Partial<UserProfile>) => void;
   addRecurringItem: (item: Omit<RecurringItem, 'id'>) => void;
   updateRecurringItem: (id: string, patch: Partial<Omit<RecurringItem, 'id'>>) => void;
@@ -646,7 +684,7 @@ interface AppStateContextValue {
     recurringItemId: string;
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
-  }) => ConfirmRecurringOccurrenceResult;
+  }) => ConfirmationCommitResult;
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
@@ -723,6 +761,36 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setData(next);
   }, []);
 
+  // B2.0C — same dataRef pattern as above, applied to persistence
+  // bookkeeping: persistenceStateRef always holds the latest value
+  // synchronously, so resetAllData/retryPersist can guard against a
+  // duplicate submission/tap without waiting for a re-render (regression-
+  // protection review, B2.0C mandatory correction 1 §E). setPersistenceState
+  // is the only place persistenceStateRef is written, mirroring commitData.
+  const [persistenceState, setPersistenceStateRaw] = useState<PersistenceState>(initialPersistenceState);
+  const persistenceStateRef = useRef(persistenceState);
+  const setPersistenceState = useCallback((updater: (s: PersistenceState) => PersistenceState) => {
+    persistenceStateRef.current = updater(persistenceStateRef.current);
+    setPersistenceStateRaw(persistenceStateRef.current);
+  }, []);
+
+  // Tracks one write's full lifecycle against the shared PersistenceState —
+  // `kind` is captured here, at issue time, and never re-read from state
+  // later, since a different write may change `lastWriteKind` before this
+  // one settles (regression-protection review, B2.0C corrected design §1).
+  // issueWrite/settleWrite are the real, pure, exported functions from
+  // persistenceState.ts — this is a thin wrapper, not a reimplementation.
+  const trackWrite = useCallback(
+    (promise: Promise<void>, kind: WriteKind) => {
+      setPersistenceState((s) => issueWrite(s, kind));
+      promise.then(
+        () => setPersistenceState((s) => settleWrite(s, kind, 'success')),
+        () => setPersistenceState((s) => settleWrite(s, kind, 'error'))
+      );
+    },
+    [setPersistenceState]
+  );
+
   useEffect(() => {
     loadAppData().then(async ({ data: loaded, migrated }) => {
       // Only write back when a migration actually changed something (e.g.
@@ -757,14 +825,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     });
   }, [commitData]);
 
+  // B2.0C — now returns the exact Promise<void> the write produced (was
+  // void), so confirmRecurringOccurrence can hand its own caller that exact
+  // result (§ConfirmationCommitResult) without re-deriving anything. Every
+  // other caller of persist() still ignores the return value, exactly as
+  // before — this is additive, not a behaviour change for them.
   const persist = useCallback(
-    (next: AppData) => {
+    (next: AppData): Promise<void> => {
       const withIncome = syncIncomeAggregate(next);
       const withScoreHistory = upsertLuluScoreHistory(withIncome);
       commitData(withScoreHistory);
-      saveAppData(withScoreHistory);
+      const write = saveAppData(withScoreHistory);
+      trackWrite(write, 'ordinary');
+      return write;
     },
-    [commitData]
+    [commitData, trackWrite]
   );
 
   const updateUser = useCallback(
@@ -837,15 +912,19 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // re-invokes speculatively — never inside confirmRecurringOccurrenceTransition
   // itself. persist is only called when the transition actually applied;
   // a rejected result never touches storage.
+  // B2.0C — persist() now returns the exact write Promise, so it's handed
+  // straight to the caller as `persistence` (ConfirmationCommitResult)
+  // rather than discarded. No re-derivation: this is the SAME persist()
+  // call every other confirmed path already used, not a second pipeline.
+  // Pre-resolved when the transition didn't apply — nothing was written.
   const confirmRecurringOccurrence = useCallback(
-    (input: { recurringItemId: string; expectedNextDueDate: string; paymentSource?: PaymentSource }): ConfirmRecurringOccurrenceResult => {
+    (input: { recurringItemId: string; expectedNextDueDate: string; paymentSource?: PaymentSource }): ConfirmationCommitResult => {
       const transactionId = generateId();
       const date = new Date().toISOString();
-      const result = confirmRecurringOccurrenceTransition(dataRef.current, { ...input, transactionId, date });
-      if (result.applied) {
-        persist(result.data);
-      }
-      return result;
+      const transition = confirmRecurringOccurrenceTransition(dataRef.current, { ...input, transactionId, date });
+      if (!transition.applied) return { transition, persistence: Promise.resolve() };
+      const persistence = persist(transition.data);
+      return { transition, persistence };
     },
     [persist]
   );
@@ -1102,16 +1181,49 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // "Reset Lulu" (Settings) — wipes everything back to a fresh install,
   // including `hasSeenIntro`, so the user genuinely starts the Lulu
   // journey again rather than landing on an empty-but-onboarded app.
+  //
+  // B2.0C mandatory correction 1 — RootNavigator switches to the Welcome
+  // flow the instant commitData(fresh) runs (it reads data.user.hasSeenIntro
+  // directly), which is before this reset write has even started, let alone
+  // settled. ResetLuluScreen itself is therefore torn down by that
+  // navigation switch almost immediately — there is no screen left to host
+  // a local pending/error state, so this routes through the same tracked
+  // write as every other action and leaves the app-level ResetPendingOverlay
+  // (App.tsx) to show progress/failure — it is the one surface guaranteed to
+  // survive the navigation switch. Guarded against a duplicate submission
+  // (resetState !== 'none' means a reset write is already pending or
+  // awaiting retry) — a second tap while one is already in flight is a
+  // no-op, never a second AsyncStorage.setItem race against the first.
   const resetAllData = useCallback(() => {
+    if (!canIssueReset(persistenceStateRef.current)) return;
     const fresh = createEmptyAppData();
     commitData(fresh);
-    saveAppData(fresh);
-  }, [commitData]);
+    trackWrite(saveAppData(fresh), 'reset');
+  }, [commitData, trackWrite]);
+
+  // B2.0C — re-issues a save of dataRef.current (never a captured snapshot,
+  // never createEmptyAppData() called again — for a reset retry this is the
+  // SAME already-committed fresh object, not a freshly regenerated one, so
+  // no generated value can ever differ between the original attempt and a
+  // retry). Never calls confirmRecurringOccurrenceTransition/
+  // applyNewTransaction or any other business-transition function — this
+  // only ever touches the storage layer. Guarded against a duplicate tap:
+  // a no-op while a reset write is already 'pending', and a no-op for the
+  // ordinary (ConfirmationCommitResult/UnsavedChangesBanner) path unless the
+  // app is actually in `'error'` with no reset outstanding.
+  const retryPersist = useCallback(() => {
+    const s0 = persistenceStateRef.current;
+    if (!canRetry(s0)) return;
+    const kind: WriteKind = retryWriteKind(s0);
+    trackWrite(saveAppData(dataRef.current), kind);
+  }, [trackWrite]);
 
   const value = useMemo(
     () => ({
       data,
       isLoading,
+      persistenceState,
+      retryPersist,
       updateUser,
       addRecurringItem,
       updateRecurringItem,
@@ -1146,6 +1258,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [
       data,
       isLoading,
+      persistenceState,
+      retryPersist,
       updateUser,
       addRecurringItem,
       updateRecurringItem,

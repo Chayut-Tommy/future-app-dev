@@ -152,20 +152,33 @@ export function SmartReminderCard() {
     // latest-nextDueDate eligibility check, unaffected by this flag either way.
     setIsSubmitting(true);
     const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
-    const result = confirmRecurringOccurrence({
+    // B2.0C — confirmRecurringOccurrence now returns { transition,
+    // persistence }; `persistence` is deliberately not awaited/consumed
+    // here. The confirmed occurrence's nextDueDate already advanced as part
+    // of the in-memory transition above, so computeTopReminder(data) can no
+    // longer select it on the very next render regardless of dismiss() —
+    // this card cannot reliably stay the right context for a later
+    // persistence-failure message (regression-protection review, B2.0C
+    // corrected design §3). A save failure is surfaced by the app-level
+    // UnsavedChangesBanner (App.tsx), driven by AppStateContext's
+    // persistenceState, not by this component.
+    const { transition } = confirmRecurringOccurrence({
       recurringItemId: reminder.recurringItemId,
       expectedNextDueDate: item?.nextDueDate ?? '',
       paymentSource,
     });
 
-    if (result.applied || result.reason === 'stale' || result.reason === 'not_found') {
+    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found') {
       dismiss();
       return;
     }
     // invalid_amount | invalid_input | invalid_source | invalid_date |
     // balance_target_missing — stays visible, recoverable, retryable now.
+    // Still correct to show here: transition.applied === false means `data`
+    // never changed, so `reminder` stays stable and this card legitimately
+    // remains the right place for this specific message.
     setIsSubmitting(false);
-    setActionError(recoverableErrorMessage(result.reason));
+    setActionError(recoverableErrorMessage(transition.reason));
   }
 
   function confirmSalary() {

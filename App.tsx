@@ -10,10 +10,12 @@ import { SavingsAllocationPromptProvider } from './src/state/SavingsAllocationPr
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import i18n, { resolveDeviceLanguage } from './src/i18n';
+import { UnsavedChangesBanner } from './src/components/shared/UnsavedChangesBanner';
+import { ResetPendingOverlay } from './src/components/shared/ResetPendingOverlay';
 
 function AppShell() {
   const { colors, scheme } = useTheme();
-  const { data } = useAppState();
+  const { data, persistenceState, retryPersist } = useAppState();
 
   // Single source of truth for language is data.user.language — this effect
   // is what actually flips i18next's active locale whenever it changes
@@ -39,9 +41,20 @@ function AppShell() {
     [colors, scheme]
   );
 
+  // B2.0C — rendered here, not from any screen, so both surfaces survive
+  // whatever navigation/modal state is active underneath (regression-
+  // protection review, B2.0C corrected design §3/§4, mandatory correction
+  // 1). Mutually exclusive by construction: an unresolved reset always
+  // takes priority over the ordinary banner, since resetState !== 'none'
+  // already implies status is 'saving' or 'error' for that same write.
   return (
     <NavigationContainer theme={navigationTheme}>
       <RootNavigator />
+      {persistenceState.resetState !== 'none' ? (
+        <ResetPendingOverlay resetState={persistenceState.resetState} onRetry={retryPersist} />
+      ) : persistenceState.status === 'error' ? (
+        <UnsavedChangesBanner onRetry={retryPersist} />
+      ) : null}
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
     </NavigationContainer>
   );

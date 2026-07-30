@@ -203,6 +203,59 @@ export async function loadAppData(): Promise<{ data: AppData; migrated: boolean 
   }
 }
 
-export async function saveAppData(data: AppData): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+/**
+ * A true FIFO — `task` N+1 cannot start until `task` N's returned promise
+ * has settled, so completions are structurally guaranteed to arrive in
+ * issue order (B2.0C corrected design §1/§7). Generic and dependency-free
+ * (no AsyncStorage, no AppData) so it is directly testable with fake/
+ * deferred-promise tasks, without needing a native bridge. A rejected task
+ * never breaks the chain for tasks queued behind it — `chain` is always
+ * normalized back to a resolved state via the trailing `.then(ok, ok)`,
+ * regardless of which branch its predecessor took.
+ */
+export function createSerializedQueue<T = void>(): (task: () => Promise<T>) => Promise<T> {
+  let chain: Promise<void> = Promise.resolve();
+  return (task) => {
+    const result = chain.then(task);
+    chain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  };
 }
+
+/**
+ * Builds the AppData save function around an injected low-level `write`
+ * primitive, so the exact production algorithm — synchronous serialize-at-
+ * call-time, then enqueue — can be exercised in tests against a fake writer,
+ * without a real AsyncStorage/native bridge (unavailable outside the RN
+ * runtime; confirmed empirically this round — real AsyncStorage.setItem
+ * rejects immediately with "window is not defined" in the plain-Node test
+ * harness, so it cannot itself be used to test success/ordering behaviour).
+ * `saveAppData` below is this factory's one production instantiation.
+ *
+ * Serializing `data` synchronously, before it ever reaches the queue, is
+ * what directly guarantees "the exact state accepted by commitData is the
+ * state offered to persistence" (B2.0C corrected design §7) — it doesn't
+ * depend on `data` remaining unmutated until its eventual queue turn (true
+ * today by this codebase's spread/`.map`/`.filter` discipline, but this
+ * makes it true by construction). A synchronous `JSON.stringify` failure
+ * (e.g. a circular reference) rejects the caller's own promise immediately
+ * and never enters the queue at all — it cannot consume a turn or delay
+ * whatever is queued behind it.
+ */
+export function createAppDataSaver(write: (key: string, value: string) => Promise<void>): (data: AppData) => Promise<void> {
+  const enqueue = createSerializedQueue<void>();
+  return (data: AppData) => {
+    let json: string;
+    try {
+      json = JSON.stringify(data);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return enqueue(() => write(STORAGE_KEY, json));
+  };
+}
+
+export const saveAppData: (data: AppData) => Promise<void> = createAppDataSaver((key, value) => AsyncStorage.setItem(key, value));
