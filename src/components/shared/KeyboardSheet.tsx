@@ -23,6 +23,9 @@ export function KeyboardSheet({
   children,
   footer,
   isDirty = false,
+  discardTitle,
+  discardMessage,
+  gesturesEnabled = true,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -32,6 +35,18 @@ export function KeyboardSheet({
   /** True once the user has changed something from where the sheet opened —
    * gates swipe/tap-outside dismissal behind a confirmation. */
   isDirty?: boolean;
+  /** Optional form-specific "Discard ___?" wording — omit to keep the
+   * existing generic "Discard changes?" copy every other caller already
+   * uses. */
+  discardTitle?: string;
+  discardMessage?: string;
+  /** False while a child overlay (e.g. DatePickerModal) owns the screen —
+   * disables this sheet's own swipe-to-dismiss so a gesture intended for
+   * that overlay can never be read as "close the whole form" underneath it
+   * (defense-in-depth: a top-level Modal already isolates its own touches
+   * from whatever's rendered behind it, but this makes the same guarantee
+   * explicit and independently verifiable at this layer too). */
+  gesturesEnabled?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radius, spacing, typography } = useTheme();
@@ -49,24 +64,50 @@ export function KeyboardSheet({
   }
 
   function requestClose() {
-    confirmDiscardIfDirty(isDirty, dismiss);
+    confirmDiscardIfDirty(isDirty, dismiss, discardTitle, discardMessage);
   }
 
   function springBack() {
     Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
   }
 
+  // PanResponder.create is only ever invoked once, on the first render (its
+  // argument is re-evaluated every render, but useRef discards every value
+  // after the first) — so every handler closure below is permanently bound
+  // to whichever isDirty/discardTitle/discardMessage/gesturesEnabled values
+  // happened to be in scope on THAT render, never updated again for the
+  // lifetime of this component instance. Reading through refs instead is
+  // what makes the gesture always see the current values (regression-
+  // protection review: this pre-existing gap already meant AddWealthItemModal's
+  // dynamically-computed isDirty could never actually gate its own swipe-to-
+  // dismiss correctly; fixed here since it's the exact mechanism this
+  // round's draft-protection correction depends on — dismiss/springBack
+  // themselves stay safe to call from a stale closure, since they only ever
+  // reach a stable Animated.Value ref and the parent's always-stable
+  // setState-backed onClose). isDirtyRef.current is read (not the isDirty
+  // prop directly) so this stays correct however many times isDirty changes
+  // after mount.
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+  const discardTitleRef = useRef(discardTitle);
+  discardTitleRef.current = discardTitle;
+  const discardMessageRef = useRef(discardMessage);
+  discardMessageRef.current = discardMessage;
+  const gesturesEnabledRef = useRef(gesturesEnabled);
+  gesturesEnabledRef.current = gesturesEnabled;
+
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        gesturesEnabledRef.current && gesture.dy > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
       onPanResponderMove: (_, gesture) => {
         if (gesture.dy > 0) translateY.setValue(gesture.dy);
       },
       onPanResponderRelease: (_, gesture) => {
         if (gesture.dy > DISMISS_DISTANCE || gesture.vy > DISMISS_VELOCITY) {
-          if (isDirty) {
+          if (isDirtyRef.current) {
             springBack();
-            requestClose();
+            confirmDiscardIfDirty(true, dismiss, discardTitleRef.current, discardMessageRef.current);
           } else {
             dismiss();
           }
@@ -129,7 +170,7 @@ export function KeyboardSheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={requestClose}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} />
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} disabled={!gesturesEnabled} />
         <Animated.View
           style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg), transform: [{ translateY }] }]}
           {...panResponder.panHandlers}

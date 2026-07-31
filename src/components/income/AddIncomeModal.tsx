@@ -1,15 +1,18 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { useAppState } from '../../state/AppStateContext';
+import { useAppState, MidCycleIncomeOccurrenceChoice } from '../../state/AppStateContext';
 import { useSavingsAllocationPrompt } from '../../state/SavingsAllocationPromptContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
+import { DatePickerModal } from '../shared/DatePickerModal';
+import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { PayFrequency, RecurringItem } from '../../types/models';
 import { toMonthlyAmount } from '../../lib/calculations/incomeEngine';
 import { parseMoneyInput } from '../../lib/calculations/money';
+import { precedingOccurrence, isPrecedingOccurrenceEligibleForPrompt } from '../../lib/calculations/recurringSchedule';
+import { generateId } from '../../lib/id';
 import { categoryEmoji } from '../../lib/categoryEmoji';
 import { brand } from '../../lib/brand';
 
@@ -30,6 +33,14 @@ function formatMoney(value: number): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// B2.4 — the mid-cycle prompt's day/month references ("did you receive
+// your 10 July income?") deliberately omit the weekday/year formatDate
+// carries, matching the plain "10 July" / "10 August" phrasing in the
+// product spec.
+function formatDayMonth(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
 }
 
 // `minimumDate={new Date()}` compares the picker's date-only value against a
@@ -76,7 +87,7 @@ export function AddIncomeModal({
   /** Present = editing this existing income source instead of adding a new one. */
   editItem?: RecurringItem | null;
 }) {
-  const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
+  const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem, addRecurringIncomeWithMidCycleOccurrence } = useAppState();
   const { requestPrompt } = useSavingsAllocationPrompt();
   const { colors, radius, spacing, typography } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('cash-outline');
@@ -89,11 +100,45 @@ export function AddIncomeModal({
   // Category-first, like the transaction flow (PRD ask: "make it
   // friendlier") — picking what kind of income this is comes before the
   // amount. Editing an existing source already has a name, so it skips
-  // straight to details.
-  const [formStep, setFormStep] = useState<'category' | 'details'>('category');
+  // straight to details. 'midCycle' (B2.4) — the "did you receive your
+  // <date> income?" prompt, shown instead of saving immediately when a new
+  // monthly income source's immediately preceding expected occurrence is
+  // still within the current calendar month (see handleSave below).
+  const [formStep, setFormStep] = useState<'category' | 'details' | 'midCycle'>('category');
+  // B2.4 — the fully-built payload, derived preceding-occurrence date, and
+  // the new recurring item's own stable id, all captured once when
+  // handleSave decides to show the prompt instead of saving immediately —
+  // never re-derived by any option handler, so the date shown to the user
+  // and the date actually recorded can never disagree. midCycleRecurringItemId
+  // is generated exactly once here (a plain function call, never inside a
+  // setState updater) and reused for every option this same prompt session
+  // might go on to produce — this is what makes the duplicate-occurrence
+  // guard inside createRecurringIncomeWithMidCycleOccurrence meaningful
+  // against a rapid double-tap (regression-protection review, B2.4
+  // duplicate-identity correction).
+  const [midCyclePayload, setMidCyclePayload] = useState<Omit<RecurringItem, 'id'> | null>(null);
+  const [midCycleDate, setMidCycleDate] = useState<string | null>(null);
+  const [midCycleRecurringItemId, setMidCycleRecurringItemId] = useState<string | null>(null);
+  const [awaitingDestination, setAwaitingDestination] = useState(false);
+  // Synchronous submission guard (B2.4: "so repeated taps cannot create
+  // duplicate transactions or balance effects") — every one of the four
+  // option handlers checks and sets this before doing anything else, the
+  // same presentation-level pattern SmartReminderCard's isSubmitting
+  // already uses for the analogous confirm-tap risk.
+  const [midCycleSubmitting, setMidCycleSubmitting] = useState(false);
 
   const isEditing = !!editItem;
   const isIrregular = frequency === 'irregular';
+
+  // UX correction — draft protection. Snapshot of the details step's own
+  // fields as they stood the moment the sheet opened (blank for a new
+  // source, pre-filled for an edit) — compared against current values below
+  // to decide whether a dismiss attempt is actually discarding something.
+  // A ref, not state: it must never itself trigger a re-render, and must
+  // stay stable for the sheet's whole open session regardless of how many
+  // times the user edits a field afterward (same pattern already
+  // established in AddWealthItemModal.tsx).
+  const initialSnapshot = useRef({ label: '', income: '', frequency: 'monthly' as PayFrequency, nextDueDate: null as string | null, unknownDate: false });
 
   useEffect(() => {
     if (!visible) return;
@@ -105,6 +150,13 @@ export function AddIncomeModal({
       setNextDueDate(editItem.nextDueDateUnknown ? null : editItem.nextDueDate);
       setUnknownDate(!!editItem.nextDueDateUnknown);
       setFormStep('details');
+      initialSnapshot.current = {
+        label: editItem.label,
+        income: String(editItem.amount),
+        frequency: editItem.frequency,
+        nextDueDate: editItem.nextDueDateUnknown ? null : editItem.nextDueDate,
+        unknownDate: !!editItem.nextDueDateUnknown,
+      };
     } else {
       setIcon('cash-outline');
       setLabel('');
@@ -113,9 +165,43 @@ export function AddIncomeModal({
       setNextDueDate(null);
       setUnknownDate(false);
       setFormStep('category');
+      initialSnapshot.current = { label: '', income: '', frequency: 'monthly', nextDueDate: null, unknownDate: false };
     }
     setPickerOpen(false);
+    setMidCyclePayload(null);
+    setMidCycleDate(null);
+    setMidCycleRecurringItemId(null);
+    setAwaitingDestination(false);
+    setMidCycleSubmitting(false);
   }, [visible, editItem]);
+
+  // True once any field genuinely differs from the snapshot captured when
+  // the sheet opened — gates the details step's swipe/tap-outside/Cancel
+  // dismissal behind a "Discard income?" confirmation. An untouched form
+  // (nothing typed on Add, nothing changed on Edit) stays false and closes
+  // normally, matching the required "an empty, untouched form may close
+  // normally" behaviour.
+  const isDetailsDirty =
+    label !== initialSnapshot.current.label ||
+    income !== initialSnapshot.current.income ||
+    frequency !== initialSnapshot.current.frequency ||
+    nextDueDate !== initialSnapshot.current.nextDueDate ||
+    unknownDate !== initialSnapshot.current.unknownDate;
+
+  // B2.4 — existing Cash/Savings assets a backfilled "add to balance"
+  // occurrence could credit. `id: undefined` represents Cash specifically —
+  // it maps directly to targetAssetId being omitted, which
+  // computeBalanceEffect already resolves to the default Cash-asset lookup
+  // (ensureCashAsset auto-creates it on demand, exactly as every other
+  // income transaction already relies on), so Cash is always offered even
+  // on a brand-new profile with no assets yet. Savings-type assets are
+  // listed by their real id/label; no other asset type is offered as a
+  // destination (B2.4: "eligible Cash, Savings or other supported
+  // destination account" — scoped to these two for this pass).
+  const eligibleDestinations = useMemo(
+    () => [{ id: undefined as string | undefined, label: 'Cash' }, ...data.assets.filter((a) => a.type === 'savings').map((a) => ({ id: a.id, label: a.label }))],
+    [data.assets]
+  );
 
   // Strict money-input contract (regression-protection review, B2.0B
   // recurring-money precision correction §2/§3) — replaces the old
@@ -162,6 +248,43 @@ export function AddIncomeModal({
       active: true,
       icon,
     };
+
+    // B2.4 mid-cycle recurring-income initialisation — TRIGGER RULES:
+    // "Apply only when creating new recurring monthly income... Do not show
+    // the prompt during ordinary edits." Never for editing, never for a
+    // frequency other than monthly, never when the user doesn't know the
+    // next payment date (unknownDate) — there is no future date to derive
+    // "one month before" from.
+    if (!editItem && frequency === 'monthly' && !unknownDate && nextDueDate) {
+      const preceding = precedingOccurrence({ nextDueDate, frequency: 'monthly' });
+      const today = startOfToday();
+      // "Show the prompt only if that preceding occurrence is on or before
+      // today and falls within the current calendar month."
+      if (isPrecedingOccurrenceEligibleForPrompt(preceding, today)) {
+        // B2.4 duplicate-identity correction — the recurring item's own id
+        // is generated exactly once, right here, as a plain function call
+        // (never inside a setState updater), before either option can be
+        // tapped. This is the ONLY correct place to generate it: it must
+        // exist before the prompt shows so every option handler for this
+        // same session reuses the identical value, which is what lets the
+        // duplicate-occurrence guard inside
+        // createRecurringIncomeWithMidCycleOccurrence recognise a rapid
+        // double-tap as a no-op rather than two differently-identified
+        // sources. There is deliberately no "already recorded" pre-check
+        // here — a freshly generated id can never already appear on an
+        // existing transaction, so that check would be vacuous at this
+        // point; the meaningful check happens once an id is actually
+        // committed, inside the atomic creation function itself.
+        const recurringItemId = generateId();
+        setMidCyclePayload(payload);
+        setMidCycleDate(preceding.toISOString());
+        setMidCycleRecurringItemId(recurringItemId);
+        setAwaitingDestination(false);
+        setFormStep('midCycle');
+        return;
+      }
+    }
+
     if (editItem) {
       updateRecurringItem(editItem.id, payload);
     } else {
@@ -172,6 +295,45 @@ export function AddIncomeModal({
 
   function handleDelete() {
     if (editItem) deleteRecurringItem(editItem.id);
+    onClose();
+  }
+
+  // UX correction — the details step's footer Cancel button, a separate
+  // dismiss path from swipe/tap-outside that must go through the same
+  // dirty check rather than closing unconditionally (mirrors
+  // AddWealthItemModal's existing requestCancel pattern). A plain function
+  // call, evaluated fresh on every press — unlike KeyboardSheet's own
+  // swipe gesture, a button's onPress handler is never captured inside a
+  // one-time useRef closure, so this needs no ref-based staleness guard.
+  function requestCancel() {
+    confirmDiscardIfDirty(isDetailsDirty, onClose, 'Discard income?', 'Your entered income details will be lost.');
+  }
+
+  // B2.4 — options 3/4 ("first payment is later" / "not sure") both save
+  // the recurring item exactly as the ordinary path already would: no
+  // transaction, no balance effect, the entered next-payment date
+  // untouched. Kept as one shared handler since the two answers are
+  // identical in effect, differing only in the copy that led to them.
+  function chooseMidCycleNoOccurrence() {
+    if (!midCyclePayload || midCycleSubmitting) return;
+    setMidCycleSubmitting(true);
+    addRecurringItem(midCyclePayload);
+    onClose();
+  }
+
+  function chooseMidCycleAlreadyIncluded() {
+    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
+    setMidCycleSubmitting(true);
+    const choice: MidCycleIncomeOccurrenceChoice = { kind: 'already_included' };
+    addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
+    onClose();
+  }
+
+  function chooseMidCycleAddToBalance(targetAssetId: string | undefined) {
+    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
+    setMidCycleSubmitting(true);
+    const choice: MidCycleIncomeOccurrenceChoice = { kind: 'add_to_balance', targetAssetId };
+    addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
     onClose();
   }
 
@@ -234,6 +396,29 @@ export function AddIncomeModal({
         },
         sourceCardEmoji: { fontSize: 26, marginBottom: spacing.xs },
         sourceCardLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
+        midCycleTitle: { ...typography.title, fontSize: 18, color: colors.textPrimary, marginBottom: spacing.xs },
+        midCycleBody: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.lg },
+        midCycleOption: {
+          backgroundColor: colors.surfaceMuted,
+          borderRadius: radius.control,
+          paddingVertical: 14,
+          paddingHorizontal: spacing.md,
+          marginBottom: spacing.sm,
+        },
+        midCycleOptionDisabled: { opacity: 0.5 },
+        midCycleOptionText: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
+        destinationLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: spacing.xs, marginBottom: spacing.sm },
+        destinationRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: colors.accentSoft,
+          borderRadius: radius.control,
+          paddingVertical: 12,
+          paddingHorizontal: spacing.md,
+          marginBottom: spacing.sm,
+        },
+        destinationRowText: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
         dateButton: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -251,6 +436,76 @@ export function AddIncomeModal({
       }),
     [colors, radius, spacing, typography]
   );
+
+  if (formStep === 'midCycle' && midCyclePayload && midCycleDate) {
+    return (
+      <KeyboardSheet
+        visible={visible}
+        onClose={onClose}
+        isDirty={false}
+        title="💼 One more thing"
+        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} disabled={midCycleSubmitting} />}
+      >
+        <Text style={styles.midCycleTitle}>{`Did you receive your ${formatDayMonth(midCycleDate)} income?`}</Text>
+        <Text style={styles.midCycleBody}>Recording it helps Navilo understand this month more accurately.</Text>
+
+        {!awaitingDestination ? (
+          <>
+            <TouchableOpacity
+              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
+              onPress={chooseMidCycleAlreadyIncluded}
+              disabled={midCycleSubmitting}
+            >
+              <Text style={styles.midCycleOptionText}>Yes, it's already included in my balances</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
+              onPress={() => setAwaitingDestination(true)}
+              disabled={midCycleSubmitting}
+            >
+              <Text style={styles.midCycleOptionText}>Yes, add it to a balance</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
+              onPress={chooseMidCycleNoOccurrence}
+              disabled={midCycleSubmitting}
+            >
+              <Text style={styles.midCycleOptionText}>{`No, my first payment is ${formatDayMonth(midCyclePayload.nextDueDate)}`}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
+              onPress={chooseMidCycleNoOccurrence}
+              disabled={midCycleSubmitting}
+            >
+              <Text style={styles.midCycleOptionText}>I'm not sure</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={styles.destinationLabel}>Add it to which balance?</Text>
+            {eligibleDestinations.map((dest) => (
+              <TouchableOpacity
+                key={dest.id ?? 'cash'}
+                style={styles.destinationRow}
+                onPress={() => chooseMidCycleAddToBalance(dest.id)}
+                disabled={midCycleSubmitting}
+              >
+                <Text style={styles.destinationRowText}>{dest.label}</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.accentStrong} />
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
+              onPress={() => setAwaitingDestination(false)}
+              disabled={midCycleSubmitting}
+            >
+              <Text style={styles.midCycleOptionText}>Back</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </KeyboardSheet>
+    );
+  }
 
   if (formStep === 'category') {
     return (
@@ -279,9 +534,13 @@ export function AddIncomeModal({
       visible={visible}
       onClose={onClose}
       title={isEditing ? 'Edit income source' : 'Add income source'}
+      isDirty={isDetailsDirty}
+      discardTitle="Discard income?"
+      discardMessage="Your entered income details will be lost."
+      gesturesEnabled={!pickerOpen}
       footer={
         <>
-          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
+          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
           <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
         </>
       }
@@ -317,48 +576,40 @@ export function AddIncomeModal({
       {!isIrregular ? (
         <>
           <Text style={styles.label}>Next expected payment</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={() => setPickerOpen(true)}>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => {
+              // UX correction — blur/dismiss the keyboard before the date
+              // picker opens, so the field it replaces gets the full
+              // available viewport rather than fighting the keyboard for
+              // space (device defect: keyboard remained open behind the
+              // calendar).
+              Keyboard.dismiss();
+              setPickerOpen(true);
+            }}
+          >
             <Text style={[styles.dateButtonText, !nextDueDate ? styles.dateButtonPlaceholder : null]}>
               {nextDueDate ? formatDate(nextDueDate) : 'Choose a date'}
             </Text>
             <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
-          {pickerOpen ? (
-            <DateTimePicker
-              value={nextDueDate ? new Date(nextDueDate) : new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              minimumDate={startOfToday()}
-              onChange={(event, date) => {
-                if (Platform.OS === 'android') setPickerOpen(false);
-                if (event.type === 'dismissed') return;
-                if (date) setNextDueDate(date.toISOString());
-              }}
-            />
-          ) : null}
         </>
       ) : (
         <>
           <Text style={styles.label}>Expected date (optional)</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={() => setPickerOpen(true)} disabled={unknownDate}>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => {
+              Keyboard.dismiss();
+              setPickerOpen(true);
+            }}
+            disabled={unknownDate}
+          >
             <Text style={[styles.dateButtonText, !nextDueDate || unknownDate ? styles.dateButtonPlaceholder : null]}>
               {!unknownDate && nextDueDate ? formatDate(nextDueDate) : 'No date set'}
             </Text>
             <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
-          {pickerOpen && !unknownDate ? (
-            <DateTimePicker
-              value={nextDueDate ? new Date(nextDueDate) : new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              minimumDate={startOfToday()}
-              onChange={(event, date) => {
-                if (Platform.OS === 'android') setPickerOpen(false);
-                if (event.type === 'dismissed') return;
-                if (date) setNextDueDate(date.toISOString());
-              }}
-            />
-          ) : null}
           <TouchableOpacity
             style={styles.toggleRow}
             onPress={() => {
@@ -375,6 +626,23 @@ export function AddIncomeModal({
           </Text>
         </>
       )}
+
+      {/* UX correction — a dedicated modal, isolated from this sheet's own
+          swipe-to-dismiss gesture (device defect: scrolling/swiping inside
+          the previously-inline calendar could be captured as "close the
+          whole form", silently discarding name/amount/frequency already
+          entered). Shared between both frequency branches above since only
+          one is ever mounted at a time and both drive the same nextDueDate
+          field. gesturesEnabled={!pickerOpen} on the KeyboardSheet above
+          additionally disables this sheet's own pan-to-close for as long as
+          this is open. */}
+      <DatePickerModal
+        visible={pickerOpen}
+        value={nextDueDate ? new Date(nextDueDate) : new Date()}
+        minimumDate={startOfToday()}
+        onChange={(date) => setNextDueDate(date.toISOString())}
+        onClose={() => setPickerOpen(false)}
+      />
 
       {isEditing ? (
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>

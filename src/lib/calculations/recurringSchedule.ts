@@ -77,6 +77,29 @@ export function advanceOneOccurrence(item: RecurrenceAnchorInput): Date {
   return occurrenceDateAt(item, 1);
 }
 
+/** One step before this item's current nextDueDate, anchor-preserving —
+ * the immediately preceding expected occurrence (B2.4 mid-cycle recurring-
+ * income initialisation: "did you receive your <preceding> income?" when a
+ * new monthly income source's first entered next-payment date is already a
+ * month or more away). Reuses the same occurrenceDateAt primitive
+ * advanceOneOccurrence does, just at n=-1 — never a separate reimplementation
+ * of the anchor/clamping math, so a preceding-occurrence date can never
+ * disagree with what advancing forward from it would produce. */
+export function precedingOccurrence(item: RecurrenceAnchorInput): Date {
+  return occurrenceDateAt(item, -1);
+}
+
+/** B2.4 — true when a newly-created monthly income source's immediately
+ * preceding expected occurrence should be offered to the user for
+ * mid-cycle backfill: "Show the prompt only if that preceding occurrence
+ * is on or before today and falls within the current calendar month." A
+ * pure function of its two date inputs only — the caller (AddIncomeModal)
+ * is responsible for the other trigger rules that aren't about the date
+ * itself (new item only, monthly only, a known next-payment date only). */
+export function isPrecedingOccurrenceEligibleForPrompt(preceding: Date, today: Date): boolean {
+  return preceding.getTime() <= today.getTime() && preceding.getFullYear() === today.getFullYear() && preceding.getMonth() === today.getMonth();
+}
+
 export interface RecurringOccurrence {
   item: RecurringItem;
   date: Date;

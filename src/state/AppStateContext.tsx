@@ -194,14 +194,27 @@ function legacyApplyTransactionEffect(data: AppData, t: Omit<Transaction, 'id'> 
 // that an expense never conjures a Cash asset out of nowhere).
 function computeBalanceEffect(
   data: AppData,
-  t: { type: 'income' | 'expense'; amount: number; paymentSource?: Transaction['paymentSource']; creditCardId?: string; liabilityId?: string; balanceEffect: BalanceEffectMode }
+  t: {
+    type: 'income' | 'expense';
+    amount: number;
+    paymentSource?: Transaction['paymentSource'];
+    creditCardId?: string;
+    liabilityId?: string;
+    targetAssetId?: string;
+    balanceEffect: BalanceEffectMode;
+  }
 ): AppliedBalanceEffect | undefined {
   if (t.balanceEffect === 'none') return undefined;
 
   if (t.type === 'income') {
-    const cashAsset = data.assets.find((a) => a.type === 'cash');
-    if (!cashAsset) return undefined;
-    return { targetKind: 'asset', targetId: cashAsset.id, delta: t.amount };
+    // B2.4 — targetAssetId lets a caller credit a SPECIFIC asset (e.g. a
+    // Savings account the user explicitly picked for a backfilled mid-cycle
+    // income occurrence) instead of the default Cash asset. Absent — every
+    // existing caller, unchanged — falls back to the original Cash-only
+    // lookup exactly as before; fully backward compatible.
+    const targetAsset = t.targetAssetId ? data.assets.find((a) => a.id === t.targetAssetId) : data.assets.find((a) => a.type === 'cash');
+    if (!targetAsset) return undefined;
+    return { targetKind: 'asset', targetId: targetAsset.id, delta: t.amount };
   }
 
   const source = t.paymentSource ?? 'cash';
@@ -635,6 +648,121 @@ export function applyTransactionDelete(data: AppData, id: string, reverseEffect:
   return { ...reverted, transactions: data.transactions.filter((t) => t.id !== id) };
 }
 
+/** B2.4 mid-cycle recurring-income initialisation — the choice a user makes
+ * about a newly-created monthly income source's immediately preceding
+ * expected occurrence. Only these two variants ever construct a
+ * transaction; declining ("no, my first payment is later") or being unsure
+ * both go through the ordinary, completely unmodified addRecurringItem
+ * path instead — see AddIncomeModal.tsx, which never calls
+ * createRecurringIncomeWithMidCycleOccurrence for those two answers. */
+export type MidCycleIncomeOccurrenceChoice =
+  | { kind: 'already_included' }
+  | { kind: 'add_to_balance'; targetAssetId?: string };
+
+/** B2.4 correction — duplicate identity for a mid-cycle backfilled income
+ * occurrence is the exact (recurringItemId, calendar day) pair, never
+ * label/amount/date alone or in combination. Navilo supports multiple
+ * legitimate income sources that can share a label, a payment date, an
+ * amount, or all three — and a manual (non-recurring) income transaction
+ * can independently share a label and date too — so none of those alone
+ * ever identifies "the same source occurrence" (regression-protection
+ * review, B2.4 duplicate-identity correction; the prior label+day rule this
+ * replaces could wrongly suppress a second, genuinely distinct source). A
+ * transaction only counts as this exact occurrence if its own
+ * `recurringItemId` equals the one being checked. */
+export function hasRecurringItemOccurrenceRecorded(data: AppData, recurringItemId: string, occurrenceDateISO: string): boolean {
+  const target = new Date(occurrenceDateISO);
+  return data.transactions.some((t) => {
+    if (t.recurringItemId !== recurringItemId) return false;
+    const d = new Date(t.date);
+    return d.getFullYear() === target.getFullYear() && d.getMonth() === target.getMonth() && d.getDate() === target.getDate();
+  });
+}
+
+/** B2.4 — creates a new recurring income source together with exactly one
+ * backfilled transaction for its immediately preceding expected occurrence,
+ * as one atomic AppData result. Only ever invoked for the two
+ * MidCycleIncomeOccurrenceChoice variants that actually record a
+ * transaction.
+ *
+ * `recurringItemId` is generated exactly once by the caller
+ * (AddIncomeModal, outside any React state updater) the moment it decides
+ * to show the mid-cycle prompt — before either option can be tapped — and
+ * is reused for every subsequent call this same prompt session might
+ * produce; it is never generated inside this function or inside the
+ * confirmRecurringOccurrenceTransition-style context-action wrapper around
+ * it (regression-protection review, B2.4 duplicate-identity correction).
+ * That stability is exactly what makes the defensive guard below
+ * meaningful: a rapid double-tap that somehow gets past the UI's
+ * isSubmitting guard presents the SAME recurringItemId both times (a fresh
+ * transactionId each time doesn't matter — the check below never looks at
+ * it), so the second call is recognised as a no-op rather than a second,
+ * differently-identified source. `transactionId` is generated once per
+ * call by the calling context action, matching
+ * confirmRecurringOccurrenceTransition's existing convention.
+ * `precedingOccurrenceDate` is likewise computed once by the caller from
+ * the shared, unmodified recurringSchedule.ts anchor/clamping logic
+ * (precedingOccurrence) — this function never recomputes it, so the date
+ * shown to the user before they chose an option and the date actually
+ * recorded can never disagree.
+ *
+ * The recurring item's own nextDueDate is stored exactly as entered — this
+ * function never advances or otherwise touches the future schedule; the
+ * backfilled transaction is a separate, independent record dated in the
+ * past (B2.4: "Keep the entered next-payment date unchanged" / "Do not
+ * advance the future recurring schedule when recording the preceding
+ * occurrence").
+ *
+ * Reuses applyNewTransaction exactly once — its SOLE owner of
+ * ensureCashAsset/computeBalanceEffect/applyEffectDelta/Transaction
+ * construction/appliedBalanceEffect (regression-protection review, B2.0B
+ * correction §1, preserved here, never re-implemented). "already_included"
+ * passes balanceEffect: 'none' — the existing, already-safe-to-reverse
+ * mechanism (see BalanceEffectMode/AppliedBalanceEffect doc comments in
+ * models.ts): appliedBalanceEffect ends up undefined, so any later edit or
+ * delete of this transaction reverses nothing, ever — no new field was
+ * needed for that case. "add_to_balance" passes balanceEffect: 'update' and
+ * an optional targetAssetId, crediting exactly the one asset the user
+ * selected (or the default Cash asset when omitted), once. */
+export function createRecurringIncomeWithMidCycleOccurrence(
+  data: AppData,
+  itemInput: Omit<RecurringItem, 'id'>,
+  recurringItemId: string,
+  choice: MidCycleIncomeOccurrenceChoice,
+  precedingOccurrenceDate: string,
+  transactionId: string
+): AppData {
+  // Defensive duplicate guard — see hasRecurringItemOccurrenceRecorded's
+  // doc comment. A full no-op: neither the recurring item nor the
+  // transaction is touched a second time, since the first call already
+  // committed both under this exact recurringItemId (regression-protection
+  // review, B2.4 duplicate-identity correction — "preserve the one-
+  // transition/one-persistence-write behaviour").
+  if (hasRecurringItemOccurrenceRecorded(data, recurringItemId, precedingOccurrenceDate)) {
+    return data;
+  }
+
+  const newItem: RecurringItem = { ...itemInput, id: recurringItemId };
+  const withItem: AppData = { ...data, recurringItems: [...data.recurringItems, newItem] };
+
+  const categoryId =
+    data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === newItem.label.toLowerCase())?.id ?? 'cat-other-income';
+
+  const transactionInput: Omit<Transaction, 'id'> = {
+    type: 'income',
+    amount: newItem.amount,
+    categoryId,
+    date: precedingOccurrenceDate,
+    note: newItem.label,
+    recurringItemId,
+    balanceEffect: choice.kind === 'already_included' ? 'none' : 'update',
+    targetAssetId: choice.kind === 'add_to_balance' ? choice.targetAssetId : undefined,
+  };
+
+  const withTransaction = applyNewTransaction(withItem, transactionInput, transactionId);
+  return upsertNetWorthHistory(withTransaction);
+}
+
 interface AppStateContextValue {
   data: AppData;
   isLoading: boolean;
@@ -685,6 +813,30 @@ interface AppStateContextValue {
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
   }) => ConfirmationCommitResult;
+  /** B2.4 mid-cycle recurring-income initialisation — creates a brand-new
+   * monthly income source together with exactly one backfilled transaction
+   * for its immediately preceding expected occurrence, in one atomic
+   * commit. Only ever called for the "already included in my balances" /
+   * "add it to a balance" choices — declining or being unsure both go
+   * through the ordinary `addRecurringItem` instead, since neither creates
+   * a transaction. `recurringItemId` is generated exactly once by the
+   * caller (AddIncomeModal, outside any React state updater) the moment it
+   * decides to show the mid-cycle prompt, and reused for every option the
+   * user might go on to pick — never generated here — so a rapid double-
+   * tap that somehow gets past the UI's isSubmitting guard still presents
+   * the SAME id to this action both times, letting the duplicate-occurrence
+   * guard inside createRecurringIncomeWithMidCycleOccurrence recognise the
+   * second call as a no-op rather than a second, differently-identified
+   * source (regression-protection review, B2.4 duplicate-identity
+   * correction). `precedingOccurrenceDate` is likewise the exact ISO date
+   * the caller already computed and displayed to the user — never
+   * recomputed here. */
+  addRecurringIncomeWithMidCycleOccurrence: (
+    itemInput: Omit<RecurringItem, 'id'>,
+    recurringItemId: string,
+    choice: MidCycleIncomeOccurrenceChoice,
+    precedingOccurrenceDate: string
+  ) => void;
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
@@ -927,6 +1079,22 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       return { transition, persistence };
     },
     [persist]
+  );
+
+  // B2.4 — mirrors the other creation actions (addRecurringItem etc.): a
+  // brand-new item's id has never existed before this call, so there is no
+  // "staleness" concept to guard against the way confirmRecurringOccurrence
+  // guards against re-confirming an existing item. The synchronous
+  // submission guard against a rapid double-tap creating two recurring
+  // items/transactions lives in AddIncomeModal.tsx (isSubmitting), the same
+  // presentation-level pattern SmartReminderCard already uses.
+  const addRecurringIncomeWithMidCycleOccurrence = useCallback(
+    (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string) => {
+      const transactionId = generateId();
+      const next = createRecurringIncomeWithMidCycleOccurrence(data, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
+      persist(next);
+    },
+    [data, persist]
   );
 
   const addGoal = useCallback(
@@ -1232,6 +1400,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       updateTransaction,
       deleteTransaction,
       confirmRecurringOccurrence,
+      addRecurringIncomeWithMidCycleOccurrence,
       addGoal,
       updateGoal,
       deleteGoal,
@@ -1268,6 +1437,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       updateTransaction,
       deleteTransaction,
       confirmRecurringOccurrence,
+      addRecurringIncomeWithMidCycleOccurrence,
       addGoal,
       updateGoal,
       deleteGoal,

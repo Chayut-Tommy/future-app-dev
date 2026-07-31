@@ -156,6 +156,16 @@ export interface Transaction {
    * is 'none', or balanceEffect is 'update' but no valid target existed to
    * apply one against, e.g. no Cash asset yet). */
   appliedBalanceEffect?: AppliedBalanceEffect;
+  /** Income only (B2.4). The specific Asset this income's balance effect
+   * should credit — set only when the user explicitly picked a destination
+   * other than the default (mid-cycle recurring-income initialisation's
+   * "add it to a balance" choice). Absent on every transaction created
+   * before this field existed, and on every ordinary income transaction
+   * going forward — both fall back to computeBalanceEffect's original
+   * Cash-asset lookup, fully backward compatible. Never meaningful for an
+   * expense transaction, which uses paymentSource/creditCardId/liabilityId
+   * instead. */
+  targetAssetId?: string;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
