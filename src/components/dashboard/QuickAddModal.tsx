@@ -65,6 +65,15 @@ export function QuickAddModal({
   // stays implicitly 'update' this pass (record-only income is out of
   // scope). Synced from the edited transaction, or defaulted, below.
   const [balanceEffect, setBalanceEffect] = useState<BalanceEffectMode>('update');
+  // Round 6 correction — the manual transaction's own primary name, reusing
+  // the existing Transaction.note field rather than adding a new one (it
+  // already has a display-fallback consumer in TransactionsScreen and is
+  // already read, just never written for a manually-entered transaction).
+  // Blank for a brand-new transaction and for editing a transaction that
+  // never had one (legacy data remains valid, never forced to backfill a
+  // name); pre-filled from the existing note when editing a transaction
+  // that already has one, so it can't be silently blanked out.
+  const [transactionName, setTransactionName] = useState('');
   const [addCashVisible, setAddCashVisible] = useState(false);
   // Category-first flow (PRD ask: "adding money should feel quick and
   // satisfying, not like accounting software") — picking a category is its
@@ -73,6 +82,14 @@ export function QuickAddModal({
   // straight to the details step.
   const [formStep, setFormStep] = useState<'category' | 'details'>('category');
   const initialSnapshot = useRef({ amount: '', categoryId: null as string | null });
+  // Round 6 correction — a synchronous rapid-submit guard was not actually
+  // present here before this pass despite being assumed to exist; adopts
+  // the exact same ref-guard pattern already established and reviewed in
+  // AddWealthItemModal.tsx (a ref, not state, so a second Save tap landing
+  // in the same tick is blocked before it can call addTransaction/
+  // updateTransaction a second time). Reset only when a genuinely new form
+  // session begins, mirroring that same convention.
+  const submittingRef = useRef(false);
 
   const isEditing = !!editTransaction;
   const hasCashAsset = data.assets.some((a) => a.type === 'cash');
@@ -91,6 +108,8 @@ export function QuickAddModal({
 
   useEffect(() => {
     if (!visible) return;
+    // A genuinely new form session — see submittingRef's own comment.
+    submittingRef.current = false;
     if (editTransaction) {
       setType(editTransaction.type);
       setAmount(String(editTransaction.amount));
@@ -103,6 +122,12 @@ export function QuickAddModal({
       setCreditCardId(editTransaction.creditCardId ?? null);
       setLiabilityId(editTransaction.liabilityId ?? null);
       setBalanceEffect(editTransaction.balanceEffect ?? 'update');
+      // Round 6 correction — only a genuinely manual transaction's note is
+      // ever editable here; a recurring-confirmed transaction keeps using
+      // the existing read-only "Source: X" display instead (see
+      // editTransactionDisplayLabel/isEditingRecurringLinked below), so
+      // this value is only ever shown for the manual case.
+      setTransactionName(editTransaction.note ?? '');
       initialSnapshot.current = { amount: String(editTransaction.amount), categoryId: editTransaction.categoryId };
       setFormStep('details');
     } else {
@@ -117,6 +142,7 @@ export function QuickAddModal({
       setCreditCardId(null);
       setLiabilityId(null);
       setBalanceEffect('update');
+      setTransactionName('');
       initialSnapshot.current = { amount: '', categoryId: null };
       setFormStep('category');
     }
@@ -156,10 +182,26 @@ export function QuickAddModal({
   const monthValue = parseInt(month, 10);
   const yearValue = parseInt(year, 10);
   const dateValid = !isNaN(dayValue) && !isNaN(monthValue) && !isNaN(yearValue) && dayValue >= 1 && dayValue <= 31 && monthValue >= 1 && monthValue <= 12;
-  const canSave = !isNaN(amountValue) && amountValue > 0 && !!categoryId && dateValid;
+  // Round 6 correction — a recurring-confirmed transaction (has
+  // recurringItemId) never gets the editable name field at all; it keeps
+  // the existing read-only "Source: X" display, and its naming is
+  // unaffected by this correction. A brand-new manual expense always
+  // requires a name; editing an existing manual expense that already had
+  // one requires it stay non-blank; editing a legacy manual expense that
+  // never had one does not retroactively force one (no migration, no
+  // forced backfill).
+  const isEditingRecurringLinked = !!editTransaction?.recurringItemId;
+  const hadExistingNote = !!editTransaction?.note;
+  const requiresTransactionName = type === 'expense' && !isEditingRecurringLinked && (!isEditing || hadExistingNote);
+  const canSave =
+    !isNaN(amountValue) && amountValue > 0 && !!categoryId && dateValid && (!requiresTransactionName || transactionName.trim().length > 0);
 
   function handleSave() {
     if (!canSave || !categoryId) return;
+    // Must be checked+set synchronously before anything else touches state
+    // or calls a persistence action — see submittingRef's own comment.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     const isoDate = new Date(yearValue, monthValue - 1, dayValue).toISOString();
     // Defensive re-check, not just a read of state: never let balanceEffect
     // resolve to 'update' when there's no real target, even if the
@@ -167,6 +209,14 @@ export function QuickAddModal({
     // (regression-protection review, Stream B1 UI integration §3: "do not
     // silently use balanceEffect: 'update' when no balance target exists").
     const effectiveBalanceEffect: BalanceEffectMode = hasValidBalanceTarget ? balanceEffect : 'none';
+    // Round 6 correction — reuses the existing Transaction.note field as
+    // the manual transaction's own name (no new schema field). Only ever
+    // set for the manual-expense case this form actually exposes an
+    // editable name field for; a recurring-confirmed transaction's own
+    // note (its immutable confirmation-time snapshot) is never touched
+    // here, since editTransaction.note simply isn't read for that case.
+    const notePayload =
+      type === 'expense' && !isEditingRecurringLinked && transactionName.trim().length > 0 ? { note: transactionName.trim() } : {};
     const payload =
       type === 'expense'
         ? {
@@ -178,6 +228,7 @@ export function QuickAddModal({
             creditCardId: paymentSource === 'credit_card' ? creditCardId ?? undefined : undefined,
             liabilityId: paymentSource === 'loan' ? liabilityId ?? undefined : undefined,
             balanceEffect: effectiveBalanceEffect,
+            ...notePayload,
           }
         : { type, amount: amountValue, categoryId, date: isoDate };
 
@@ -283,6 +334,15 @@ export function QuickAddModal({
         presetChipActive: { backgroundColor: colors.accentSoft },
         presetText: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
         presetTextActive: { color: colors.accentStrong, fontWeight: '600' },
+        nameInput: {
+          backgroundColor: colors.surfaceMuted,
+          borderRadius: radius.control,
+          paddingHorizontal: spacing.md,
+          paddingVertical: 12,
+          fontSize: 15,
+          marginBottom: spacing.md,
+          color: colors.textPrimary,
+        },
         dateRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
         dateInput: {
           flex: 1,
@@ -342,13 +402,15 @@ export function QuickAddModal({
   // Read-only — the transaction's own primary identity (e.g. "Internet
   // test"), kept visibly separate from the editable category picker below
   // (regression-protection review, B2.0B transaction-identity correction
-  // §1). `note` is an immutable confirmation-time snapshot; recurringItemId
-  // is only a display fallback for pre-existing linked transactions from
-  // before this snapshot existed. Never rendered as an editable field —
-  // this pass does not add note-editing.
-  const editTransactionDisplayLabel = editTransaction
-    ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
-    : null;
+  // §1). Round 6 correction — now rendered ONLY for a recurring-confirmed
+  // transaction (isEditingRecurringLinked); a manual transaction's note is
+  // shown via the editable "Transaction name" field below instead, never
+  // duplicated as a second, read-only copy of the same value. Recurring
+  // naming itself is unchanged by this correction.
+  const editTransactionDisplayLabel =
+    editTransaction && isEditingRecurringLinked
+      ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
+      : null;
 
   if (formStep === 'category') {
     return (
@@ -408,21 +470,33 @@ export function QuickAddModal({
       {/* Read-only — this transaction's own primary identity, kept visibly
           separate from the editable category picker below (regression-
           protection review, B2.0B transaction-identity correction §1). Only
-          shown when editing an existing transaction that has one; never
-          shown for a new/manual transaction, and never itself editable. */}
+          shown when editing a recurring-confirmed transaction; never shown
+          for a manual transaction (which gets the editable name field
+          below instead), and never itself editable. */}
       {editTransactionDisplayLabel ? (
         <Text style={styles.sourceLabel}>
           Source: <Text style={styles.sourceLabelValue}>{editTransactionDisplayLabel}</Text>
         </Text>
       ) : null}
 
-      <View style={styles.selectedCategoryRow}>
-        <Text style={styles.selectedCategoryEmoji}>{selectedCategory ? categoryEmoji(selectedCategory.id) : '💰'}</Text>
-        <Text style={styles.selectedCategoryLabel}>{selectedCategory?.name ?? 'Select a category'}</Text>
-        <TouchableOpacity onPress={() => setFormStep('category')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.selectedCategoryChange}>Change</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Round 6 correction — required field order for a manual expense:
+          1. Transaction name, 2. Amount, 3. Category, 4. Paid from/tracked
+          balance, 5. Date. Income naming is unchanged (not shown here);
+          a recurring-confirmed transaction keeps its existing read-only
+          Source line above instead of this editable field. */}
+      {type === 'expense' && !isEditingRecurringLinked ? (
+        <>
+          <Text style={styles.sectionLabel}>Transaction name</Text>
+          <TextInput
+            style={styles.nameInput}
+            placeholder="e.g. Woolworths groceries"
+            placeholderTextColor={colors.textMuted}
+            value={transactionName}
+            onChangeText={setTransactionName}
+            autoFocus
+          />
+        </>
+      ) : null}
 
       <TextInput
         style={styles.amountInput}
@@ -431,8 +505,16 @@ export function QuickAddModal({
         keyboardType="decimal-pad"
         value={amount}
         onChangeText={setAmount}
-        autoFocus
+        autoFocus={!(type === 'expense' && !isEditingRecurringLinked)}
       />
+
+      <View style={styles.selectedCategoryRow}>
+        <Text style={styles.selectedCategoryEmoji}>{selectedCategory ? categoryEmoji(selectedCategory.id) : '💰'}</Text>
+        <Text style={styles.selectedCategoryLabel}>{selectedCategory?.name ?? 'Select a category'}</Text>
+        <TouchableOpacity onPress={() => setFormStep('category')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.selectedCategoryChange}>Change</Text>
+        </TouchableOpacity>
+      </View>
 
       {type === 'expense' ? (
         <>

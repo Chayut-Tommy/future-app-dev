@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { useCelebration } from '../../state/CelebrationContext';
+import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
 import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
@@ -63,8 +64,14 @@ export function TodayScreen() {
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
   const [askLuluVisible, setAskLuluVisible] = useState(false);
 
+  // Round 6 correction — the single live local-date value this screen's
+  // month heading and relative-day labels derive from; see
+  // useCurrentLocalDate's own doc comment for why a mount-frozen or
+  // data-change-only `new Date()` capture goes stale across a midnight/
+  // month rollover with no new transaction to trigger a recompute.
+  const currentDate = useCurrentLocalDate();
   const greeting = useMemo(() => timeAwareGreeting(data.user.name, t), [data.user.name, t]);
-  const monthLabel = useMemo(() => new Date().toLocaleDateString(undefined, { month: 'long' }), []);
+  const monthLabel = useMemo(() => currentDate.toLocaleDateString(undefined, { month: 'long' }), [currentDate]);
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
   const opportunities = useMemo(() => findOpportunities(data), [data]);
   const topOpportunity = opportunities[0] ?? null;
@@ -127,10 +134,10 @@ export function TodayScreen() {
   const upcomingCards = useMemo(
     () =>
       data.creditCards
-        .map((c) => ({ card: c, days: daysUntilDue(c.dueDay) }))
+        .map((c) => ({ card: c, days: daysUntilDue(c.dueDay, currentDate) }))
         .filter((c) => c.days <= 7)
         .sort((a, b) => a.days - b.days),
-    [data.creditCards]
+    [data.creditCards, currentDate]
   );
 
   // Celebrate a newly unlocked "Your Journey" milestone the moment it
@@ -371,7 +378,7 @@ export function TodayScreen() {
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{monthLabel} so far</Text>
       </View>
-      <MonthSnapshotCard />
+      <MonthSnapshotCard today={currentDate} />
 
       {/* 5. Key recommendation — one thing at a time, Lulu talking, not a
           checklist (PRD ask). Comes after Journey: celebrate first, then

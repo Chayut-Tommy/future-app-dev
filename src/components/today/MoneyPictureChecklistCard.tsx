@@ -13,6 +13,7 @@ import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { AddRecurringItemModal } from '../money/AddRecurringItemModal';
 import { DebtCoachSheet } from '../debt/DebtCoachSheet';
 import { brand } from '../../lib/brand';
+import { LiabilityType } from '../../types/models';
 
 /**
  * "Let's build your money picture" — real guided onboarding continuation
@@ -38,7 +39,7 @@ export function MoneyPictureChecklistCard() {
   const [assetsSheetVisible, setAssetsSheetVisible] = useState(false);
   const [billsSheetVisible, setBillsSheetVisible] = useState(false);
   const [billModalVisible, setBillModalVisible] = useState(false);
-  const [mortgageModalVisible, setMortgageModalVisible] = useState(false);
+  const [loanHandoff, setLoanHandoff] = useState<LiabilityType | null>(null);
 
   const hasCash = data.assets.some((a) => (a.type === 'cash' || a.type === 'savings') && a.currentValue > 0);
   const hasOtherAssets = data.assets.some((a) => a.type !== 'cash' && a.type !== 'savings' && a.currentValue > 0);
@@ -166,13 +167,14 @@ export function MoneyPictureChecklistCard() {
       <AddRecurringItemModal
         visible={billModalVisible}
         onClose={() => setBillModalVisible(false)}
-        onSelectMortgage={() => setMortgageModalVisible(true)}
+        onSelectLoan={(type) => setLoanHandoff(type)}
       />
       <AddWealthItemModal
-        visible={mortgageModalVisible}
+        visible={loanHandoff !== null}
         kind="liability"
-        presetLiabilityType="mortgage"
-        onClose={() => setMortgageModalVisible(false)}
+        presetLiabilityType={loanHandoff ?? undefined}
+        liabilityFlowIntent="select_or_create_for_repayment"
+        onClose={() => setLoanHandoff(null)}
       />
       <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
       <OptionsSheet

@@ -37,8 +37,23 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+// DST-safe calendar-day difference (Round 6 correction). The previous
+// version subtracted two local-midnight Date timestamps and divided by
+// 86,400,000, relying on Math.round to absorb the ~1-hour real-time offset
+// a DST transition introduces (the calendar day either side of a
+// transition is 23 or 25 real hours, not 24) — which happens to work for
+// any realistic horizon here, but the correctness argument depends on
+// rounding tolerance rather than being structurally guaranteed.
+// Date.UTC(y, m, d) instead treats the local calendar components (never
+// touching the local UTC offset) purely as a calendar ordinal, so the
+// division is always an exact integer — no DST reasoning or rounding
+// required at all.
+function calendarOrdinal(d: Date): number {
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
+}
+
 function daysBetween(from: Date, to: Date): number {
-  return Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / 86400000);
+  return calendarOrdinal(to) - calendarOrdinal(from);
 }
 
 // Local-calendar YYYY-MM-DD, used to key repeated cycle-boundary events

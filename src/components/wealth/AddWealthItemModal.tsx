@@ -1,20 +1,44 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { Asset, AssetType, Liability, LiabilityType, PayFrequency } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { DatePickerModal } from '../shared/DatePickerModal';
 import { Button } from '../shared/Button';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { brand } from '../../lib/brand';
 import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
+import { generateId } from '../../lib/id';
 
-const LOAN_BILL_LABELS: Partial<Record<LiabilityType, string>> = {
-  mortgage: 'Home Loan Repayment',
-  car_loan: 'Car Loan Repayment',
-  personal_loan: 'Personal Loan Repayment',
+// The "smart loan" types — the only ones with an optional asset link
+// (vehicle/property) and an auto-managed repayment bill. Membership only,
+// never used as an identity/dedup key (Stream C correction — liability
+// type is a classification, never an identity).
+const SMART_LOAN_TYPES: LiabilityType[] = ['mortgage', 'car_loan', 'personal_loan'];
+
+// Type-aware field/placeholder wording (Stream C correction §5) — "Value"/
+// "Label" read as generic and, for a liability, "Value" can be confused
+// with the linked asset's own value. Every liability type gets its own
+// name field + placeholder; credit_card's is unused today (credit cards
+// route to their own dedicated form) but kept for completeness/consistency.
+const LIABILITY_NAME_FIELD: Record<LiabilityType, { field: string; placeholder: string }> = {
+  mortgage: { field: 'Mortgage name', placeholder: 'e.g. Richmond home loan' },
+  car_loan: { field: 'Car loan name', placeholder: 'e.g. Toyota finance' },
+  personal_loan: { field: 'Personal loan name', placeholder: 'e.g. Renovation loan' },
+  credit_card: { field: 'Card name', placeholder: 'e.g. AMEX' },
+  other: { field: 'Liability name', placeholder: 'e.g. Tax debt' },
+};
+
+// Display name used in titles ("Add Car Loan" / "Update Car Loan") and the
+// repayment-selector step's heading.
+const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
+  mortgage: 'Mortgage',
+  car_loan: 'Car Loan',
+  personal_loan: 'Personal Loan',
+  credit_card: 'Card',
+  other: 'Liability',
 };
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
@@ -74,6 +98,32 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function formatBalance(value: number): string {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Round-5 correction (Issue 1/5) — carries WHY a liability-transition
+// action failed from the try block through to the catch block, so the
+// catch can show the exact reason instead of one generic message. Thrown
+// only for a `LiabilityTransitionResult` with `applied: false`; every
+// other failure in handleSave still falls through to the generic message.
+class LiabilityFailure extends Error {
+  constructor(public reason: 'target_not_found' | 'target_wrong_type' | 'duplicate_linked_repayment') {
+    super(reason);
+  }
+}
+
+const GENERIC_SAVE_ERROR = 'Something went wrong saving this — nothing was lost. Your details are still here; tap Save to try again.';
+// Round-5 correction (Issue 1) — the required neutral wording for an
+// ambiguous exact-linked repayment: Navilo must not guess which of
+// several linked repayment records to update, so nothing is written and
+// the user is told exactly what to go check.
+const DUPLICATE_REPAYMENT_ERROR = 'Navilo found more than one repayment linked to this loan. Review the existing repayments before updating this schedule.';
+
+function messageForSaveFailure(err: unknown): string {
+  return err instanceof LiabilityFailure && err.reason === 'duplicate_linked_repayment' ? DUPLICATE_REPAYMENT_ERROR : GENERIC_SAVE_ERROR;
+}
+
 export function AddWealthItemModal({
   visible,
   kind,
@@ -81,6 +131,7 @@ export function AddWealthItemModal({
   editLiability,
   presetAssetType,
   presetLiabilityType,
+  liabilityFlowIntent,
   onSelectCreditCard,
   onClose,
 }: {
@@ -95,6 +146,23 @@ export function AddWealthItemModal({
   /** Same idea for liabilities — e.g. Debt Coach's "what kind of debt?"
    * chooser lands straight on the matching type chip. */
   presetLiabilityType?: LiabilityType;
+  /** Explicit entry intent (Stream C correction) — the withdrawn one-
+   * liability-per-type MVP model used to infer intent from presetLiabilityType
+   * plus how many liabilities already existed, which is exactly what let
+   * "Add Bill → Car Loan" silently overwrite an unrelated existing loan.
+   * Intent must instead be stated by the caller:
+   * - 'create' (default, omit for this) — Wealth "+Add", Global Add →
+   *   Liability, Debt Coach's "what kind of debt?" — always a blank form,
+   *   always a fresh liability id, never preselects or targets an existing
+   *   same-type liability.
+   * - 'select_or_create_for_repayment' — Add Bill → Mortgage/Car Loan/
+   *   Personal Loan and any other bill-centric entry point whose real
+   *   purpose is scheduling a repayment. When matching liabilities already
+   *   exist, shows an explicit selector ("Which Car Loan is this repayment
+   *   for?") rather than guessing.
+   * `editLiability` (present) always wins over either — it targets the
+   * exact supplied liability id regardless of intent. */
+  liabilityFlowIntent?: 'create' | 'select_or_create_for_repayment';
   /** Credit cards need their own fields (limit, due day, minimum payment)
    * that don't fit this generic form — picking "Credit card" here hands
    * off to the dedicated AddCreditCardModal instead (PRD ask: credit card
@@ -103,8 +171,19 @@ export function AddWealthItemModal({
   onSelectCreditCard?: () => void;
   onClose: () => void;
 }) {
-  const { data, addAsset, updateAsset, deleteAsset, addLiability, updateLiability, deleteLiability, linkBillToLiability, addMortgageWithProperty } =
-    useAppState();
+  const {
+    data,
+    addAsset,
+    updateAsset,
+    deleteAsset,
+    addLiability,
+    updateLiability,
+    deleteLiability,
+    linkBillToLiability,
+    addMortgageWithProperty,
+    addCarLoanWithVehicle,
+    updateLinkedRepaymentOnly,
+  } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
@@ -134,14 +213,75 @@ export function AddWealthItemModal({
   const [propertyLinkMode, setPropertyLinkMode] = useState<'none' | 'existing' | 'new'>('none');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const [newPropertyValue, setNewPropertyValue] = useState('');
+  // Round 6 correction — a new secured-loan asset's own name, entered by
+  // the user, never inferred from the liability's name (asset and
+  // liability labels are display values, not identity). Persisted as
+  // Asset.label on save, replacing the old hardcoded 'Property'/'Car'
+  // literal that made every new asset indistinguishable from every other.
+  const [newPropertyName, setNewPropertyName] = useState('');
+  // Same idea as propertyLinkMode/selectedPropertyId/newPropertyValue, for a
+  // car loan's linked vehicle (Asset type 'car') instead of a mortgage's
+  // property.
+  const [vehicleLinkMode, setVehicleLinkMode] = useState<'none' | 'existing' | 'new'>('none');
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [newVehicleValue, setNewVehicleValue] = useState('');
+  const [newVehicleName, setNewVehicleName] = useState('');
   // Category-first, like the other add flows (PRD ask) — only for a brand
   // new asset with no preset already chosen (most entry points already
   // preset a type, e.g. tapping "Property" on the Wealth Map, so there's
   // nothing to pick). Liabilities keep their existing single-step flow.
   const [formStep, setFormStep] = useState<'category' | 'details'>('details');
+  // Stream C correction (Correction 1) — the "select or create for
+  // repayment" step. Shown only for liabilityFlowIntent ===
+  // 'select_or_create_for_repayment' sessions where at least one same-type
+  // liability already exists; skipped entirely (falls straight to a blank
+  // create form) otherwise.
+  const [showLiabilitySelector, setShowLiabilitySelector] = useState(false);
+  // The liability explicitly chosen from that selector — null means
+  // "add a new one" (either the user tapped "+ Add a new X", or no
+  // selector was ever shown because none existed, or intent is 'create').
+  // Distinct from `editLiability`: this is an in-modal choice for the
+  // repayment-scheduling flow, not the caller supplying a specific row to
+  // edit.
+  const [targetLiabilityId, setTargetLiabilityId] = useState<string | null>(null);
+  // Stream C correction (Correction 1, §3) — selecting an existing
+  // liability from the repayment selector must only add/update ITS
+  // repayment by default; balance/name/asset-link stay locked (read-only)
+  // until the user explicitly opts in here. Always true for editLiability
+  // (full edit, unrelated flow) and for a brand-new liability (nothing to
+  // protect yet).
+  const [editingLoanDetails, setEditingLoanDetails] = useState(true);
   const initialSnapshot = useRef({ label: '', value: '', interestRate: '' });
+  // Synchronous double-submission guard (Stream C correction). A ref, not
+  // state — state only takes effect on the next render, so two Save taps
+  // landing in the same tick (or the second landing during the brief window
+  // before onClose()'s parent state update actually hides this modal) would
+  // both read a stale `false` and both proceed, each independently creating
+  // a new liability/asset/bill. Checked and set synchronously at the very
+  // top of the actual submission attempt in handleSave — set BEFORE any
+  // transition/persistence action is called, and NEVER cleared inside
+  // handleSave itself on the success path (clearing it there would reopen
+  // exactly the same modal-close-timing race this guard exists to close;
+  // it IS cleared in handleSave's own catch block — see Issue 6 below).
+  // Reset only in the reset-on-open effect, i.e. only when a genuinely new
+  // form session begins (opening fresh, opening to edit a different item,
+  // or reopening after close) — never for a re-render of the same open
+  // session.
+  const submittingRef = useRef(false);
+  // Stream C correction (Issue 6), Round-5 correction (Issue 1) — if the
+  // guarded mutation below ever throws OR the production transition
+  // reports `applied: false` (an update target that no longer exists,
+  // resolved to the wrong liability type, or found more than one exact-
+  // linked repayment — see LiabilityTransitionTarget's and
+  // upsertLinkedRecurringItem's doc comments in AppStateContext.tsx), the
+  // guard must not leave the form permanently unresponsive: submittingRef
+  // is reset so Save is tappable again, and this surfaces the EXACT reason
+  // (not one generic string) as a brief inline error. Never auto-retried —
+  // only a deliberate subsequent tap re-attempts the save, which the guard
+  // still protects against duplicating.
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
-  const isNewLoan = kind === 'liability' && liabilityType in LOAN_BILL_LABELS && !editLiability;
+  const isNewLoan = kind === 'liability' && SMART_LOAN_TYPES.includes(liabilityType) && !editLiability;
   // A mortgage can be secured against a property (PRD ask: "$1M property,
   // $500k mortgage" is a very different picture than "$500k unsecured
   // debt"). New properties are only created on the add-mortgage path — the
@@ -149,8 +289,78 @@ export function AddWealthItemModal({
   // editing an existing liability already has that guarantee via
   // updateLiability, so editing only re-links to an existing property.
   const isMortgage = kind === 'liability' && liabilityType === 'mortgage';
+  // Same idea as isMortgage/propertyAssets, generalized to car loans and
+  // their linked vehicle — new vehicles are only created on the add-car-
+  // loan path via the atomic addCarLoanWithVehicle call, for the same
+  // single-persist() reason.
+  const isCarLoan = kind === 'liability' && liabilityType === 'car_loan';
   const propertyAssets = data.assets.filter((a) => a.type === 'property');
+  const vehicleAssets = data.assets.filter((a) => a.type === 'car');
   const usesRepaymentDayOfMonth = repaymentFrequency === 'monthly';
+  const resolvedIntent = liabilityFlowIntent ?? 'create';
+  // The exact liability this session is updating (via the repayment
+  // selector), if any — distinct from editLiability. Its own existing
+  // linked asset / repayment bill drive the locked-details summary and the
+  // "already has a repayment" copy below.
+  const targetLiability = targetLiabilityId ? data.liabilities.find((l) => l.id === targetLiabilityId) ?? null : null;
+  const targetHasExistingRepayment = targetLiability ? data.recurringItems.some((r) => r.linkedLiabilityId === targetLiability.id) : false;
+  const targetLinkedAssetLabel = targetLiability
+    ? targetLiability.type === 'car_loan' && targetLiability.linkedVehicleAssetId
+      ? data.assets.find((a) => a.id === targetLiability.linkedVehicleAssetId)?.label ?? null
+      : targetLiability.type === 'mortgage' && targetLiability.linkedPropertyAssetId
+      ? data.assets.find((a) => a.id === targetLiability.linkedPropertyAssetId)?.label ?? null
+      : null
+    : null;
+  // Loan-detail fields (name/balance/rate/asset-link) are locked to the
+  // selected target's own values, editable only once the user explicitly
+  // opts in via "Edit loan details" — never for a brand-new liability or a
+  // direct row-tap edit, where there's nothing to protect.
+  const loanDetailsLocked = !!targetLiabilityId && !editLiability && !editingLoanDetails;
+
+  function prefillFromLiability(l: Liability) {
+    setLabel(l.label);
+    setValue(String(l.currentBalance));
+    setLiabilityInterestRate(l.interestRate ? String(Math.round(l.interestRate * 10000) / 100) : '');
+    setPropertyLinkMode(l.linkedPropertyAssetId ? 'existing' : 'none');
+    setSelectedPropertyId(l.linkedPropertyAssetId ?? null);
+    setNewPropertyValue('');
+    setNewPropertyName('');
+    setVehicleLinkMode(l.linkedVehicleAssetId ? 'existing' : 'none');
+    setSelectedVehicleId(l.linkedVehicleAssetId ?? null);
+    setNewVehicleValue('');
+    setNewVehicleName('');
+    initialSnapshot.current = { ...initialSnapshot.current, label: l.label, value: String(l.currentBalance) };
+  }
+
+  function resetLiabilityFieldsBlank() {
+    setLabel('');
+    setValue('');
+    setLiabilityInterestRate('');
+    setPropertyLinkMode('none');
+    setSelectedPropertyId(null);
+    setNewPropertyValue('');
+    setNewPropertyName('');
+    setVehicleLinkMode('none');
+    setSelectedVehicleId(null);
+    setNewVehicleValue('');
+    setNewVehicleName('');
+    initialSnapshot.current = { ...initialSnapshot.current, label: '', value: '' };
+  }
+
+  // Stream C correction (Correction 1) — the "select or create for
+  // repayment" step's own choice handlers.
+  function chooseExistingLiabilityForRepayment(l: Liability) {
+    setTargetLiabilityId(l.id);
+    setEditingLoanDetails(false);
+    prefillFromLiability(l);
+    setShowLiabilitySelector(false);
+  }
+  function chooseAddNewLiabilityForRepayment() {
+    setTargetLiabilityId(null);
+    setEditingLoanDetails(true);
+    resetLiabilityFieldsBlank();
+    setShowLiabilitySelector(false);
+  }
 
   function chooseRepaymentFrequency(f: PayFrequency) {
     setRepaymentFrequency(f);
@@ -169,6 +379,10 @@ export function AddWealthItemModal({
 
   useEffect(() => {
     if (!visible) return;
+    // A genuinely new form session — see submittingRef's own comment for
+    // why this is the only place it's ever cleared.
+    submittingRef.current = false;
+    setSaveErrorMessage(null);
     if (editAsset) {
       setLabel(editAsset.label);
       setValue(String(editAsset.currentValue));
@@ -177,7 +391,12 @@ export function AddWealthItemModal({
       setInterestRate(rate);
       setIncludeInMoney(resolveIncludeInMoneyCalculations(editAsset));
       initialSnapshot.current = { label: editAsset.label, value: String(editAsset.currentValue), interestRate: rate };
+      setShowLiabilitySelector(false);
+      setTargetLiabilityId(null);
+      setEditingLoanDetails(true);
     } else if (editLiability) {
+      // CORRECTION 1, "EDIT LIABILITY" — targets the supplied exact id
+      // only; never selects/preselects any other liability by type.
       setLabel(editLiability.label);
       setValue(String(editLiability.currentBalance));
       setLiabilityType(editLiability.type);
@@ -185,28 +404,50 @@ export function AddWealthItemModal({
       setPropertyLinkMode(editLiability.linkedPropertyAssetId ? 'existing' : 'none');
       setSelectedPropertyId(editLiability.linkedPropertyAssetId ?? null);
       setNewPropertyValue('');
+      setNewPropertyName('');
+      setVehicleLinkMode(editLiability.linkedVehicleAssetId ? 'existing' : 'none');
+      setSelectedVehicleId(editLiability.linkedVehicleAssetId ?? null);
+      setNewVehicleValue('');
+      setNewVehicleName('');
       initialSnapshot.current = { label: editLiability.label, value: String(editLiability.currentBalance), interestRate: '' };
+      setShowLiabilitySelector(false);
+      setTargetLiabilityId(null);
+      setEditingLoanDetails(true);
     } else {
-      setLabel('');
-      setValue('');
       setInterestRate('');
-      setLiabilityInterestRate('');
       setAssetType(presetAssetType ?? 'cash');
       setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: presetAssetType ?? 'cash', includeInMoneyCalculations: undefined }));
-      setLiabilityType(presetLiabilityType ?? 'personal_loan');
+      const resolvedType = presetLiabilityType ?? 'personal_loan';
+      setLiabilityType(resolvedType);
       setRepaymentAmount('');
       setRepaymentFrequency('monthly');
       setRepaymentDayOfMonth('');
       setRepaymentNextDueDate(null);
       setRepaymentPickerOpen(false);
       setAddRepaymentLater(false);
-      setPropertyLinkMode('none');
-      setSelectedPropertyId(null);
-      setNewPropertyValue('');
+      resetLiabilityFieldsBlank();
+      setLabel('');
+      setValue('');
       initialSnapshot.current = { label: '', value: '', interestRate: '' };
+      // CORRECTION 1, "SELECT OR CREATE FOR REPAYMENT" — only for the
+      // explicit intent, and only when at least one same-type liability
+      // already exists; otherwise (0 existing, or intent is 'create')
+      // this falls straight through to a blank "Add [Type]" form, exactly
+      // like every other liability type already worked.
+      const matching = kind === 'liability' ? data.liabilities.filter((l) => l.type === resolvedType) : [];
+      const shouldOfferSelector = kind === 'liability' && (liabilityFlowIntent ?? 'create') === 'select_or_create_for_repayment' && matching.length > 0;
+      setShowLiabilitySelector(shouldOfferSelector);
+      setTargetLiabilityId(null);
+      setEditingLoanDetails(true);
     }
     setFormStep(kind === 'asset' && !editAsset && !presetAssetType ? 'category' : 'details');
-  }, [visible, kind, editAsset, editLiability, presetAssetType, presetLiabilityType]);
+    // data.liabilities is read only to decide whether to offer the
+    // selector on open — deliberately not a dependency, matching the
+    // established convention for this effect (it always reflects data at
+    // the moment the effect fires, via closure, same as every other field
+    // here that reads `data`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, kind, editAsset, editLiability, presetAssetType, presetLiabilityType, liabilityFlowIntent]);
 
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
@@ -214,7 +455,18 @@ export function AddWealthItemModal({
     setFormStep('details');
   }
 
-  const canSave = label.trim().length > 0 && !isNaN(parseFloat(value));
+  // Round 6 correction — creating a brand-new secured-loan asset (never an
+  // existing/not-linked selection, and never while loan details are
+  // locked, which hides these fields entirely) now requires its own
+  // non-blank name, so Save cannot silently persist another generic
+  // "Property"/"Car" record.
+  const requiresNewPropertyName = isMortgage && !loanDetailsLocked && propertyLinkMode === 'new';
+  const requiresNewVehicleName = isCarLoan && !loanDetailsLocked && vehicleLinkMode === 'new';
+  const canSave =
+    label.trim().length > 0 &&
+    !isNaN(parseFloat(value)) &&
+    (!requiresNewPropertyName || newPropertyName.trim().length > 0) &&
+    (!requiresNewVehicleName || newVehicleName.trim().length > 0);
   const title =
     kind === 'asset'
       ? assetType === 'savings'
@@ -228,9 +480,11 @@ export function AddWealthItemModal({
         : isEditing
         ? 'Edit asset'
         : 'Add asset'
-      : isEditing
-      ? 'Edit liability'
-      : 'Add liability';
+      : editLiability
+      ? `Edit ${LIABILITY_DISPLAY_NAME[liabilityType]}`
+      : targetLiabilityId
+      ? `Update ${LIABILITY_DISPLAY_NAME[liabilityType]}`
+      : `Add ${LIABILITY_DISPLAY_NAME[liabilityType]}`;
 
   // Used for KeyboardSheet's own onClose prop — its internal swipe/tap-
   // outside handlers already gate on `isDirty` before calling this, so
@@ -245,123 +499,219 @@ export function AddWealthItemModal({
     confirmDiscardIfDirty(isDirty, onClose);
   }
 
+  // Round-6 correction (Group E) — the Round-5 disclosure step is removed
+  // entirely: the current data model has no field distinguishing an
+  // unlinked LOAN repayment from an ordinary unlinked bill (rent,
+  // Internet, subscriptions), so any candidate list built from
+  // `!linkedLiabilityId` alone is structurally over-broad and falsely
+  // implies Navilo detected a specific duplicate. `wouldCreateNewLinkedRepayment`
+  // is kept only to gate a small NON-BLOCKING reminder (rendered inline in
+  // the form below, never a separate screen) — true only for "select or
+  // create for repayment" sessions genuinely about to create a brand-new
+  // linked repayment (never for editLiability or an already-selected
+  // target). It names no record, lists nothing, and never prevents Save.
+  function wouldCreateNewLinkedRepayment(): boolean {
+    if (kind !== 'liability' || editLiability || targetLiabilityId) return false;
+    if (resolvedIntent !== 'select_or_create_for_repayment' || !SMART_LOAN_TYPES.includes(liabilityType)) return false;
+    const repaymentValue = parseFloat(repaymentAmount);
+    const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
+    return (
+      !addRepaymentLater &&
+      !isNaN(repaymentValue) &&
+      repaymentValue > 0 &&
+      (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate)
+    );
+  }
+
   function handleSave() {
+    performSave();
+  }
+
+  function performSave() {
     const amount = parseFloat(value);
     if (!canSave) return;
-    if (kind === 'asset') {
-      const rateValue = parseFloat(interestRate);
-      const interestRatePayload =
-        (assetType === 'cash' || assetType === 'savings') && !isNaN(rateValue) && rateValue >= 0 ? rateValue / 100 : undefined;
-      const includeInMoneyPayload = assetType === 'cash' || assetType === 'savings' ? includeInMoney : undefined;
-      if (editAsset) {
-        updateAsset(editAsset.id, {
-          type: assetType,
-          label: label.trim(),
-          currentValue: amount,
-          interestRate: interestRatePayload,
-          includeInMoneyCalculations: includeInMoneyPayload,
-        });
-      } else {
-        addAsset({
-          type: assetType,
-          label: label.trim(),
-          currentValue: amount,
-          interestRate: interestRatePayload,
-          includeInMoneyCalculations: includeInMoneyPayload,
-        });
-      }
-    } else if (kind === 'liability') {
-      const liabRateValue = parseFloat(liabilityInterestRate);
-      const liabInterestRatePayload = !isNaN(liabRateValue) && liabRateValue >= 0 ? liabRateValue / 100 : undefined;
-      if (editLiability) {
-        updateLiability(editLiability.id, {
-          type: liabilityType,
-          label: label.trim(),
-          currentBalance: amount,
-          interestRate: liabInterestRatePayload,
-          linkedPropertyAssetId: isMortgage && propertyLinkMode === 'existing' ? selectedPropertyId ?? undefined : undefined,
-        });
-      } else if (isMortgage) {
-        const repaymentValue = parseFloat(repaymentAmount);
-        const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
-        // Only creates a repayment bill once the user has actually chosen a
-        // day/date — never silently assumes "due one month from today" (PRD
-        // bug report, §B4). "I'll add this later" creates just the liability.
-        const hasRepaymentSchedule =
-          !addRepaymentLater &&
-          !isNaN(repaymentValue) &&
-          repaymentValue > 0 &&
-          (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
-        const newPropertyValueNum = parseFloat(newPropertyValue);
-        const propertyLink: Parameters<typeof addMortgageWithProperty>[1] =
-          propertyLinkMode === 'existing' && selectedPropertyId
-            ? { mode: 'existing', assetId: selectedPropertyId }
-            : propertyLinkMode === 'new' && !isNaN(newPropertyValueNum) && newPropertyValueNum > 0
-            ? { mode: 'new', value: newPropertyValueNum, label: 'Property' }
-            : { mode: 'none' };
-        addMortgageWithProperty(
-          { label: label.trim(), currentBalance: amount, interestRate: liabInterestRatePayload },
-          propertyLink,
-          hasRepaymentSchedule
+    // Must be checked+set synchronously before anything else in this
+    // function touches state or calls a persistence action — see
+    // submittingRef's declaration comment.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSaveErrorMessage(null);
+    try {
+      if (kind === 'asset') {
+        const rateValue = parseFloat(interestRate);
+        const interestRatePayload =
+          (assetType === 'cash' || assetType === 'savings') && !isNaN(rateValue) && rateValue >= 0 ? rateValue / 100 : undefined;
+        const includeInMoneyPayload = assetType === 'cash' || assetType === 'savings' ? includeInMoney : undefined;
+        if (editAsset) {
+          updateAsset(editAsset.id, {
+            type: assetType,
+            label: label.trim(),
+            currentValue: amount,
+            interestRate: interestRatePayload,
+            includeInMoneyCalculations: includeInMoneyPayload,
+          });
+        } else {
+          addAsset({
+            type: assetType,
+            label: label.trim(),
+            currentValue: amount,
+            interestRate: interestRatePayload,
+            includeInMoneyCalculations: includeInMoneyPayload,
+          });
+        }
+      } else if (kind === 'liability') {
+        const liabRateValue = parseFloat(liabilityInterestRate);
+        const liabInterestRatePayload = !isNaN(liabRateValue) && liabRateValue >= 0 ? liabRateValue / 100 : undefined;
+        if (editLiability) {
+          // CORRECTION 1, "EDIT LIABILITY" — exact-id update, unchanged
+          // from prior behaviour.
+          updateLiability(editLiability.id, {
+            type: liabilityType,
+            label: label.trim(),
+            currentBalance: amount,
+            interestRate: liabInterestRatePayload,
+            linkedPropertyAssetId: isMortgage && propertyLinkMode === 'existing' ? selectedPropertyId ?? undefined : undefined,
+            linkedVehicleAssetId: isCarLoan && vehicleLinkMode === 'existing' ? selectedVehicleId ?? undefined : undefined,
+          });
+        } else {
+          // CORRECTION 2 — the exact target contract: 'create' always gets
+          // a freshly generated id; 'update' carries the exact id the user
+          // explicitly selected from the repayment selector. Generated
+          // once, as plain calls, right here at the moment of actual
+          // submission — never inside a setState updater, never
+          // regenerated on a subsequent render.
+          const target: { mode: 'create'; liabilityId: string } | { mode: 'update'; liabilityId: string } = targetLiabilityId
+            ? { mode: 'update', liabilityId: targetLiabilityId }
+            : { mode: 'create', liabilityId: generateId() };
+          // Loan-details lock (Correction 1 §3) — while locked, the
+          // liability payload is the target's OWN current values, never
+          // whatever might be sitting in the (hidden, disabled) form
+          // fields, so a repayment-only submission can never drift the
+          // balance/name/link.
+          const liabilityPayload =
+            loanDetailsLocked && targetLiability
+              ? { label: targetLiability.label, currentBalance: targetLiability.currentBalance, interestRate: targetLiability.interestRate }
+              : { label: label.trim(), currentBalance: amount, interestRate: liabInterestRatePayload };
+          // Unified across all three branches below (Round-5 simplification
+          // that also fixed a latent inconsistency: the repayment-only path
+          // needs the identical computation the isMortgage/isCarLoan/else
+          // branches already had, so it is now computed once). Only creates
+          // a repayment definition once the user has actually chosen a
+          // day/date — never silently assumes "due one month from today"
+          // (PRD bug report, §B4). "I'll add this later" leaves any
+          // already-scheduled repayment untouched.
+          const repaymentValue = parseFloat(repaymentAmount);
+          const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
+          const hasRepaymentSchedule =
+            SMART_LOAN_TYPES.includes(liabilityType) &&
+            !addRepaymentLater &&
+            !isNaN(repaymentValue) &&
+            repaymentValue > 0 &&
+            (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
+          const repaymentPayload = hasRepaymentSchedule
             ? {
-                type: 'expense',
-                label: LOAN_BILL_LABELS.mortgage ?? 'Home Loan Repayment',
+                type: 'expense' as const,
+                // CORRECTION 5 — distinguishable automatic repayment names
+                // ("[Liability name] repayment"), never a static per-type
+                // string.
+                label: `${liabilityPayload.label} repayment`,
                 amount: repaymentValue,
                 frequency: repaymentFrequency,
                 nextDueDate: usesRepaymentDayOfMonth ? nextOccurrenceFromDay(repaymentDayValue) : (repaymentNextDueDate as string),
                 isFixed: true,
                 active: true,
-                // Filled 'home', not the outline icon Rent uses — a
-                // mortgage bill must never be visually confused with rent
-                // (PRD bug report, §B4).
-                icon: 'home',
+                // Mortgage gets the filled 'home' icon (never the outline
+                // icon Rent uses — a mortgage bill must never be visually
+                // confused with rent, PRD bug report §B4); Car Loan matches
+                // AddRecurringItemModal's own "Car Loan" preset icon
+                // (distinct from the plain 'Car' expense preset's
+                // 'car-outline'); everything else gets the generic bill icon.
+                icon: isMortgage ? 'home' : isCarLoan ? 'car-sport-outline' : 'document-text-outline',
               }
-            : undefined
-        );
-      } else {
-        const isLoan = liabilityType in LOAN_BILL_LABELS;
-        // Smarter loan flow (PRD ask): a repayment amount plus a real
-        // chosen day/date auto-creates the matching recurring bill, linked
-        // back to this liability. Never silently assumes a due date (PRD
-        // bug report, §B4) — "I'll add this later" skips bill creation.
-        const repaymentValue = parseFloat(repaymentAmount);
-        const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
-        const hasRepaymentSchedule =
-          isLoan &&
-          !addRepaymentLater &&
-          !isNaN(repaymentValue) &&
-          repaymentValue > 0 &&
-          (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
-        if (hasRepaymentSchedule) {
-          // Atomic: creates (or reuses, never duplicates) the liability and
-          // links this bill to it in one state write — addLiability then
-          // addRecurringItem back-to-back silently drops the liability
-          // (PRD bug report: "liability does not appear in Wealth").
-          linkBillToLiability(
-            { type: liabilityType, label: label.trim(), currentBalance: amount, interestRate: liabInterestRatePayload },
-            {
-              type: 'expense',
-              label: LOAN_BILL_LABELS[liabilityType] ?? 'Loan Repayment',
-              amount: repaymentValue,
-              frequency: repaymentFrequency,
-              nextDueDate: usesRepaymentDayOfMonth ? nextOccurrenceFromDay(repaymentDayValue) : (repaymentNextDueDate as string),
-              isFixed: true,
-              active: true,
-              icon: liabilityType === 'car_loan' ? 'car-outline' : 'document-text-outline',
+            : undefined;
+
+          if (loanDetailsLocked && targetLiabilityId) {
+            // Round-5 correction (Issue 3) — repayment-only path, routed
+            // through the dedicated production action that structurally
+            // cannot touch the liability record (see
+            // updateLinkedRepaymentOnlyTransition's doc comment) — not the
+            // three actions below, which always rewrite liability fields
+            // on an update target even when passed identical-looking
+            // values.
+            const result = updateLinkedRepaymentOnly(targetLiabilityId, repaymentPayload, generateId());
+            if (!result.applied) throw new LiabilityFailure(result.reason);
+          } else if (isMortgage) {
+            const newPropertyValueNum = parseFloat(newPropertyValue);
+            const propertyLink: Parameters<typeof addMortgageWithProperty>[1] =
+              propertyLinkMode === 'existing' && selectedPropertyId
+                ? { mode: 'existing', assetId: selectedPropertyId }
+                : propertyLinkMode === 'new' && !isNaN(newPropertyValueNum) && newPropertyValueNum > 0 && newPropertyName.trim().length > 0
+                ? { mode: 'new', value: newPropertyValueNum, label: newPropertyName.trim() }
+                : { mode: 'none' };
+            const result = addMortgageWithProperty(liabilityPayload, propertyLink, repaymentPayload, target, {
+              newPropertyAssetId: generateId(),
+              newRecurringItemId: generateId(),
+            });
+            if (!result.applied) throw new LiabilityFailure(result.reason);
+          } else if (isCarLoan) {
+            const newVehicleValueNum = parseFloat(newVehicleValue);
+            const vehicleLink: Parameters<typeof addCarLoanWithVehicle>[1] =
+              vehicleLinkMode === 'existing' && selectedVehicleId
+                ? { mode: 'existing', assetId: selectedVehicleId }
+                : vehicleLinkMode === 'new' && !isNaN(newVehicleValueNum) && newVehicleValueNum > 0 && newVehicleName.trim().length > 0
+                ? { mode: 'new', value: newVehicleValueNum, label: newVehicleName.trim() }
+                : { mode: 'none' };
+            const result = addCarLoanWithVehicle(liabilityPayload, vehicleLink, repaymentPayload, target, {
+              newVehicleAssetId: generateId(),
+              newRecurringItemId: generateId(),
+            });
+            if (!result.applied) throw new LiabilityFailure(result.reason);
+          } else {
+            const isLoan = SMART_LOAN_TYPES.includes(liabilityType);
+            if (hasRepaymentSchedule) {
+              // Atomic: creates (or updates the exact targeted) liability
+              // and links this bill to it in one state write — addLiability
+              // then addRecurringItem back-to-back silently drops the
+              // liability (PRD bug report: "liability does not appear in
+              // Wealth").
+              const result = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, repaymentPayload, target, generateId());
+              if (!result.applied) throw new LiabilityFailure(result.reason);
+            } else if (targetLiabilityId) {
+              // "Select or create for repayment", existing target chosen,
+              // but "I'll add this later"/no valid schedule entered — still
+              // must not silently no-op or fall back to addLiability
+              // (which would create a DUPLICATE liability of this type).
+              // Route through the same target-aware transition with no
+              // recurringItem — updates only the targeted liability
+              // (its balance/name/rate only if loan details were
+              // explicitly unlocked, per liabilityPayload above).
+              const result = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, undefined, target, generateId());
+              if (!result.applied) throw new LiabilityFailure(result.reason);
+            } else {
+              addLiability({
+                type: liabilityType,
+                label: label.trim(),
+                currentBalance: amount,
+                interestRate: liabInterestRatePayload,
+                createdAt: isLoan ? new Date().toISOString() : undefined,
+              });
             }
-          );
-        } else {
-          addLiability({
-            type: liabilityType,
-            label: label.trim(),
-            currentBalance: amount,
-            interestRate: liabInterestRatePayload,
-            createdAt: isLoan ? new Date().toISOString() : undefined,
-          });
+          }
         }
       }
+      onClose();
+    } catch (err) {
+      // Smallest safe recovery (Stream C correction, Issue 6; Round-5
+      // correction, Issue 1/5): reset the guard so a deliberate next tap
+      // can retry, surface the EXACT reason (not a generic string) as a
+      // brief inline error, and — critically — do NOT call onClose(), so
+      // the user's entered data stays on screen instead of being silently
+      // lost behind a closed modal they'd have to reopen and re-enter from
+      // scratch. Never auto-retried; this is a pure recovery path, not a
+      // loop.
+      submittingRef.current = false;
+      setSaveErrorMessage(messageForSaveFailure(err));
     }
-    onClose();
   }
 
   function handleDelete() {
@@ -388,6 +738,7 @@ export function AddWealthItemModal({
           marginBottom: spacing.md,
           color: colors.textPrimary,
         },
+        inputLocked: { opacity: 0.55 },
         footerButton: { flex: 1 },
         deleteButton: { marginTop: spacing.sm },
         deleteText: { ...typography.caption, color: colors.danger, textAlign: 'center', fontWeight: '600' },
@@ -431,6 +782,37 @@ export function AddWealthItemModal({
         categoryCardEmoji: { fontSize: 30, marginBottom: spacing.xs },
         categoryCardLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginBottom: 2 },
         categoryCardDescription: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center' },
+        selectorRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: colors.surfaceMuted,
+          borderRadius: radius.control,
+          padding: spacing.md,
+          marginBottom: spacing.sm,
+        },
+        selectorRowLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        selectorRowSub: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+        selectorRowValue: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        addNewRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.xs,
+          justifyContent: 'center',
+          borderRadius: radius.control,
+          padding: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.accentStrong,
+          borderStyle: 'dashed',
+        },
+        addNewRowText: { ...typography.body, fontSize: 14, color: colors.accentStrong, fontWeight: '600' },
+        lockedSummaryRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: spacing.md,
+        },
+        editDetailsLink: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '600' },
       }),
     [colors, radius, spacing, typography]
   );
@@ -457,11 +839,59 @@ export function AddWealthItemModal({
     );
   }
 
+  // CORRECTION 1, "SELECT OR CREATE FOR REPAYMENT" — the new explicit
+  // selection step. Only ever shown for liabilityFlowIntent ===
+  // 'select_or_create_for_repayment' sessions where matching liabilities
+  // already exist (computed once on open — see the reset effect).
+  if (kind === 'liability' && showLiabilitySelector) {
+    const matching = data.liabilities.filter((l) => l.type === liabilityType);
+    return (
+      <KeyboardSheet
+        visible={visible}
+        onClose={onClose}
+        isDirty={false}
+        title={`Which ${LIABILITY_DISPLAY_NAME[liabilityType]} is this repayment for?`}
+        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+      >
+        {matching.map((l) => {
+          const linkedAssetLabel =
+            l.type === 'car_loan' && l.linkedVehicleAssetId
+              ? data.assets.find((a) => a.id === l.linkedVehicleAssetId)?.label
+              : l.type === 'mortgage' && l.linkedPropertyAssetId
+              ? data.assets.find((a) => a.id === l.linkedPropertyAssetId)?.label
+              : undefined;
+          return (
+            <TouchableOpacity key={l.id} style={styles.selectorRow} activeOpacity={0.8} onPress={() => chooseExistingLiabilityForRepayment(l)}>
+              <View>
+                <Text style={styles.selectorRowLabel}>{l.label}</Text>
+                {linkedAssetLabel ? <Text style={styles.selectorRowSub}>Linked to {linkedAssetLabel}</Text> : null}
+              </View>
+              <Text style={styles.selectorRowValue}>{formatBalance(l.currentBalance)}</Text>
+            </TouchableOpacity>
+          );
+        })}
+        <TouchableOpacity style={styles.addNewRow} activeOpacity={0.8} onPress={chooseAddNewLiabilityForRepayment}>
+          <Ionicons name="add" size={16} color={colors.accentStrong} />
+          <Text style={styles.addNewRowText}>Add a new {LIABILITY_DISPLAY_NAME[liabilityType]}</Text>
+        </TouchableOpacity>
+      </KeyboardSheet>
+    );
+  }
+
+
+  const nameField = kind === 'liability' ? LIABILITY_NAME_FIELD[liabilityType] : null;
+  // Type chips are hidden for the repayment-selection flow once a target
+  // (or "add new") has been chosen — the entry point already told Navilo
+  // exactly which type this is; letting the user wander to a different
+  // type mid-flow would reopen the same ambiguity this correction closes.
+  const showTypeChips = kind === 'asset' || resolvedIntent !== 'select_or_create_for_repayment';
+
   return (
     <KeyboardSheet
       visible={visible}
       onClose={handleClose}
       isDirty={isDirty}
+      gesturesEnabled={!repaymentPickerOpen}
       title={title}
       footer={
         <>
@@ -470,47 +900,95 @@ export function AddWealthItemModal({
         </>
       }
     >
-      <View style={styles.typeRow}>
-        {(kind === 'asset' ? ASSET_TYPES : LIABILITY_TYPES).map((t) => {
-          const active = kind === 'asset' ? assetType === t.value : liabilityType === t.value;
-          return (
-            <TouchableOpacity
-              key={t.value}
-              style={[styles.typeChip, active ? styles.typeChipActive : null]}
-              onPress={() => {
-                if (kind === 'liability' && t.value === 'credit_card') {
-                  onClose();
-                  onSelectCreditCard?.();
-                  return;
-                }
-                if (kind === 'asset') {
-                  setAssetType(t.value as AssetType);
-                  setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined }));
-                } else setLiabilityType(t.value as LiabilityType);
-              }}
-            >
-              <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>{t.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <Text style={styles.label}>Label</Text>
-      <TextInput
-        style={styles.input}
-        placeholder={kind === 'asset' ? 'e.g. Vanguard ETF' : 'e.g. Home loan'}
-        placeholderTextColor={colors.textMuted}
-        value={label}
-        onChangeText={setLabel}
-      />
-      <Text style={styles.label}>Value</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
-        value={value}
-        onChangeText={setValue}
-      />
+      {saveErrorMessage ? (
+        <View style={styles.helperBox}>
+          <Text style={[styles.helperText, { color: colors.danger }]}>{saveErrorMessage}</Text>
+        </View>
+      ) : null}
+      {targetLiability ? (
+        <View style={styles.helperBox}>
+          <Text style={styles.helperText}>
+            You're updating {targetLiability.label}'s repayment.{' '}
+            {targetHasExistingRepayment
+              ? 'Its existing repayment schedule will be updated with what you enter below — not added as a second one.'
+              : "This adds its first repayment schedule."}
+          </Text>
+        </View>
+      ) : null}
+      {/* Round-6 correction (Group E) — a small, non-blocking reminder,
+          never a candidate list: the current data model has no reliable
+          way to distinguish an unlinked LOAN repayment from an ordinary
+          bill, so this deliberately names nothing, lists nothing, and
+          never claims Navilo detected a duplicate. Shown only while
+          genuinely about to create a brand-new linked repayment; never
+          prevents Save. */}
+      {wouldCreateNewLinkedRepayment() ? (
+        <View style={styles.helperBox}>
+          <Text style={styles.helperText}>Already track this repayment as a regular bill? Check your bills first to avoid counting it twice.</Text>
+        </View>
+      ) : null}
+      {showTypeChips ? (
+        <View style={styles.typeRow}>
+          {(kind === 'asset' ? ASSET_TYPES : LIABILITY_TYPES).map((t) => {
+            const active = kind === 'asset' ? assetType === t.value : liabilityType === t.value;
+            return (
+              <TouchableOpacity
+                key={t.value}
+                style={[styles.typeChip, active ? styles.typeChipActive : null]}
+                onPress={() => {
+                  if (kind === 'liability' && t.value === 'credit_card') {
+                    onClose();
+                    onSelectCreditCard?.();
+                    return;
+                  }
+                  if (kind === 'asset') {
+                    setAssetType(t.value as AssetType);
+                    setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined }));
+                  } else {
+                    setLiabilityType(t.value as LiabilityType);
+                  }
+                }}
+              >
+                <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>{t.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
+      {loanDetailsLocked ? (
+        <View style={styles.lockedSummaryRow}>
+          <View>
+            <Text style={styles.selectorRowLabel}>{label}</Text>
+            <Text style={styles.selectorRowSub}>
+              {formatBalance(parseFloat(value) || 0)}
+              {targetLinkedAssetLabel ? ` · Linked to ${targetLinkedAssetLabel}` : ''}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => setEditingLoanDetails(true)}>
+            <Text style={styles.editDetailsLink}>Edit loan details</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.label}>{kind === 'liability' && nameField ? nameField.field : 'Label'}</Text>
+          <TextInput
+            style={styles.input}
+            placeholder={kind === 'asset' ? 'e.g. Vanguard ETF' : nameField?.placeholder ?? 'e.g. Home loan'}
+            placeholderTextColor={colors.textMuted}
+            value={label}
+            onChangeText={setLabel}
+          />
+          <Text style={styles.label}>{kind === 'liability' ? 'Amount you still owe today' : 'Value'}</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="$0"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="decimal-pad"
+            value={value}
+            onChangeText={setValue}
+          />
+        </>
+      )}
       {kind === 'asset' && (assetType === 'cash' || assetType === 'savings') ? (
         <>
           <Text style={styles.label}>Interest rate % (optional)</Text>
@@ -541,7 +1019,7 @@ export function AddWealthItemModal({
           </View>
         </>
       ) : null}
-      {kind === 'liability' ? (
+      {kind === 'liability' && !loanDetailsLocked ? (
         <>
           <Text style={styles.label}>Interest rate % (optional)</Text>
           <TextInput
@@ -554,7 +1032,7 @@ export function AddWealthItemModal({
           />
         </>
       ) : null}
-      {isMortgage ? (
+      {isMortgage && !loanDetailsLocked ? (
         <>
           <Text style={styles.label}>Is this linked to a property?</Text>
           <View style={styles.typeRow}>
@@ -591,7 +1069,9 @@ export function AddWealthItemModal({
                     style={[styles.typeChip, active ? styles.typeChipActive : null]}
                     onPress={() => setSelectedPropertyId(p.id)}
                   >
-                    <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>{p.label}</Text>
+                    <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>
+                      {p.label} · {formatBalance(p.currentValue)}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
@@ -599,7 +1079,15 @@ export function AddWealthItemModal({
           ) : null}
           {propertyLinkMode === 'new' ? (
             <>
-              <Text style={styles.label}>Property value</Text>
+              <Text style={styles.label}>Property name or address</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Richmond home"
+                placeholderTextColor={colors.textMuted}
+                value={newPropertyName}
+                onChangeText={setNewPropertyName}
+              />
+              <Text style={styles.label}>Current property value</Text>
               <TextInput
                 style={styles.input}
                 placeholder="e.g. 1,000,000"
@@ -612,12 +1100,80 @@ export function AddWealthItemModal({
           ) : null}
         </>
       ) : null}
+      {isCarLoan && !loanDetailsLocked ? (
+        <>
+          <Text style={styles.label}>Is this linked to a vehicle?</Text>
+          <View style={styles.typeRow}>
+            <TouchableOpacity
+              style={[styles.typeChip, vehicleLinkMode === 'none' ? styles.typeChipActive : null]}
+              onPress={() => setVehicleLinkMode('none')}
+            >
+              <Text style={[styles.typeChipText, vehicleLinkMode === 'none' ? styles.typeChipTextActive : null]}>Not linked</Text>
+            </TouchableOpacity>
+            {vehicleAssets.length > 0 ? (
+              <TouchableOpacity
+                style={[styles.typeChip, vehicleLinkMode === 'existing' ? styles.typeChipActive : null]}
+                onPress={() => setVehicleLinkMode('existing')}
+              >
+                <Text style={[styles.typeChipText, vehicleLinkMode === 'existing' ? styles.typeChipTextActive : null]}>Existing vehicle</Text>
+              </TouchableOpacity>
+            ) : null}
+            {!editLiability ? (
+              <TouchableOpacity
+                style={[styles.typeChip, vehicleLinkMode === 'new' ? styles.typeChipActive : null]}
+                onPress={() => setVehicleLinkMode('new')}
+              >
+                <Text style={[styles.typeChipText, vehicleLinkMode === 'new' ? styles.typeChipTextActive : null]}>Add vehicle value</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {vehicleLinkMode === 'existing' ? (
+            <View style={styles.typeRow}>
+              {vehicleAssets.map((v) => {
+                const active = selectedVehicleId === v.id;
+                return (
+                  <TouchableOpacity
+                    key={v.id}
+                    style={[styles.typeChip, active ? styles.typeChipActive : null]}
+                    onPress={() => setSelectedVehicleId(v.id)}
+                  >
+                    <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>
+                      {v.label} · {formatBalance(v.currentValue)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
+          {vehicleLinkMode === 'new' ? (
+            <>
+              <Text style={styles.label}>Vehicle name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Toyota Camry"
+                placeholderTextColor={colors.textMuted}
+                value={newVehicleName}
+                onChangeText={setNewVehicleName}
+              />
+              <Text style={styles.label}>Current vehicle value</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. 25,000"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                value={newVehicleValue}
+                onChangeText={setNewVehicleValue}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
       {isNewLoan ? (
         <>
           <View style={styles.helperBox}>
             <Text style={styles.helperText}>
-              Add your repayment amount and next repayment date and {brand.name} will automatically add "{LOAN_BILL_LABELS[liabilityType]}" to your Bills
-              Calendar.
+              Add your repayment amount and next repayment date and {brand.name} will automatically add "{label.trim() || LIABILITY_DISPLAY_NAME[liabilityType]}{' '}
+              repayment" to your Bills Calendar.
             </Text>
           </View>
           <Text style={styles.label}>Repayment amount (optional)</Text>
@@ -660,7 +1216,19 @@ export function AddWealthItemModal({
             ) : (
               <>
                 <Text style={styles.label}>Next repayment date</Text>
-                <TouchableOpacity style={styles.dateButton} onPress={() => setRepaymentPickerOpen(true)}>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => {
+                    // Same gesture-isolation/keyboard-dismissal correction as
+                    // Income's date field (UX correction round) — a dedicated
+                    // modal instead of an inline calendar sharing this sheet's
+                    // own swipe-to-dismiss surface, so scrolling the calendar
+                    // can never be read as "close the whole loan form" and
+                    // silently discard entered name/amount/vehicle-link data.
+                    Keyboard.dismiss();
+                    setRepaymentPickerOpen(true);
+                  }}
+                >
                   <Text style={[styles.dateButtonText, !repaymentNextDueDate ? styles.dateButtonPlaceholder : null]}>
                     {repaymentNextDueDate ? formatDate(repaymentNextDueDate) : 'Choose a date'}
                   </Text>
@@ -669,19 +1237,6 @@ export function AddWealthItemModal({
                 <Text style={styles.dateHint}>
                   {repaymentFrequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
                 </Text>
-                {repaymentPickerOpen ? (
-                  <DateTimePicker
-                    value={repaymentNextDueDate ? new Date(repaymentNextDueDate) : new Date()}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                    minimumDate={new Date()}
-                    onChange={(event, date) => {
-                      if (Platform.OS === 'android') setRepaymentPickerOpen(false);
-                      if (event.type === 'dismissed') return;
-                      if (date) setRepaymentNextDueDate(date.toISOString());
-                    }}
-                  />
-                ) : null}
               </>
             )
           ) : null}
@@ -700,6 +1255,13 @@ export function AddWealthItemModal({
           <Text style={styles.deleteText}>Delete {kind}</Text>
         </TouchableOpacity>
       ) : null}
+      <DatePickerModal
+        visible={repaymentPickerOpen}
+        value={repaymentNextDueDate ? new Date(repaymentNextDueDate) : new Date()}
+        minimumDate={new Date()}
+        onChange={(date) => setRepaymentNextDueDate(date.toISOString())}
+        onClose={() => setRepaymentPickerOpen(false)}
+      />
     </KeyboardSheet>
   );
 }

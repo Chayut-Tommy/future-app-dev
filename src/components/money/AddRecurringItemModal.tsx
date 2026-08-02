@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { RecurringItem, PayFrequency } from '../../types/models';
+import { RecurringItem, PayFrequency, LiabilityType } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { parseMoneyInput } from '../../lib/calculations/money';
@@ -13,15 +13,30 @@ import { anchoredMonthlyDate } from '../../lib/calculations/recurringSchedule';
 // Rent and Mortgage are deliberately separate presets, not one combined
 // entry (PRD ask): rent is a pure expense, mortgage also builds/reduces a
 // real liability, so only Mortgage triggers the loan-balance fields below.
-const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; emoji: string }[] = [
+// `handoffLoanType` (Stream C — generalized from the previous mortgage-only
+// hand-off) marks the presets that need liability linking (property/
+// vehicle) and explicit repayment scheduling, not this generic bill form —
+// picking one of these hands off to the one shared loan flow
+// (AddWealthItemModal) instead of duplicating that logic here (PRD ask,
+// §B4: "all entry points should use one shared mortgage creation/update
+// function"). Icons for Car Loan/Personal Loan match the icons
+// AddWealthItemModal itself already assigns those bill types, so the
+// picker and the eventual bill never visually disagree.
+const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; emoji: string; handoffLoanType?: LiabilityType }[] = [
   { label: 'Rent', icon: 'home-outline', emoji: '🏠' },
-  { label: 'Mortgage', icon: 'home', emoji: '🏠' },
+  { label: 'Mortgage', icon: 'home', emoji: '🏠', handoffLoanType: 'mortgage' },
   { label: 'Utilities', icon: 'flash-outline', emoji: '⚡' },
   { label: 'Phone', icon: 'phone-portrait-outline', emoji: '📱' },
   { label: 'Internet', icon: 'wifi-outline', emoji: '🌐' },
   { label: 'Gym', icon: 'barbell-outline', emoji: '🏋️' },
   { label: 'Subscription', icon: 'play-circle-outline', emoji: '🎬' },
   { label: 'Car', icon: 'car-outline', emoji: '🚗' },
+  // Distinct icon from the plain 'Car' expense preset above — both were
+  // briefly 'car-outline', which made the details-step header's
+  // `BILL_PRESETS.find(p => p.icon === icon)` lookup ambiguous and always
+  // resolve to 'Car' instead of 'Car Loan' when editing a car-loan bill.
+  { label: 'Car Loan', icon: 'car-sport-outline', emoji: '🚙', handoffLoanType: 'car_loan' },
+  { label: 'Personal Loan', icon: 'document-text-outline', emoji: '📄', handoffLoanType: 'personal_loan' },
   { label: 'Insurance', icon: 'shield-checkmark-outline', emoji: '🛡️' },
   { label: 'Other', icon: 'ellipse-outline', emoji: '➕' },
 ];
@@ -75,18 +90,21 @@ export function AddRecurringItemModal({
   visible,
   onClose,
   editItem,
-  onSelectMortgage,
+  onSelectLoan,
 }: {
   visible: boolean;
   onClose: () => void;
   /** Present = editing this existing bill instead of creating a new one. */
   editItem?: RecurringItem | null;
-  /** A mortgage needs property linking and an explicit repayment date, not
-   * this generic bill form — picking "Mortgage" here hands off to the one
-   * shared mortgage flow (AddWealthItemModal) instead of duplicating
-   * mortgage-specific logic in two places (PRD ask, §B4: "all entry points
-   * should use one shared mortgage creation/update function"). */
-  onSelectMortgage?: () => void;
+  /** A mortgage/car loan/personal loan needs liability linking (property or
+   * vehicle) and an explicit repayment date, not this generic bill form —
+   * picking one of those presets hands off to the one shared loan flow
+   * (AddWealthItemModal) instead of duplicating loan-specific logic in two
+   * places (PRD ask, §B4: "all entry points should use one shared mortgage
+   * creation/update function" — generalized to every loan type, Stream C).
+   * Receives the exact LiabilityType so the shared flow lands directly on
+   * the matching type chip. */
+  onSelectLoan?: (type: LiabilityType) => void;
 }) {
   const { addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
@@ -155,12 +173,13 @@ export function AddRecurringItemModal({
     (usesDayOfMonth ? dayValue >= 1 && dayValue <= 31 : !!nextDueDate);
 
   function chooseBillType(p: (typeof BILL_PRESETS)[number]) {
-    // Mortgage needs property linking and an explicit repayment date — one
-    // shared flow handles that (AddWealthItemModal), so hand off instead
-    // of duplicating mortgage logic here (PRD ask, §B4).
-    if (p.label === 'Mortgage') {
+    // Mortgage/car loan/personal loan need liability linking and an
+    // explicit repayment date — one shared flow handles that
+    // (AddWealthItemModal), so hand off instead of duplicating loan logic
+    // here (PRD ask, §B4; generalized from mortgage-only, Stream C).
+    if (p.handoffLoanType) {
       onClose();
-      onSelectMortgage?.();
+      onSelectLoan?.(p.handoffLoanType);
       return;
     }
     setIcon(p.icon);

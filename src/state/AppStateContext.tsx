@@ -763,6 +763,328 @@ export function createRecurringIncomeWithMidCycleOccurrence(
   return upsertNetWorthHistory(withTransaction);
 }
 
+/** Shared one-repayment-per-liability rule (Stream C correction, Issue 2):
+ * a liability may have at most one active recurring repayment definition
+ * representing its scheduled contractual repayment. A repeat submission
+ * updates that definition in place — same id, unrelated bills untouched —
+ * never appended as a second active repayment representing the same
+ * commitment. Recorded historical Transactions are a completely separate
+ * concept from this RecurringItem definition and are never touched here;
+ * `undefined` (e.g. "I'll add this later") leaves any already-scheduled
+ * definition exactly as it was, never deletes it. `newRecurringItemId` is
+ * only used when no existing definition is found for this liability —
+ * supplied by the caller, never generated internally here (mirrors
+ * createCarLoanWithVehicleTransition's id-generation discipline below).
+ * Used identically by Car Loan (createCarLoanWithVehicleTransition),
+ * Personal Loan (linkBillToLiability), and Mortgage
+ * (addMortgageWithProperty) — the one small shared helper, not three
+ * independently-drifting copies of the same rule.
+ *
+ * Round-5 correction: previously picked the FIRST array match when more
+ * than one recurring item already carried this exact linkedLiabilityId —
+ * an array-order choice with no financial meaning, capable of silently
+ * updating the wrong repayment record. Now: zero matches creates a new
+ * item; exactly one match updates that exact id; more than one match is
+ * refused outright (`ok: false`) — nothing is read, deleted, merged or
+ * chosen by position. The caller must surface this to the user rather
+ * than resolve it automatically. */
+export type UpsertLinkedRecurringItemResult =
+  | { ok: true; recurringItems: RecurringItem[] }
+  | { ok: false; reason: 'duplicate_linked_repayment' };
+
+export function upsertLinkedRecurringItem(
+  recurringItems: RecurringItem[],
+  linkedLiabilityId: string,
+  recurringItem: Omit<RecurringItem, 'id'> | undefined,
+  newRecurringItemId: string
+): UpsertLinkedRecurringItemResult {
+  if (!recurringItem) return { ok: true, recurringItems };
+  const matches = recurringItems.filter((r) => r.linkedLiabilityId === linkedLiabilityId);
+  if (matches.length > 1) return { ok: false, reason: 'duplicate_linked_repayment' };
+  const existing = matches[0];
+  const next = existing
+    ? recurringItems.map((r) => (r.id === existing.id ? { ...r, ...recurringItem, linkedLiabilityId } : r))
+    : [...recurringItems, { ...recurringItem, id: newRecurringItemId, linkedLiabilityId }];
+  return { ok: true, recurringItems: next };
+}
+
+/** Round-5 correction (Issue 4, rename propagation) — when a liability is
+ * renamed and no full repayment definition is being resubmitted this call
+ * (i.e. `recurringItem` was undefined so `upsertLinkedRecurringItem` never
+ * ran), the linked repayment's display name still needs to track the new
+ * liability name. Applies the SAME "never choose by array order" rule as
+ * upsertLinkedRecurringItem: renames only when EXACTLY one recurring item
+ * carries this exact linkedLiabilityId; zero matches is a no-op; more than
+ * one match is also a no-op (skipped, not blocked — renaming the liability
+ * itself is always safe and must not be held hostage by an unrelated
+ * repayment-identity ambiguity that Issue 1's duplicate check already
+ * surfaces on its own save path). The current data model has no field
+ * distinguishing a manually-customised repayment name from an
+ * automatically-generated one, so this applies uniformly — see the Round-5
+ * report for why no such field was added. */
+export function renameLinkedRepaymentIfUnambiguous(recurringItems: RecurringItem[], linkedLiabilityId: string, newLiabilityLabel: string): RecurringItem[] {
+  const matches = recurringItems.filter((r) => r.linkedLiabilityId === linkedLiabilityId);
+  if (matches.length !== 1) return recurringItems;
+  return recurringItems.map((r) => (r.id === matches[0].id ? { ...r, label: `${newLiabilityLabel} repayment` } : r));
+}
+
+/** Stream C — liability type is a CLASSIFICATION, never an identity
+ * (regression-protection review: the withdrawn one-liability-per-type MVP
+ * limitation used to resolve "the liability to write to" via
+ * `liabilities.find(l => l.type === X)`, which silently overwrote a
+ * genuinely different liability of the same type — e.g. adding "Mazda
+ * Finance" would find and overwrite "Toyota Finance"). Every liability-
+ * creating/updating transition below instead takes an explicit `target`:
+ * `{ mode: 'create'; liabilityId }` always makes a new record at that
+ * (caller-supplied) id; `{ mode: 'update'; liabilityId }` must match an
+ * EXISTING liability of the exact expected type — if it doesn't exist, or
+ * exists as a different type, the transition fails safely (`applied:
+ * false`) and mutates nothing; it never falls back to finding some other
+ * record by type. */
+export type LiabilityTransitionTarget = { mode: 'create'; liabilityId: string } | { mode: 'update'; liabilityId: string };
+/** Round-5 addition: `duplicate_linked_repayment` — the update target has
+ * more than one recurring item sharing its exact linkedLiabilityId (see
+ * upsertLinkedRecurringItem's doc comment). Nothing is mutated; the caller
+ * must surface this and let the user resolve the ambiguity themselves. */
+export type LiabilityTransitionResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'target_not_found' | 'target_wrong_type' | 'duplicate_linked_repayment' };
+
+/** Stream C — the atomic vehicle+car-loan+bill transition, extracted as its
+ * own pure, exported, directly-testable function (regression-protection
+ * review: this mirrors addMortgageWithProperty's shape, but that action has
+ * never itself been split out this way — done here specifically so the
+ * production transition can be imported and executed directly in tests,
+ * rather than only reachable through the useCallback closure).
+ *
+ * Every candidate id (`target.liabilityId` for a create, plus
+ * `ids.newVehicleAssetId`/`newRecurringItemId`) is supplied by the caller,
+ * generated exactly once — never internally via generateId() — so this
+ * function is fully deterministic: whether a candidate id actually gets
+ * used, versus an existing entity being reused instead, is decided here,
+ * but the id VALUES themselves never vary across calls with the same
+ * input. This is what lets the caller (AddWealthItemModal's handleSave)
+ * generate every id up front, before its own synchronous submission guard
+ * is set — a rapid repeated tap is blocked by that guard before this
+ * function is ever invoked a second time for one submission.
+ *
+ * Dedup rules: the car_loan liability is resolved by the caller's explicit
+ * `target`, never by type (see LiabilityTransitionTarget's doc comment).
+ * The repayment bill is SEPARATELY reused by `linkedLiabilityId` — a
+ * repeated visit to the loan flow for an already-linked liability updates
+ * the existing bill's terms in place rather than appending a second
+ * recurring item representing the same commitment (the same
+ * dedup-by-linkedLiabilityId rule is applied identically to
+ * addMortgageWithProperty and linkBillToLiability via the one shared
+ * upsertLinkedRecurringItem helper). A car-loan liability with no bill in
+ * `recurringItem` (e.g. "I'll add this later") leaves any already-
+ * scheduled bill untouched — it is never deleted here. */
+export function createCarLoanWithVehicleTransition(
+  data: AppData,
+  liability: { label: string; currentBalance: number; interestRate?: number },
+  vehicleLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
+  recurringItem: Omit<RecurringItem, 'id'> | undefined,
+  target: LiabilityTransitionTarget,
+  ids: { newVehicleAssetId: string; newRecurringItemId: string }
+): LiabilityTransitionResult {
+  if (target.mode === 'update') {
+    const existing = data.liabilities.find((l) => l.id === target.liabilityId);
+    if (!existing) return { applied: false, reason: 'target_not_found' };
+    if (existing.type !== 'car_loan') return { applied: false, reason: 'target_wrong_type' };
+  }
+
+  let assets = data.assets;
+  let linkedVehicleAssetId: string | undefined;
+  if (vehicleLink.mode === 'existing') {
+    linkedVehicleAssetId = vehicleLink.assetId;
+  } else if (vehicleLink.mode === 'new') {
+    assets = [...assets, { id: ids.newVehicleAssetId, type: 'car', label: vehicleLink.label, currentValue: vehicleLink.value }];
+    linkedVehicleAssetId = ids.newVehicleAssetId;
+  }
+
+  const linkedLiabilityId = target.liabilityId;
+  let liabilities: Liability[];
+  if (target.mode === 'update') {
+    liabilities = data.liabilities.map((l) =>
+      l.id === linkedLiabilityId
+        ? {
+            ...l,
+            label: liability.label,
+            currentBalance: liability.currentBalance,
+            interestRate: liability.interestRate ?? l.interestRate,
+            linkedVehicleAssetId: linkedVehicleAssetId ?? l.linkedVehicleAssetId,
+          }
+        : l
+    );
+  } else {
+    liabilities = [
+      ...data.liabilities,
+      {
+        id: linkedLiabilityId,
+        type: 'car_loan',
+        label: liability.label,
+        currentBalance: liability.currentBalance,
+        interestRate: liability.interestRate,
+        createdAt: new Date().toISOString(),
+        linkedVehicleAssetId,
+      },
+    ];
+  }
+
+  const upserted = upsertLinkedRecurringItem(data.recurringItems, linkedLiabilityId, recurringItem, ids.newRecurringItemId);
+  if (!upserted.ok) return { applied: false, reason: upserted.reason };
+  let recurringItems = upserted.recurringItems;
+  if (target.mode === 'update' && !recurringItem) {
+    const previousLabel = data.liabilities.find((l) => l.id === linkedLiabilityId)?.label;
+    if (previousLabel !== undefined && previousLabel !== liability.label) {
+      recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, linkedLiabilityId, liability.label);
+    }
+  }
+  return { applied: true, data: upsertNetWorthHistory({ ...data, assets, liabilities, recurringItems }) };
+}
+
+/** Mortgage sibling of createCarLoanWithVehicleTransition — identical
+ * target/id-generation/dedup discipline, generalized to property links
+ * instead of vehicle links. See that function's doc comment for the full
+ * rationale; not repeated here. */
+export function createMortgageWithPropertyTransition(
+  data: AppData,
+  liability: { label: string; currentBalance: number; interestRate?: number },
+  propertyLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
+  recurringItem: Omit<RecurringItem, 'id'> | undefined,
+  target: LiabilityTransitionTarget,
+  ids: { newPropertyAssetId: string; newRecurringItemId: string }
+): LiabilityTransitionResult {
+  if (target.mode === 'update') {
+    const existing = data.liabilities.find((l) => l.id === target.liabilityId);
+    if (!existing) return { applied: false, reason: 'target_not_found' };
+    if (existing.type !== 'mortgage') return { applied: false, reason: 'target_wrong_type' };
+  }
+
+  let assets = data.assets;
+  let linkedPropertyAssetId: string | undefined;
+  if (propertyLink.mode === 'existing') {
+    linkedPropertyAssetId = propertyLink.assetId;
+  } else if (propertyLink.mode === 'new') {
+    assets = [...assets, { id: ids.newPropertyAssetId, type: 'property', label: propertyLink.label, currentValue: propertyLink.value }];
+    linkedPropertyAssetId = ids.newPropertyAssetId;
+  }
+
+  const linkedLiabilityId = target.liabilityId;
+  let liabilities: Liability[];
+  if (target.mode === 'update') {
+    liabilities = data.liabilities.map((l) =>
+      l.id === linkedLiabilityId
+        ? {
+            ...l,
+            label: liability.label,
+            currentBalance: liability.currentBalance,
+            interestRate: liability.interestRate ?? l.interestRate,
+            linkedPropertyAssetId: linkedPropertyAssetId ?? l.linkedPropertyAssetId,
+          }
+        : l
+    );
+  } else {
+    liabilities = [
+      ...data.liabilities,
+      {
+        id: linkedLiabilityId,
+        type: 'mortgage',
+        label: liability.label,
+        currentBalance: liability.currentBalance,
+        interestRate: liability.interestRate,
+        createdAt: new Date().toISOString(),
+        linkedPropertyAssetId,
+      },
+    ];
+  }
+
+  const upserted = upsertLinkedRecurringItem(data.recurringItems, linkedLiabilityId, recurringItem, ids.newRecurringItemId);
+  if (!upserted.ok) return { applied: false, reason: upserted.reason };
+  let recurringItems = upserted.recurringItems;
+  if (target.mode === 'update' && !recurringItem) {
+    const previousLabel = data.liabilities.find((l) => l.id === linkedLiabilityId)?.label;
+    if (previousLabel !== undefined && previousLabel !== liability.label) {
+      recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, linkedLiabilityId, liability.label);
+    }
+  }
+  return { applied: true, data: upsertNetWorthHistory({ ...data, assets, liabilities, recurringItems }) };
+}
+
+/** Generic sibling of createCarLoanWithVehicleTransition for liability
+ * types with no dedicated asset link (Personal Loan, Other) — same
+ * target/id-generation/dedup discipline, no vehicle/property step. */
+export function linkBillToLiabilityTransition(
+  data: AppData,
+  liability: { type: LiabilityType; label: string; currentBalance: number; interestRate?: number },
+  recurringItem: Omit<RecurringItem, 'id'> | undefined,
+  target: LiabilityTransitionTarget,
+  newRecurringItemId: string
+): LiabilityTransitionResult {
+  if (target.mode === 'update') {
+    const existing = data.liabilities.find((l) => l.id === target.liabilityId);
+    if (!existing) return { applied: false, reason: 'target_not_found' };
+    if (existing.type !== liability.type) return { applied: false, reason: 'target_wrong_type' };
+  }
+
+  const linkedLiabilityId = target.liabilityId;
+  let liabilities: Liability[];
+  if (target.mode === 'update') {
+    liabilities = data.liabilities.map((l) =>
+      l.id === linkedLiabilityId
+        ? { ...l, label: liability.label, currentBalance: liability.currentBalance, interestRate: liability.interestRate ?? l.interestRate }
+        : l
+    );
+  } else {
+    liabilities = [
+      ...data.liabilities,
+      {
+        id: linkedLiabilityId,
+        type: liability.type,
+        label: liability.label,
+        currentBalance: liability.currentBalance,
+        interestRate: liability.interestRate,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  const upserted = upsertLinkedRecurringItem(data.recurringItems, linkedLiabilityId, recurringItem, newRecurringItemId);
+  if (!upserted.ok) return { applied: false, reason: upserted.reason };
+  let recurringItems = upserted.recurringItems;
+  if (target.mode === 'update' && !recurringItem) {
+    const previousLabel = data.liabilities.find((l) => l.id === linkedLiabilityId)?.label;
+    if (previousLabel !== undefined && previousLabel !== liability.label) {
+      recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, linkedLiabilityId, liability.label);
+    }
+  }
+  return { applied: true, data: upsertNetWorthHistory({ ...data, liabilities, recurringItems }) };
+}
+
+/** Round-5 addition (Issue 3, repayment-only immutability) — the dedicated
+ * transition for "select an existing liability from Add Bill, leave loan
+ * details locked, change only the repayment schedule." Unlike the three
+ * transitions above, this NEVER touches `data.liabilities` at all — not
+ * even by re-writing it with identical values — so the guarantee is
+ * structural (the returned `liabilities` array is the exact same
+ * reference as the input), not dependent on the caller happening to pass
+ * back unchanged values. A UI layer that merely disables form fields is
+ * not sufficient evidence of this on its own (regression-protection
+ * review); this function is what makes it actually true regardless of
+ * what the (disabled) form fields hold. */
+export function updateLinkedRepaymentOnlyTransition(
+  data: AppData,
+  liabilityId: string,
+  recurringItem: Omit<RecurringItem, 'id'> | undefined,
+  newRecurringItemId: string
+): LiabilityTransitionResult {
+  const existing = data.liabilities.find((l) => l.id === liabilityId);
+  if (!existing) return { applied: false, reason: 'target_not_found' };
+  const upserted = upsertLinkedRecurringItem(data.recurringItems, liabilityId, recurringItem, newRecurringItemId);
+  if (!upserted.ok) return { applied: false, reason: upserted.reason };
+  return { applied: true, data: { ...data, recurringItems: upserted.recurringItems } };
+}
+
 interface AppStateContextValue {
   data: AppData;
   isLoading: boolean;
@@ -849,27 +1171,67 @@ interface AppStateContextValue {
   addLiability: (l: Omit<Liability, 'id'> & { id?: string }) => void;
   updateLiability: (id: string, patch: Partial<Omit<Liability, 'id'>>) => void;
   deleteLiability: (id: string) => void;
-  /** Atomically creates-or-reuses a liability and links a new recurring
-   * bill to it in a single state write. Calling `addLiability` then
-   * `addRecurringItem` back-to-back in the same handler silently drops the
-   * liability — both close over the same pre-update `data`, so the second
-   * `persist` overwrites the first (PRD bug report: "mortgage bill is
-   * created but liability doesn't appear in Wealth"). Reuses an existing
-   * liability of the same type instead of creating a duplicate. */
+  /** Atomically creates-or-updates a liability (per the explicit `target` —
+   * see LiabilityTransitionTarget's doc comment; type is never used as an
+   * identity/dedup key) and links a new/updated recurring bill to it in a
+   * single state write. Calling `addLiability` then `addRecurringItem`
+   * back-to-back in the same handler silently drops the liability — both
+   * close over the same pre-update `data`, so the second `persist`
+   * overwrites the first (PRD bug report: "mortgage bill is created but
+   * liability doesn't appear in Wealth"). Round-5 correction: returns the
+   * full LiabilityTransitionResult (not a bare boolean) so a caller can
+   * distinguish WHY a write didn't apply — `target_not_found`/
+   * `target_wrong_type` (see LiabilityTransitionTarget's doc comment) or
+   * `duplicate_linked_repayment` (see upsertLinkedRecurringItem's doc
+   * comment) — and show the correct message instead of one generic
+   * failure string. */
   linkBillToLiability: (
     liability: { type: LiabilityType; label: string; currentBalance: number; interestRate?: number },
-    recurringItem: Omit<RecurringItem, 'id'>
-  ) => void;
-  /** Same atomicity concern as linkBillToLiability — creating a new
+    recurringItem: Omit<RecurringItem, 'id'> | undefined,
+    target: LiabilityTransitionTarget,
+    newRecurringItemId: string
+  ) => LiabilityTransitionResult;
+  /** Same atomicity/target contract as linkBillToLiability — creating a new
    * Property asset, the mortgage liability, and an optional recurring bill
    * all in one persist() call so none of them get silently dropped by a
-   * stale-closure overwrite. Reuses an existing property/mortgage instead
-   * of creating a duplicate. */
+   * stale-closure overwrite. `ids` must be generated exactly once by the
+   * caller, never regenerated per call. Returns the full
+   * LiabilityTransitionResult — see linkBillToLiability's doc comment. */
   addMortgageWithProperty: (
     liability: { label: string; currentBalance: number; interestRate?: number },
     propertyLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
-    recurringItem?: Omit<RecurringItem, 'id'>
-  ) => void;
+    recurringItem: Omit<RecurringItem, 'id'> | undefined,
+    target: LiabilityTransitionTarget,
+    ids: { newPropertyAssetId: string; newRecurringItemId: string }
+  ) => LiabilityTransitionResult;
+  /** Same atomicity concern and shape as addMortgageWithProperty, generalized
+   * to car loans and their linked vehicle (Asset type 'car'). `target`
+   * decides create-vs-update (see LiabilityTransitionTarget's doc comment
+   * — type is never used as an identity/dedup key); a repayment bill is
+   * separately reused (updated in place) by `linkedLiabilityId` instead of
+   * ever representing the same commitment twice. `ids` must be generated
+   * exactly once by the caller (see createCarLoanWithVehicleTransition's
+   * doc comment) — never regenerated per call. Returns the full
+   * LiabilityTransitionResult — see linkBillToLiability's doc comment. */
+  addCarLoanWithVehicle: (
+    liability: { label: string; currentBalance: number; interestRate?: number },
+    vehicleLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
+    recurringItem: Omit<RecurringItem, 'id'> | undefined,
+    target: LiabilityTransitionTarget,
+    ids: { newVehicleAssetId: string; newRecurringItemId: string }
+  ) => LiabilityTransitionResult;
+  /** Round-5 addition (Issue 3, repayment-only immutability) — updates ONLY
+   * the recurring repayment linked to `liabilityId`; never touches the
+   * liability record itself, regardless of what any caller's own state
+   * currently holds for it. Use this instead of the three actions above
+   * when the user selected an existing liability from Add Bill and has not
+   * explicitly unlocked "Edit loan details". Returns the full
+   * LiabilityTransitionResult — see linkBillToLiability's doc comment. */
+  updateLinkedRepaymentOnly: (
+    liabilityId: string,
+    recurringItem: Omit<RecurringItem, 'id'> | undefined,
+    newRecurringItemId: string
+  ) => LiabilityTransitionResult;
   addCreditCard: (c: Omit<CreditCard, 'id'>) => void;
   updateCreditCard: (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => void;
   deleteCreditCard: (id: string) => void;
@@ -1146,13 +1508,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [data, persist]
   );
 
+  // Round-5 correction (Issue 4 + Issue 5): reads dataRef.current rather
+  // than the closed-over `data` (the same established pattern
+  // confirmRecurringOccurrence already uses — see its own doc comment —
+  // so a call fired immediately after another one in the same handler
+  // never derives its result from a stale render closure). Also now
+  // propagates a genuine label change to the liability's own linked
+  // repayment's display name (renameLinkedRepaymentIfUnambiguous — a
+  // no-op when there is no linked repayment, or more than one, per its
+  // own doc comment) — this is the only place a full "Edit liability" row-
+  // tap rename ever reaches a repayment name, since that path never goes
+  // through the smart-loan target-based transitions at all.
   const updateLiability = useCallback(
     (id: string, patch: Partial<Omit<Liability, 'id'>>) => {
-      persist(
-        upsertNetWorthHistory({ ...data, liabilities: data.liabilities.map((l) => (l.id === id ? { ...l, ...patch } : l)) })
-      );
+      const current = dataRef.current;
+      const existing = current.liabilities.find((l) => l.id === id);
+      const liabilities = current.liabilities.map((l) => (l.id === id ? { ...l, ...patch } : l));
+      let recurringItems = current.recurringItems;
+      if (existing && typeof patch.label === 'string' && patch.label !== existing.label) {
+        recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, id, patch.label);
+      }
+      persist(upsertNetWorthHistory({ ...current, liabilities, recurringItems }));
     },
-    [data, persist]
+    [persist]
   );
 
   const deleteLiability = useCallback(
@@ -1162,90 +1540,69 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [data, persist]
   );
 
+  // Round-5 correction (Issue 5): now returns the full
+  // LiabilityTransitionResult (not a bare boolean) and reads
+  // dataRef.current instead of the closed-over `data` — same rationale as
+  // updateLiability above. A `false`-shaped failure ('target_not_found' /
+  // 'target_wrong_type' / 'duplicate_linked_repayment', see
+  // LiabilityTransitionTarget's and upsertLinkedRecurringItem's doc
+  // comments) is a pure no-write; the caller (AddWealthItemModal) surfaces
+  // the exact reason via its existing recovery UI rather than silently
+  // doing nothing or guessing.
   const linkBillToLiability = useCallback(
     (
       liability: { type: LiabilityType; label: string; currentBalance: number; interestRate?: number },
-      recurringItem: Omit<RecurringItem, 'id'>
-    ) => {
-      const existing = data.liabilities.find((l) => l.type === liability.type);
-      let liabilities: Liability[];
-      let linkedLiabilityId: string;
-      if (existing) {
-        linkedLiabilityId = existing.id;
-        liabilities = data.liabilities.map((l) =>
-          l.id === existing.id ? { ...l, currentBalance: liability.currentBalance, interestRate: liability.interestRate ?? l.interestRate } : l
-        );
-      } else {
-        linkedLiabilityId = generateId();
-        liabilities = [
-          ...data.liabilities,
-          {
-            id: linkedLiabilityId,
-            type: liability.type,
-            label: liability.label,
-            currentBalance: liability.currentBalance,
-            interestRate: liability.interestRate,
-            createdAt: new Date().toISOString(),
-          },
-        ];
-      }
-      const recurringItems = [...data.recurringItems, { ...recurringItem, id: generateId(), linkedLiabilityId }];
-      persist(upsertNetWorthHistory({ ...data, liabilities, recurringItems }));
+      recurringItem: Omit<RecurringItem, 'id'> | undefined,
+      target: LiabilityTransitionTarget,
+      newRecurringItemId: string
+    ): LiabilityTransitionResult => {
+      const result = linkBillToLiabilityTransition(dataRef.current, liability, recurringItem, target, newRecurringItemId);
+      if (result.applied) persist(result.data);
+      return result;
     },
-    [data, persist]
+    [persist]
   );
 
   const addMortgageWithProperty = useCallback(
     (
       liability: { label: string; currentBalance: number; interestRate?: number },
       propertyLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
-      recurringItem?: Omit<RecurringItem, 'id'>
-    ) => {
-      let assets = data.assets;
-      let linkedPropertyAssetId: string | undefined;
-      if (propertyLink.mode === 'existing') {
-        linkedPropertyAssetId = propertyLink.assetId;
-      } else if (propertyLink.mode === 'new') {
-        const newPropertyId = generateId();
-        assets = [...assets, { id: newPropertyId, type: 'property', label: propertyLink.label, currentValue: propertyLink.value }];
-        linkedPropertyAssetId = newPropertyId;
-      }
-
-      const existing = data.liabilities.find((l) => l.type === 'mortgage');
-      let liabilities: Liability[];
-      let linkedLiabilityId: string;
-      if (existing) {
-        linkedLiabilityId = existing.id;
-        liabilities = data.liabilities.map((l) =>
-          l.id === existing.id
-            ? {
-                ...l,
-                currentBalance: liability.currentBalance,
-                interestRate: liability.interestRate ?? l.interestRate,
-                linkedPropertyAssetId: linkedPropertyAssetId ?? l.linkedPropertyAssetId,
-              }
-            : l
-        );
-      } else {
-        linkedLiabilityId = generateId();
-        liabilities = [
-          ...data.liabilities,
-          {
-            id: linkedLiabilityId,
-            type: 'mortgage',
-            label: liability.label,
-            currentBalance: liability.currentBalance,
-            interestRate: liability.interestRate,
-            createdAt: new Date().toISOString(),
-            linkedPropertyAssetId,
-          },
-        ];
-      }
-
-      const recurringItems = recurringItem ? [...data.recurringItems, { ...recurringItem, id: generateId(), linkedLiabilityId }] : data.recurringItems;
-      persist(upsertNetWorthHistory({ ...data, assets, liabilities, recurringItems }));
+      recurringItem: Omit<RecurringItem, 'id'> | undefined,
+      target: LiabilityTransitionTarget,
+      ids: { newPropertyAssetId: string; newRecurringItemId: string }
+    ): LiabilityTransitionResult => {
+      const result = createMortgageWithPropertyTransition(dataRef.current, liability, propertyLink, recurringItem, target, ids);
+      if (result.applied) persist(result.data);
+      return result;
     },
-    [data, persist]
+    [persist]
+  );
+
+  const addCarLoanWithVehicle = useCallback(
+    (
+      liability: { label: string; currentBalance: number; interestRate?: number },
+      vehicleLink: { mode: 'existing'; assetId: string } | { mode: 'new'; value: number; label: string } | { mode: 'none' },
+      recurringItem: Omit<RecurringItem, 'id'> | undefined,
+      target: LiabilityTransitionTarget,
+      ids: { newVehicleAssetId: string; newRecurringItemId: string }
+    ): LiabilityTransitionResult => {
+      const result = createCarLoanWithVehicleTransition(dataRef.current, liability, vehicleLink, recurringItem, target, ids);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  // Round-5 addition (Issue 3) — see updateLinkedRepaymentOnlyTransition's
+  // doc comment for why this exists as its own action instead of routing
+  // repayment-only saves through the three actions above.
+  const updateLinkedRepaymentOnly = useCallback(
+    (liabilityId: string, recurringItem: Omit<RecurringItem, 'id'> | undefined, newRecurringItemId: string): LiabilityTransitionResult => {
+      const result = updateLinkedRepaymentOnlyTransition(dataRef.current, liabilityId, recurringItem, newRecurringItemId);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
   );
 
   const completeOnboarding = useCallback(
@@ -1412,6 +1769,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       deleteLiability,
       linkBillToLiability,
       addMortgageWithProperty,
+      addCarLoanWithVehicle,
+      updateLinkedRepaymentOnly,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,
@@ -1449,6 +1808,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       deleteLiability,
       linkBillToLiability,
       addMortgageWithProperty,
+      addCarLoanWithVehicle,
+      updateLinkedRepaymentOnly,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,

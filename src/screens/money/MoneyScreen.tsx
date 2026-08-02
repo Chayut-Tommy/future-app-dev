@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
+import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
 import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { InfoSheet } from '../../components/shared/InfoSheet';
@@ -32,7 +33,7 @@ import { MoneyTimelineCard } from '../../components/money/MoneyTimelineCard';
 import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculations/debtCoach';
 import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
-import { RecurringItem } from '../../types/models';
+import { RecurringItem, LiabilityType } from '../../types/models';
 import { brand } from '../../lib/brand';
 
 const FLOW_PERIODS: { key: FlowPeriod; label: string }[] = [
@@ -64,7 +65,7 @@ export function MoneyScreen() {
   const [editIncome, setEditIncome] = useState<RecurringItem | null>(null);
   const [billModalVisible, setBillModalVisible] = useState(false);
   const [editBill, setEditBill] = useState<RecurringItem | null>(null);
-  const [mortgageModalVisible, setMortgageModalVisible] = useState(false);
+  const [loanHandoff, setLoanHandoff] = useState<LiabilityType | null>(null);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   // Opened by tapping a goal event in What Happens Next — reuses the one
@@ -86,7 +87,14 @@ export function MoneyScreen() {
   const [savingsAllocationDetailDate, setSavingsAllocationDetailDate] = useState<Date | null>(null);
   const [editSavingsAllocationVisible, setEditSavingsAllocationVisible] = useState(false);
 
-  const safeToSpend = useMemo(() => computeSafeToSpend(data), [data]);
+  // Round 6 correction — the single live local-date value this screen's
+  // "Month to date" heading, month-to-date figures, and timeline relative-
+  // day labels all derive from; see useCurrentLocalDate's own doc comment
+  // for why a mount-frozen or data-change-only `new Date()` capture goes
+  // stale across a midnight/month rollover with no new transaction to
+  // trigger a recompute.
+  const currentDate = useCurrentLocalDate();
+  const safeToSpend = useMemo(() => computeSafeToSpend(data, currentDate), [data, currentDate]);
   const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
   const hasActiveGoals = data.goals.some((g) => g.status === 'active');
   // Starts at the same 30-day planning horizon as before; growing this as
@@ -95,7 +103,7 @@ export function MoneyScreen() {
   // list just stopping (PRD ask, §2). Capped well short of the simulation's
   // own 400-iteration ceiling in recurringSchedule.ts.
   const [timelineHorizonDays, setTimelineHorizonDays] = useState(30);
-  const timelineEvents = useMemo(() => computeMoneyTimeline(data, new Date(), timelineHorizonDays), [data, timelineHorizonDays]);
+  const timelineEvents = useMemo(() => computeMoneyTimeline(data, currentDate, timelineHorizonDays), [data, currentDate, timelineHorizonDays]);
   const extendTimelineHorizon = useCallback(() => {
     setTimelineHorizonDays((days) => Math.min(180, days + 30));
   }, []);
@@ -111,11 +119,8 @@ export function MoneyScreen() {
   // recorded transactions only, the same source "July so far" reads, never
   // a recurring rate (PRD ask, Decision 2: Typical Money Flow and Spending
   // Tracker must never share a basis).
-  const monthToDateActivity = useMemo(() => computeMonthToDateActivity(data), [data]);
-  const thisMonthStart = useMemo(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  }, []);
+  const monthToDateActivity = useMemo(() => computeMonthToDateActivity(data, currentDate), [data, currentDate]);
+  const thisMonthStart = useMemo(() => new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), [currentDate]);
   // A present-liability snapshot, never treated as this month's spending —
   // deliberately not part of computeMonthToDateActivity, which stays scoped
   // to actual recorded transaction activity only (PRD ask, Finding #40:
@@ -386,7 +391,7 @@ export function MoneyScreen() {
         creditCardBalance={currentCreditCardBalance}
         hasCreditCards={data.creditCards.length > 0}
         monthStart={thisMonthStart}
-        today={new Date()}
+        today={currentDate}
         onPress={() => navigation.navigate('Transactions')}
         onAddTransaction={() => setTransactionModalVisible(true)}
       />
@@ -595,13 +600,14 @@ export function MoneyScreen() {
         visible={billModalVisible}
         editItem={editBill}
         onClose={closeBillModal}
-        onSelectMortgage={() => setMortgageModalVisible(true)}
+        onSelectLoan={(type) => setLoanHandoff(type)}
       />
       <AddWealthItemModal
-        visible={mortgageModalVisible}
+        visible={loanHandoff !== null}
         kind="liability"
-        presetLiabilityType="mortgage"
-        onClose={() => setMortgageModalVisible(false)}
+        presetLiabilityType={loanHandoff ?? undefined}
+        liabilityFlowIntent="select_or_create_for_repayment"
+        onClose={() => setLoanHandoff(null)}
       />
       <SelectBalancesSheet
         visible={selectBalancesVisible}

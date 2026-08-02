@@ -240,6 +240,15 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+// DST-safe calendar-day ordinal (Round 6 correction) — see the identical
+// helper's doc comment in moneyTimeline.ts. Date.UTC(y, m, d) treats the
+// local calendar components as a pure ordinal, never touching the local
+// UTC offset, so the day-count division below is always an exact integer
+// regardless of any DST transition between the two dates.
+function calendarOrdinal(d: Date): number {
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
+}
+
 // The last real calendar day of a given (year, month) — month may be any
 // integer, including <0 or >11; JS's Date constructor normalizes the
 // year/month rollover correctly on its own (only the *day* argument's
@@ -276,7 +285,14 @@ export function daysUntilDue(dueDay: number, today: Date = new Date()): number {
   if (due < normalizedToday) {
     due = new Date(year, month + 1, effectiveDueDay(dueDay, year, month + 1));
   }
-  return Math.ceil((due.getTime() - normalizedToday.getTime()) / 86400000);
+  // Round 6 correction — previously Math.ceil((due.getTime() -
+  // normalizedToday.getTime()) / 86400000). Verified defect: across a
+  // fall-back DST transition (a real 25-hour calendar day), the elapsed
+  // ms for a genuine 1-calendar-day gap is 90,000,000, and
+  // Math.ceil(90000000 / 86400000) = Math.ceil(1.0417) = 2 — reporting
+  // "due in 2 days" for a due date that is, on the calendar, tomorrow.
+  // calendarOrdinal's exact integer arithmetic has no such failure mode.
+  return calendarOrdinal(due) - calendarOrdinal(normalizedToday);
 }
 
 /** Whether the value is a genuine, usable expected-repayment amount — never

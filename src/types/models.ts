@@ -231,6 +231,11 @@ export interface Liability {
    * home equity, not just treat it as debt). Only meaningful for
    * type === 'mortgage'; references an Asset with type === 'property'. */
   linkedPropertyAssetId?: string;
+  /** Links a car loan to the car Asset it's secured against, mirroring
+   * `linkedPropertyAssetId` for mortgages — lets Lulu show vehicle equity
+   * instead of treating the loan as plain unsecured debt. Only meaningful
+   * for type === 'car_loan'; references an Asset with type === 'car'. */
+  linkedVehicleAssetId?: string;
 }
 
 export interface CreditCard {

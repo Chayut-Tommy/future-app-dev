@@ -10,7 +10,7 @@ import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
 import { AddGoalModal } from '../goals/AddGoalModal';
 import { TransferModal } from '../wealth/TransferModal';
-import { AssetType } from '../../types/models';
+import { AssetType, LiabilityType } from '../../types/models';
 
 const TAB_BAR_CLEARANCE = Platform.OS === 'ios' ? 104 : 80;
 // Deliberately larger than any tab bar icon (22px) so "+" unmistakably
@@ -37,7 +37,12 @@ export function FloatingAddButton() {
   const [transferVisible, setTransferVisible] = useState(false);
   const [goalVisible, setGoalVisible] = useState(false);
   const [creditCardVisible, setCreditCardVisible] = useState(false);
-  const [mortgageVisible, setMortgageVisible] = useState(false);
+  // Generalized from a mortgage-only `mortgageVisible` boolean (Stream C) —
+  // AddRecurringItemModal's Mortgage/Car Loan/Personal Loan presets all
+  // hand off here with the exact LiabilityType, so one AddWealthItemModal
+  // instance below opens on the matching type chip regardless of which was
+  // picked.
+  const [loanHandoff, setLoanHandoff] = useState<LiabilityType | null>(null);
   const [wealthModal, setWealthModal] = useState<{ kind: 'asset' | 'liability'; presetAssetType?: AssetType } | null>(null);
 
   function handleSelect(kind: AddAnythingKind) {
@@ -117,8 +122,14 @@ export function FloatingAddButton() {
       <AddIncomeModal visible={incomeVisible} onClose={() => setIncomeVisible(false)} />
       <QuickAddModal visible={expenseVisible} onClose={() => setExpenseVisible(false)} />
       <QuickAddModal visible={incomeReceivedVisible} onClose={() => setIncomeReceivedVisible(false)} initialType="income" />
-      <AddRecurringItemModal visible={billVisible} onClose={() => setBillVisible(false)} onSelectMortgage={() => setMortgageVisible(true)} />
-      <AddWealthItemModal visible={mortgageVisible} kind="liability" presetLiabilityType="mortgage" onClose={() => setMortgageVisible(false)} />
+      <AddRecurringItemModal visible={billVisible} onClose={() => setBillVisible(false)} onSelectLoan={(type) => setLoanHandoff(type)} />
+      <AddWealthItemModal
+        visible={loanHandoff !== null}
+        kind="liability"
+        presetLiabilityType={loanHandoff ?? undefined}
+        liabilityFlowIntent="select_or_create_for_repayment"
+        onClose={() => setLoanHandoff(null)}
+      />
       <TransferModal visible={transferVisible} onClose={() => setTransferVisible(false)} />
       <AddGoalModal visible={goalVisible} onClose={() => setGoalVisible(false)} />
       <AddWealthItemModal

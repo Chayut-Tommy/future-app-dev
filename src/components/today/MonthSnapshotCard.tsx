@@ -22,11 +22,16 @@ function formatMoney(value: number): string {
  * encourages completion instead of the section disappearing, so the page
  * layout stays consistent for every user.
  */
-export function MonthSnapshotCard() {
+export function MonthSnapshotCard({ today }: { today: Date }) {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, spacing, typography, cardShadow, radius } = useTheme();
-  const activity = useMemo(() => computeMonthToDateActivity(data), [data]);
+  // Round 6 correction — `today` is the caller's live local-date value
+  // (see useCurrentLocalDate), included in this memo's own dependency
+  // array so a month/day rollover with zero new transactions still
+  // recomputes this card's figures, not just its "X so far" heading
+  // (rendered by TodayScreen from the same live value).
+  const activity = useMemo(() => computeMonthToDateActivity(data, today), [data, today]);
   const hasData = activity.income > 0 || activity.spend > 0;
   const net = activity.income - activity.spend;
   // Factual, never framed as good/bad (PRD Voice guide §0.1a) — a positive
