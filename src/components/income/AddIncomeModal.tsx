@@ -516,7 +516,18 @@ export function AddIncomeModal({
         title="💼 Add income source"
         footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
       >
-        <Text style={styles.preview}>Tell {brand.name} what comes in so it can build your money plan.</Text>
+        {/* UX correction — the helper copy was rewritten to "Tell Navilo
+            where your income comes from." (shorter, more direct). No
+            numberOfLines/ellipsizeMode is set — RN's numberOfLines={n}
+            genuinely truncates content beyond n lines (default ellipsizeMode
+            'tail'), so a "cap" would actively clip long/scaled text rather
+            than protect it. Left fully unbounded instead: the Text wraps to
+            however many lines accessibility font scaling requires, never
+            truncated. No width/height constraint is applied beyond the
+            sheet's own existing horizontal padding (styles.preview has never
+            set either), so it already uses the full available content width
+            and never clips at either edge. */}
+        <Text style={styles.preview}>Tell {brand.name} where your income comes from.</Text>
         <View style={styles.sourceGrid}>
           {INCOME_SOURCE_IDS.map((id) => (
             <TouchableOpacity key={id} style={styles.sourceCard} activeOpacity={0.8} onPress={() => chooseSource(id)}>
