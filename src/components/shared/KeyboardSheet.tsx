@@ -1,8 +1,13 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, KeyboardAvoidingView, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import {
+  computeKeyboardAdjustedHeight,
+  computeKeyboardOverlap,
+  MIN_VISIBLE_HEIGHT_WHEN_KEYBOARD_OPEN,
+} from '../navigation/addWorkspaceGeometry';
 
 const DISMISS_DISTANCE = 120;
 const DISMISS_VELOCITY = 0.6;
@@ -29,6 +34,7 @@ export function KeyboardSheet({
   onDismiss,
   animationType = 'slide',
   minSheetHeight,
+  fixedSheetHeight,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -77,14 +83,78 @@ export function KeyboardSheet({
    * internal screen change, avoiding a visible height jump when content is
    * swapped without a fresh Modal presentation. */
   minSheetHeight?: number;
+  /** Opt-in fixed total sheet height, in points (Option B premium-transition
+   * correction) — omitted by every existing caller, which keeps today's
+   * intrinsic/85%-capped/optional-minSheetHeight sizing byte-identical. A
+   * caller that owns several independently-scrolling, push-transitioning
+   * "screens" inside one persistent sheet host (Add Anything's chooser /
+   * Add Asset / Move Money) passes this so the sheet's own outer height
+   * never changes as its internal screen changes — see
+   * addWorkspaceGeometry.ts for how this value is derived. When provided,
+   * this component also takes over keyboard handling for the sheet's own
+   * height (see the keyboard-overlap effect below) and swaps its single
+   * owned ScrollView for a plain clipped View, since the caller owns its
+   * own per-screen ScrollView(s) instead. */
+  fixedSheetHeight?: number;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radius, spacing, typography } = useTheme();
   const translateY = useRef(new Animated.Value(0)).current;
+  const windowHeight = useWindowDimensions().height;
 
   useEffect(() => {
     if (visible) translateY.setValue(0);
   }, [visible, translateY]);
+
+  // Fixed-height keyboard tracking (Option B premium-transition correction)
+  // — entirely gated behind fixedSheetHeight so every existing caller is
+  // unaffected. One value (keyboardOverlap) drives BOTH the existing
+  // whole-sheet KeyboardAvoidingView (unchanged, still wraps the whole
+  // backdrop below) and this component's own height reduction, so the two
+  // can never diverge into independently-timed systems — the invariant is
+  // `newTop = (oldBottom - overlap) - (fixedSheetHeight - overlap) =
+  // oldTop`: shrinking height by exactly the same amount the sheet's
+  // bottom-anchor rises keeps its top edge stationary. Overlap is computed
+  // from the keyboard frame's own screen coordinates (endCoordinates.screenY)
+  // rather than assumed equal to the event's reported height, per the
+  // correction's explicit requirement. iOS uses keyboardWillChangeFrame,
+  // which reports every frame change including the keyboard sliding fully
+  // off-screen (screenY reaching windowHeight yields zero overlap on its
+  // own) — keyboardWillHide is kept alongside it purely as an explicit
+  // zeroing safety net. Android has no *WillChangeFrame equivalent, so it
+  // uses keyboardDidShow/keyboardDidHide instead.
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+  useEffect(() => {
+    if (fixedSheetHeight === undefined) return undefined;
+
+    const applyFrame = (event: { endCoordinates?: { screenY?: number } }) => {
+      const screenY = event?.endCoordinates?.screenY;
+      if (typeof screenY === 'number') {
+        setKeyboardOverlap(computeKeyboardOverlap(windowHeight, screenY));
+      }
+    };
+    const clear = () => setKeyboardOverlap(0);
+
+    if (Platform.OS === 'ios') {
+      const changeSub = Keyboard.addListener('keyboardWillChangeFrame', applyFrame);
+      const hideSub = Keyboard.addListener('keyboardWillHide', clear);
+      return () => {
+        changeSub.remove();
+        hideSub.remove();
+      };
+    }
+    const showSub = Keyboard.addListener('keyboardDidShow', applyFrame);
+    const hideSub = Keyboard.addListener('keyboardDidHide', clear);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [fixedSheetHeight, windowHeight]);
+
+  const adjustedFixedHeight =
+    fixedSheetHeight !== undefined
+      ? computeKeyboardAdjustedHeight(fixedSheetHeight, keyboardOverlap, MIN_VISIBLE_HEIGHT_WHEN_KEYBOARD_OPEN)
+      : undefined;
 
   function dismiss() {
     Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
@@ -209,10 +279,15 @@ export function KeyboardSheet({
         scrollArea: {
           flexGrow: 0,
         },
+        fixedContentArea: {
+          flex: 1,
+          overflow: 'hidden',
+        },
         footer: {
           flexDirection: 'row',
           gap: spacing.md,
           paddingTop: spacing.md,
+          flexShrink: 0,
         },
       }),
     [colors, radius, spacing, typography]
@@ -227,14 +302,19 @@ export function KeyboardSheet({
             styles.sheet,
             { paddingBottom: Math.max(insets.bottom, spacing.lg), transform: [{ translateY }] },
             minSheetHeight ? { minHeight: minSheetHeight } : null,
+            adjustedFixedHeight !== undefined ? { height: adjustedFixedHeight, maxHeight: adjustedFixedHeight } : null,
           ]}
           {...panResponder.panHandlers}
         >
           <View style={styles.grabber} />
           <Text style={styles.title}>{title}</Text>
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.scrollArea}>
-            {children}
-          </ScrollView>
+          {fixedSheetHeight !== undefined ? (
+            <View style={styles.fixedContentArea}>{children}</View>
+          ) : (
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.scrollArea}>
+              {children}
+            </ScrollView>
+          )}
           <View style={styles.footer}>{footer}</View>
         </Animated.View>
       </KeyboardAvoidingView>

@@ -46,6 +46,22 @@
 // evidence) — this file remains structural-only and must not be read as
 // re-proving that acceptance itself.
 //
+// AMENDMENT — Navigation Transitions, Option B premium-transition
+// correction. Fix #1 above (the chooser white gap) was fixed at the time by
+// measuring the chooser's own real content height via onLayout and reusing
+// it as an explicit height (chooserNaturalHeight/combinedStableHeight/
+// minSheetHeight). That entire measurement mechanism has now been RETIRED
+// and replaced by a content-independent fixed workspace height
+// (addWorkspaceGeometry.ts's computeAddWorkspaceGeometry, passed to
+// KeyboardSheet's new fixedSheetHeight prop) plus an opaque, translateX-only
+// push transition for all three steps (chooser/Transfer/Add Asset) — a
+// different, stronger fix for the same original defect (an unstable,
+// content-derived sheet height), not a regression of it. Section 2 below is
+// revised to protect the NEW mechanism; section 3b is revised since the old
+// screenLayer style it protected no longer exists. Every other section is
+// unchanged, since the Personal Loan flash (fix #2) and Talk to Navilo exit
+// lag (fix #3) fixes are unrelated to this correction and were not touched.
+//
 // CLASSIFICATION:
 // - Structural (static/source-structure) only: every assertion below.
 // - No component/runtime test exists in this repo (no test framework).
@@ -83,35 +99,41 @@ console.log('=== 1. Add chooser white gap: guessed-height constants retired (Cla
   assert('1c. styles.contentArea (static minHeight guess) no longer exists in the styles object', !/contentArea:\s*\{/.test(ADD_ANYTHING_SRC));
 }
 
-console.log('\n=== 2. Add chooser white gap: real measurement replaces the guesses (Class C) ===');
+console.log('\n=== 2. Premium-transition correction: content-independent fixed height replaces real-measurement (Class C) ===');
 {
   assert(
-    '2a. chooserNaturalHeight state exists, typed number|null, defaulting to null (no guess)',
-    /const \[chooserNaturalHeight, setChooserNaturalHeight\] = useState<number \| null>\(null\);/.test(ADD_ANYTHING_SRC)
+    '2a. chooserNaturalHeight/addAssetNaturalHeight/combinedStableHeight state and derivations no longer exist as declarations (the words may still appear in the explanatory retirement comment/§1 note above, which is fine)',
+    !/const \[chooserNaturalHeight/.test(ADD_ANYTHING_SRC) &&
+      !/const \[addAssetNaturalHeight/.test(ADD_ANYTHING_SRC) &&
+      !/const combinedStableHeight =/.test(ADD_ANYTHING_SRC) &&
+      !/const stableHeights =/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '2b. chooserIsSoloAndSettled is derived from screen===\'chooser\' && transitionPhase===\'idle\' — the only state where the chooser is the sole, non-cross-fading layer',
-    /const chooserIsSoloAndSettled = screen === 'chooser' && transitionPhase === 'idle';/.test(ADD_ANYTHING_SRC)
+    '2b. the invisible addAssetProbed measurement probe (its state and its dedicated render block) no longer exists',
+    !/const \[addAssetProbed/.test(ADD_ANYTHING_SRC) && !/setAddAssetProbed/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '2c. the sheet\'s minSheetHeight prop now uses chooserNaturalHeight (with undefined fallback before first measurement), not a fixed guess',
-    /minSheetHeight=\{chooserNaturalHeight \?\? undefined\}/.test(ADD_ANYTHING_SRC)
+    '2c. KeyboardSheet is now given a computed fixedSheetHeight prop (content-independent), not the old minSheetHeight={combinedStableHeight ?? undefined}',
+    /fixedSheetHeight=\{fixedSheetHeight\}/.test(ADD_ANYTHING_SRC) && !/minSheetHeight=\{combinedStableHeight/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '2d. the content wrapper View\'s style is computed conditionally: no explicit height while chooserIsSoloAndSettled (lets Yoga size it naturally), else an explicit height of the real measurement once known',
-    /chooserIsSoloAndSettled \? null : chooserNaturalHeight !== null \? \{ height: chooserNaturalHeight \} : null/.test(ADD_ANYTHING_SRC)
+    "2d. computeAddWorkspaceGeometry is imported from ./addWorkspaceGeometry and invoked with the window's own reactive height and the device's current top safe-area inset — never a captured-once snapshot",
+    /import \{ computeAddWorkspaceGeometry \} from '\.\/addWorkspaceGeometry';/.test(ADD_ANYTHING_SRC) &&
+      /computeAddWorkspaceGeometry\(\{ windowHeight: windowDimensions\.height, topInset: insets\.top \}\)/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '2e. the chooser Animated.View conditionally drops styles.screenLayer (position:absolute) while solo+settled, so Yoga can measure its true content height in normal flow',
-    /chooserIsSoloAndSettled \? null : styles\.screenLayer,/.test(ADD_ANYTHING_SRC)
+    '2e. chooserSettledFront/transferSettledFront/addAssetSettledFront are derived from the same underlying settled-state checks the retired height gates used, now driving only pointerEvents/accessibility — never height or layout',
+    /const chooserSettledFront =/.test(ADD_ANYTHING_SRC) &&
+      /const transferSettledFront = screen === 'transfer' && transitionPhase === 'idle';/.test(ADD_ANYTHING_SRC) &&
+      /const addAssetSettledFront = addAssetTransition\.current === 'addAsset' && addAssetTransition\.status === 'idle';/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '2f. the chooser Animated.View has an onLayout handler, active only while chooserIsSoloAndSettled, that captures the real measured height',
-    /onLayout=\{\s*\n\s*chooserIsSoloAndSettled\s*\n\s*\? \(e\) => \{\s*\n\s*const measured = e\.nativeEvent\.layout\.height;\s*\n\s*setChooserNaturalHeight/.test(ADD_ANYTHING_SRC)
+    '2f. every one of the three destination layers (chooser/Transfer/Add Asset) is styled with the same unconditional styles.pushLayer (opaque, absolutely positioned, full-bleed) — never the old conditional solo-vs-absolute toggle',
+    (ADD_ANYTHING_SRC.match(/style=\{\[styles\.pushLayer, \{ transform: \[\{ translateX:/g) || []).length === 3
   );
   assert(
-    '2g. the Transfer Animated.View still always uses styles.screenLayer (position:absolute) unconditionally — it must stay absolutely positioned to overlap the chooser during the cross-fade and to sit inside the explicit-height container once Transfer is active',
-    /\{showTransfer \? \(\s*\n\s*<Animated\.View\s*\n\s*style=\{\[\s*\n\s*styles\.screenLayer,/.test(ADD_ANYTHING_SRC)
+    "2g. no destination layer has its own onLayout height-measurement handler — the only onLayout in the entire render is the outer viewport's own width-only handleViewportLayout",
+    (ADD_ANYTHING_SRC.match(/onLayout=/g) || []).length === 1 && /onLayout=\{handleViewportLayout\}/.test(ADD_ANYTHING_SRC)
   );
 }
 
@@ -124,7 +146,11 @@ console.log('\n=== 3. Add chooser white gap: no arbitrary padding/height hacks i
       return matches.length === 1 && matches[0] === 'height: 44';
     })()
   );
-  assert('3b. screenLayer style itself is unchanged (still just absolute positioning, no height guess baked into it)', /screenLayer: \{ position: 'absolute', top: 0, left: 0, right: 0 \},/.test(ADD_ANYTHING_SRC));
+  assert(
+    "3b. the old screenLayer style (bare position:absolute, no opaque background) is retired — replaced by pushLayer, which is opaque (colors.surface) and fills its parent on all four edges, per the correction's explicit ban on simultaneously-visible/ghosted layers",
+    !/screenLayer:/.test(ADD_ANYTHING_SRC) &&
+      /pushLayer: \{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: colors\.surface \},/.test(ADD_ANYTHING_SRC)
+  );
 }
 
 console.log('\n=== 4. Personal Loan flash: kind prop renamed and shadowed by frozen local state (Class C) ===');
@@ -195,7 +221,7 @@ console.log('\n=== 7. KeyboardSheet unchanged this round (Class C) ===');
 console.log('\n=== 8. Accepted Round 6/Round 5/Round 4 Transfer proof-of-pattern behaviour carried over unchanged (Class C) ===');
 {
   assert('8a. selectionLockRef is still the first, synchronous check in both choose() and enterTransfer()', /if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins — shared with enterTransfer\(\)/.test(ADD_ANYTHING_SRC) && /if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins — shared with choose\(\)/.test(ADD_ANYTHING_SRC));
-  assert('8b. handleRequestClose still bumps generationRef then calls the real top-level onClose', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
+  assert('8b. handleRequestClose still bumps generationRef then calls the real top-level onClose', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*addAssetGenerationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
   assert('8c. onSelect is still called from exactly one place (runPendingSelection), gated on kind !== null', (ADD_ANYTHING_SRC.match(/\bonSelect\(kind\)/g) || []).length === 1);
   assert('8d. embedded Transfer wiring (embedded prop, onDirtyChange, onSaveSuccess, onConfirmedClose) is structurally unchanged', /<TransferForm\s*\n\s*ref=\{transferFormRef\}\s*\n\s*embedded\s*\n\s*onCanSaveChange=\{setTransferCanSave\}\s*\n\s*onDirtyChange=\{setTransferIsDirty\}\s*\n\s*onSaveSuccess=\{onClose\}/.test(ADD_ANYTHING_SRC));
   assert('8e. TransferForm.tsx has no Round-7 marker — file untouched this round', !/Round 7/.test(TRANSFER_FORM_SRC));

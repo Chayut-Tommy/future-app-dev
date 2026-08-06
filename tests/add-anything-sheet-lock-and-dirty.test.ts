@@ -88,13 +88,23 @@ console.log('\n=== 3. enterTransfer() — same lock, same ordering, held while T
     '3a. enterTransfer() checks the SAME selectionLockRef first, and no longer reads handoffInProgressRef at all (superseded by the shared ref)',
     /function enterTransfer\(\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins — shared with choose\(\)\s*\n\s*selectionLockRef\.current = true; \/\/ held for the entire time Transfer is the active screen \(req #6\)/.test(ADD_ANYTHING_SRC)
   );
-  assert('3b. the lock is set before ++generationRef.current and before any Animated call in enterTransfer()', (() => {
-    const start = ADD_ANYTHING_SRC.indexOf('function enterTransfer()');
-    const lockLine = ADD_ANYTHING_SRC.indexOf('selectionLockRef.current = true;', start);
-    const genLine = ADD_ANYTHING_SRC.indexOf('++generationRef.current;', start);
-    const animLine = ADD_ANYTHING_SRC.indexOf('Animated.parallel', start);
-    return lockLine !== -1 && lockLine < genLine && genLine < animLine;
-  })());
+  assert(
+    // AMENDMENT — premium-transition correction. enterTransfer's animation
+    // technique changed from a two-value Animated.parallel cross-fade to a
+    // single shared chooserTransferProgress value animated via
+    // Animated.timing (Animated.parallel no longer appears anywhere in the
+    // file) — the ORDERING invariant this assertion actually protects
+    // (lock, then generation bump, then the animation call starts) is
+    // unchanged and re-verified against the new call.
+    "3b. the lock is set before ++generationRef.current and before the Animated.timing(chooserTransferProgress...) call in enterTransfer()",
+    (() => {
+      const start = ADD_ANYTHING_SRC.indexOf('function enterTransfer()');
+      const lockLine = ADD_ANYTHING_SRC.indexOf('selectionLockRef.current = true;', start);
+      const genLine = ADD_ANYTHING_SRC.indexOf('++generationRef.current;', start);
+      const animLine = ADD_ANYTHING_SRC.indexOf('Animated.timing(chooserTransferProgress', start);
+      return lockLine !== -1 && lockLine < genLine && genLine < animLine;
+    })()
+  );
   assert('3c. enterTransfer() never releases selectionLockRef itself (release ownership belongs to backToChooser/runPendingSelection/fresh-open only)', (() => {
     const start = ADD_ANYTHING_SRC.indexOf('function enterTransfer()');
     const end = ADD_ANYTHING_SRC.indexOf('function backToChooser()');
@@ -109,20 +119,20 @@ console.log('\n=== 4. backToChooser() — dedicated re-entrancy guard, releases 
     /function backToChooser\(\) \{\s*\n\s*if \(returningToChooserRef\.current\) return; \/\/ synchronous re-entrancy guard for Back itself\s*\n\s*returningToChooserRef\.current = true;/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '4b. selectionLockRef is released exactly twice in backToChooser (Reduce Motion branch + animation completion), both AFTER setScreen(\'chooser\')',
+    '4b. selectionLockRef is released exactly twice in backToChooser (Reduce Motion branch + animation completion), both AFTER setScreen(\'chooser\'). Bounded to the NEXT function declaration, not a fixed distant anchor — see 4c\'s own comment for why.',
     (() => {
       const start = ADD_ANYTHING_SRC.indexOf('function backToChooser()');
-      const end = ADD_ANYTHING_SRC.indexOf('\n  // KeyboardSheet\'s own backdrop', start);
+      const end = ADD_ANYTHING_SRC.indexOf('\n  function ', start + 1);
       const body = ADD_ANYTHING_SRC.slice(start, end);
       const releases = (body.match(/selectionLockRef\.current = false; \/\/ released only once the chooser is restored \(req #7\)/g) || []).length;
       return releases === 2 && /setScreen\('chooser'\);\s*\n\s*setTransitionPhase\('idle'\);\s*\n\s*selectionLockRef\.current = false;/.test(body);
     })()
   );
   assert(
-    '4c. returningToChooserRef is reset to false in both the Reduce Motion branch and the animation completion, WITHIN backToChooser() itself (a third reset also exists in the fresh-open effect, which is separate and correct — req #10)',
+    '4c. returningToChooserRef is reset to false in both the Reduce Motion branch and the animation completion, WITHIN backToChooser() itself (a third reset also exists in the fresh-open effect, which is separate and correct — req #10). Bounded to the NEXT function declaration rather than a fixed distant anchor, since the Navigation Transitions, Option B pilot now inserts its own new functions immediately after backToChooser() — a fixed-distance anchor here would silently absorb that unrelated, later-added code into this function\'s own body.',
     (() => {
       const start = ADD_ANYTHING_SRC.indexOf('function backToChooser()');
-      const end = ADD_ANYTHING_SRC.indexOf('\n  // KeyboardSheet\'s own backdrop', start);
+      const end = ADD_ANYTHING_SRC.indexOf('\n  function ', start + 1);
       const body = ADD_ANYTHING_SRC.slice(start, end);
       return (body.match(/returningToChooserRef\.current = false;/g) || []).length === 2;
     })()
@@ -147,19 +157,33 @@ console.log('\n=== 6. Fresh-open effect resets the lock and returningToChooser g
 
 console.log('\n=== 7. Dismissal invalidates in-flight transition (Class C, req #9 — unchanged mechanism, re-verified) ===');
 {
-  assert('7a. handleRequestClose still bumps generationRef before closing', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
+  assert('7a. handleRequestClose still bumps generationRef before closing', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*addAssetGenerationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
   assert('7b. both transition completions still compare against generationRef.current before applying (stale-completion guard intact)', (ADD_ANYTHING_SRC.match(/if \(myGeneration !== generationRef\.current\) return;/g) || []).length === 2);
 }
 
 console.log('\n=== 8. Reduce Motion uses the same lock lifecycle (Class C, req #11) ===');
 {
+  // AMENDMENT — premium-transition correction. Both Reduce Motion branches
+  // below gained one new line each: an explicit chooserTransferProgress
+  // .setValue(...) snapping the shared push-progress value to its correct
+  // resting position. This is a genuine bug fix uncovered while implementing
+  // the correction (not present in the original Round-4/5 code, and not
+  // fixed here as unauthorized scope creep — it exists because Reduce
+  // Motion's own instant, animation-free state swap now needs to leave the
+  // NEW translateX-driving value in the right place, exactly as it already
+  // needed to leave `screen`/`transitionPhase` in the right place): without
+  // it, the destination layer would be marked interactive/visible-to-
+  // accessibility by `screen`/`transitionPhase` while still rendering fully
+  // off-screen, because its own Animated.Value never left the resting
+  // "chooser front" position. 8a/8b are updated to require this line is
+  // present, not to relax what they protect.
   assert(
-    '8a. enterTransfer()\'s Reduce Motion branch sets the lock before the branch and does not release it (matches the animated path — lock stays held into the Transfer screen)',
-    /if \(reduceMotionEnabled\) \{\s*\n\s*setScreen\('transfer'\);\s*\n\s*setTransitionPhase\('idle'\);\s*\n\s*return;\s*\n\s*\}/.test(ADD_ANYTHING_SRC)
+    "8a. enterTransfer()'s Reduce Motion branch snaps chooserTransferProgress to 1 (matching the destination's now-settled position) BEFORE setting the lock-holding screen state, and does not release the lock (matches the animated path — lock stays held into the Transfer screen)",
+    /if \(reduceMotionEnabled\) \{\s*\n\s*chooserTransferProgress\.setValue\(1\);\s*\n\s*setScreen\('transfer'\);\s*\n\s*setTransitionPhase\('idle'\);\s*\n\s*return;\s*\n\s*\}/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    '8b. backToChooser()\'s Reduce Motion branch releases both selectionLockRef and returningToChooserRef, same as the animated completion',
-    /if \(reduceMotionEnabled\) \{\s*\n\s*setScreen\('chooser'\);\s*\n\s*setTransitionPhase\('idle'\);\s*\n\s*selectionLockRef\.current = false; \/\/ released only once the chooser is restored \(req #7\)\s*\n\s*returningToChooserRef\.current = false;\s*\n\s*return;\s*\n\s*\}/.test(ADD_ANYTHING_SRC)
+    "8b. backToChooser()'s Reduce Motion branch snaps chooserTransferProgress to 0 (matching the chooser's now-settled position) and releases both selectionLockRef and returningToChooserRef, same as the animated completion",
+    /if \(reduceMotionEnabled\) \{\s*\n\s*chooserTransferProgress\.setValue\(0\);\s*\n\s*setScreen\('chooser'\);\s*\n\s*setTransitionPhase\('idle'\);\s*\n\s*selectionLockRef\.current = false; \/\/ released only once the chooser is restored \(req #7\)\s*\n\s*returningToChooserRef\.current = false;\s*\n\s*return;\s*\n\s*\}/.test(ADD_ANYTHING_SRC)
   );
 }
 
@@ -209,8 +233,11 @@ console.log('\n=== 12. AddAnythingSheet wires embedded=true, onDirtyChange, and 
 {
   assert('12a. <TransferForm> is rendered with the embedded flag set', /<TransferForm\s*\n\s*ref=\{transferFormRef\}\s*\n\s*embedded\s*\n/.test(ADD_ANYTHING_SRC));
   assert('12b. onDirtyChange is wired to transferIsDirty state', /onDirtyChange=\{setTransferIsDirty\}/.test(ADD_ANYTHING_SRC));
-  assert('12c. KeyboardSheet receives a live isDirty derived from the active screen (false for chooser, transferIsDirty for transfer)', /isDirty=\{activeScreen === 'transfer' \? transferIsDirty : false\}/.test(ADD_ANYTHING_SRC));
-  assert('12d. KeyboardSheet receives Transfer-specific discard wording matching TransferForm\'s own, for the backdrop/swipe/Android-Back path', /discardTitle="Discard transfer\?"\s*\n\s*discardMessage="Your transfer details will be lost\."/.test(ADD_ANYTHING_SRC));
+  assert('12c. KeyboardSheet receives a live isDirty derived from the active step (false for chooser, transferIsDirty for transfer — unchanged; addAssetIsDirty added for the Navigation Transitions, Option B pilot only when a draft has ever been entered)', /isDirty=\{activeStep === 'transfer' \? transferIsDirty : addAssetEverEnteredRef\.current \? addAssetIsDirty : false\}/.test(ADD_ANYTHING_SRC));
+  assert(
+    "12d. KeyboardSheet receives Transfer-specific discard wording matching TransferForm's own, for the backdrop/swipe/Android-Back path — Transfer's own branch (the ternary's false case) is byte-identical to before this pilot; only a new addAsset true-case was added alongside it",
+    /discardTitle=\{activeStep === 'addAsset' \? 'Discard this asset\?' : 'Discard transfer\?'\}\s*\n\s*discardMessage=\{activeStep === 'addAsset' \? 'Your new asset details will be lost\.' : 'Your transfer details will be lost\.'\}/.test(ADD_ANYTHING_SRC)
+  );
 }
 
 console.log('\n=== 13. Standalone TransferModal unaffected — no edit this round, embedded prop never passed (Class C) ===');

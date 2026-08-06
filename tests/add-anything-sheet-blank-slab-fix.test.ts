@@ -99,21 +99,22 @@ console.log('\n=== 2. AddAnythingSheet: animationType=\'none\' mechanism fully r
 
 console.log('\n=== 3. Ordinary dismissal (Cancel/backdrop/swipe/Android-Back) still routes through handleRequestClose, untouched in structure (Class C) ===');
 {
-  assert('3a. handleRequestClose still bumps generationRef then calls the real top-level onClose — unchanged from Round 5', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
+  assert('3a. handleRequestClose still bumps generationRef then calls the real top-level onClose — unchanged from Round 5', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*addAssetGenerationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
   assert('3b. handleRequestClose never touches screen/transitionPhase/chooserAnim/pendingKindRef — content-affecting state is untouched by ordinary dismissal', (() => {
     const start = ADD_ANYTHING_SRC.indexOf('function handleRequestClose()');
     const end = ADD_ANYTHING_SRC.indexOf('\n  }', start);
     const body = ADD_ANYTHING_SRC.slice(start, end);
     return !/setScreen|setTransitionPhase|chooserAnim|pendingKindRef/.test(body);
   })());
-  assert('3c. KeyboardSheet is still passed a live isDirty for the backdrop/swipe/Android-Back dirty-gate (Transfer dirty protection unchanged)', /isDirty=\{activeScreen === 'transfer' \? transferIsDirty : false\}/.test(ADD_ANYTHING_SRC));
+  assert('3c. KeyboardSheet is still passed a live isDirty for the backdrop/swipe/Android-Back dirty-gate (Transfer dirty protection unchanged)', /isDirty=\{activeStep === 'transfer' \? transferIsDirty : addAssetEverEnteredRef\.current \? addAssetIsDirty : false\}/.test(ADD_ANYTHING_SRC));
 }
 
 console.log('\n=== 4. Chooser content is never conditionally cleared by any dismissal path (Class C) ===');
 {
   assert(
-    '4a. showChooser\'s condition is unchanged — driven only by screen/transitionPhase, never by visible directly',
-    /const showChooser = screen === 'chooser' \|\| transitionPhase === 'transfer-to-chooser';/.test(ADD_ANYTHING_SRC)
+    "4a. showChooser's Transfer-related condition is unchanged (screen==='chooser' || transitionPhase==='transfer-to-chooser', now parenthesized as one AND operand alongside the Navigation Transitions, Option B pilot's own addAsset-visibility check) — still driven only by screen/transitionPhase/the new addAsset transition state, never by visible directly",
+    /const showChooser = \(screen === 'chooser' \|\| transitionPhase === 'transfer-to-chooser'\) && chooserVisibleForAddAsset;/.test(ADD_ANYTHING_SRC) &&
+      !/const showChooser[^;]*\bvisible\b/.test(ADD_ANYTHING_SRC)
   );
   assert('4b. neither choose() nor handleRequestClose ever calls setScreen — the chooser\'s own mount/unmount is untouched by any dismissal', (() => {
     const chooseStart = ADD_ANYTHING_SRC.indexOf('function choose(kind: AddAnythingKind)');

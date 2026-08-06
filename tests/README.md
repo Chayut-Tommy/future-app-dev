@@ -4,7 +4,7 @@
 pinned to an exact version). There is still no `jest`/`vitest`/`@testing-library` and no
 `npm test` script — these files exist so regression coverage survives in version control
 instead of an ephemeral scratchpad, not to imply CI executes them automatically today.
-Not all nine files are component-runtime tests; see "What 'behavioural' means" below for
+Not all files here are component-runtime tests; see "What 'behavioural' means" below for
 each file's actual evidence class.
 
 ## How to run

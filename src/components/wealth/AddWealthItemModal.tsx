@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -182,17 +182,31 @@ export function prefillValuesFromRepayment(repayment: RecurringItem): RepaymentP
   return { amount: String(repayment.amount), frequency: repayment.frequency, dayOfMonth: '', nextDueDate: repayment.nextDueDate };
 }
 
-export function AddWealthItemModal({
-  visible,
-  kind: kindProp,
-  editAsset,
-  editLiability,
-  presetAssetType,
-  presetLiabilityType,
-  liabilityFlowIntent,
-  onSelectCreditCard,
-  onClose,
-}: {
+/** Navigation Transitions, Option B pilot — why a requested close happened,
+ * mirroring TransferForm's own TransferCloseReason shape so the embedded
+ * host (AddAnythingSheet) can decide what "closing" means (return to the
+ * chooser vs. discard-confirm-then-close the whole sheet) without this
+ * form needing to know which context it's rendered in. Only meaningfully
+ * used when `embedded` is true — every existing standalone caller never
+ * holds a ref, so these reasons are never observed there. */
+export type AddWealthItemCloseReason = 'cancel' | 'back' | 'backdrop' | 'swipe' | 'androidBack';
+
+export interface AddWealthItemModalHandle {
+  /** Invoked by the embedded host's own Save control. No-op (via the
+   * existing !canSave guard inside performSave) when the form isn't
+   * currently valid. Embedded-only; standalone callers never hold a ref to
+   * reach this. */
+  requestSave: () => void;
+  /** Invoked by the embedded host's Back/Cancel controls. `'back'` never
+   * discards (the embedded host preserves this form's draft across an
+   * in-session Back — nothing is lost, so no confirmation is shown); every
+   * other reason applies the existing "Discard changes?" confirmation
+   * (confirmDiscardIfDirty) whenever this session has genuine changes,
+   * exactly like every other Navilo form's Cancel/swipe/backdrop path. */
+  requestClose: (reason: AddWealthItemCloseReason) => void;
+}
+
+export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   visible: boolean;
   kind: 'asset' | 'liability' | null;
   /** Present = editing this existing asset instead of creating a new one. */
@@ -228,7 +242,54 @@ export function AddWealthItemModal({
    * to discover). */
   onSelectCreditCard?: () => void;
   onClose: () => void;
-}) {
+  /** Navigation Transitions, Option B pilot (Add Anything -> Add Asset).
+   * True only for the one embedded host that renders this component without
+   * its own Modal/KeyboardSheet chrome, supplying that chrome itself and
+   * driving Save/Close through the ref handle above. Every existing caller
+   * omits this (defaults to false), which preserves 100% of the standalone
+   * rendering (own KeyboardSheet, own footer, own Cancel/Save wiring)
+   * unchanged. MUST only ever be combined with kind="asset" — liability and
+   * credit-card sessions always render standalone regardless of this flag
+   * (enforced by the embedded host, which only ever mounts this component
+   * with kind="asset"; see AddAnythingSheet.tsx). */
+  embedded?: boolean;
+  /** Live dirty-state report for the embedded host's own KeyboardSheet
+   * isDirty gate (swipe/backdrop/Android-Back). Mirrored every render
+   * regardless of `embedded`, matching TransferForm's own established
+   * mirror-unconditionally, no-op-if-omitted pattern. */
+  onDirtyChange?: (isDirty: boolean) => void;
+  /** Live validity report, so the embedded host's own Save button can be
+   * enabled/disabled correctly. */
+  onCanSaveChange?: (canSave: boolean) => void;
+  /** Live title report (e.g. "Add cash account" vs "Add savings account"),
+   * so the embedded host's own KeyboardSheet title stays in sync as the
+   * user changes the asset type chip inside this form. */
+  onTitleChange?: (title: string) => void;
+  /** Called instead of `onClose` on a successful Save, only when embedded —
+   * lets the host close its own persistent sheet exactly once, the same way
+   * TransferForm's onSaveSuccess does for the embedded Transfer route. */
+  onSaveSuccess?: () => void;
+  /** Called instead of `onClose`, only when embedded, once a requested close
+   * has been confirmed (or immediately for `reason === 'back'`, which never
+   * confirms — see AddWealthItemModalHandle.requestClose above). */
+  onConfirmedClose?: (reason: AddWealthItemCloseReason) => void;
+}>(function AddWealthItemModal({
+  visible,
+  kind: kindProp,
+  editAsset,
+  editLiability,
+  presetAssetType,
+  presetLiabilityType,
+  liabilityFlowIntent,
+  onSelectCreditCard,
+  onClose,
+  embedded = false,
+  onDirtyChange,
+  onCanSaveChange,
+  onTitleChange,
+  onSaveSuccess,
+  onConfirmedClose,
+}, ref) {
   const {
     data,
     addAsset,
@@ -675,6 +736,42 @@ export function AddWealthItemModal({
     confirmDiscardIfDirty(isDirty, onClose);
   }
 
+  // Navigation Transitions, Option B pilot — the embedded host's ref-
+  // exposed close, invoked by its own Back/Cancel controls (never by this
+  // form's own now-unreachable-when-embedded KeyboardSheet gesture
+  // handling, since no KeyboardSheet is rendered in that branch at all).
+  // 'back' never discards — the embedded host preserves this session's
+  // draft across an in-session Back, so nothing is lost and no confirmation
+  // is appropriate; every other reason applies the same "Discard changes?"
+  // gate requestCancel already uses for the standalone Cancel button.
+  function requestEmbeddedClose(reason: AddWealthItemCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(isDirty, () => onConfirmedClose?.(reason));
+  }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: requestEmbeddedClose,
+  }));
+
+  // Navigation Transitions, Option B pilot — mirrored every render
+  // regardless of `embedded` (matching TransferForm's own established,
+  // no-op-if-omitted mirroring pattern), so the embedded host's own
+  // KeyboardSheet chrome (title/isDirty-gated dismissal/Save-enabled state)
+  // always reflects this form's real, live values.
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+  useEffect(() => {
+    onCanSaveChange?.(canSave);
+  }, [canSave, onCanSaveChange]);
+  useEffect(() => {
+    onTitleChange?.(title);
+  }, [title, onTitleChange]);
+
   // Round-6 correction (Group E) — the Round-5 disclosure step is removed
   // entirely: the current data model has no field distinguishing an
   // unlinked LOAN repayment from an ordinary unlinked bill (rent,
@@ -875,7 +972,16 @@ export function AddWealthItemModal({
           }
         }
       }
-      onClose();
+      // Navigation Transitions, Option B pilot — the embedded host closes
+      // its own persistent sheet via onSaveSuccess (mirrors TransferForm's
+      // own onSaveSuccess wiring exactly); every existing standalone caller
+      // never passes `embedded`, so this is unconditionally onClose() for
+      // them, byte-identical to before this pilot.
+      if (embedded) {
+        onSaveSuccess?.();
+      } else {
+        onClose();
+      }
     } catch (err) {
       // Smallest safe recovery (Stream C correction, Issue 6; Round-5
       // correction, Issue 1/5): reset the guard so a deliberate next tap
@@ -1062,22 +1168,15 @@ export function AddWealthItemModal({
   // type mid-flow would reopen the same ambiguity this correction closes.
   const showTypeChips = kind === 'asset' || resolvedIntent !== 'select_or_create_for_repayment';
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={handleClose}
-      isDirty={isDirty}
-      gesturesEnabled={!repaymentPickerOpen}
-      title={title}
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
-        </>
-      }
-      onDismiss={Platform.OS === 'ios' ? runPendingCreditCardHandoff : undefined}
-      animationType={dismissAnimationType}
-    >
+  // Navigation Transitions, Option B pilot — the exact same field/section
+  // JSX every standalone caller already renders, now also reused verbatim
+  // (not copied) by the embedded branch below. Nothing inside this content
+  // block changed: it's the same conditionals, same components, same order
+  // as before this pilot, only lifted into its own variable so it can be
+  // returned either wrapped in this form's own KeyboardSheet (standalone,
+  // unchanged) or bare (embedded, chrome supplied by the host).
+  const content = (
+    <>
       {saveErrorMessage ? (
         <View style={styles.helperBox}>
           <Text style={[styles.helperText, { color: colors.danger }]}>{saveErrorMessage}</Text>
@@ -1475,6 +1574,39 @@ export function AddWealthItemModal({
         onChange={(date) => setRepaymentNextDueDate(date.toISOString())}
         onClose={() => setRepaymentPickerOpen(false)}
       />
+    </>
+  );
+
+  // Embedded (Navigation Transitions, Option B pilot) — no Modal, no
+  // KeyboardSheet, no footer of its own. The host supplies all of that and
+  // drives Save/Close through the ref handle above. Only ever reached with
+  // kind="asset" (see AddWealthItemModalHandle's own doc comment) — the
+  // category-step and liability-selector-step early returns above remain
+  // completely unreachable here for exactly that reason (both require
+  // conditions this pilot's caller never creates: no presetAssetType/
+  // editAsset for the category step, kind==='liability' for the selector
+  // step), so neither of those two branches needed any change at all.
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={handleClose}
+      isDirty={isDirty}
+      gesturesEnabled={!repaymentPickerOpen}
+      title={title}
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+        </>
+      }
+      onDismiss={Platform.OS === 'ios' ? runPendingCreditCardHandoff : undefined}
+      animationType={dismissAnimationType}
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});
