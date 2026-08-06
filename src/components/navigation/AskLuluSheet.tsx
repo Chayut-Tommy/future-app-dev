@@ -33,9 +33,25 @@ export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: 
 
   function dismiss() {
     Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
-      translateY.setValue(0);
       onClose();
     });
+  }
+
+  // Dismissal-lifecycle correction — mirrors the same fix applied to
+  // KeyboardSheet: the sheet's own JS-driven position must not reset to 0
+  // (fully on-screen) until the REAL native dismissal has actually
+  // finished. RN's Modal keeps rendering this sheet's content on iOS until
+  // that fires (its internal `isRendered` flag only flips false then), not
+  // merely until `visible` becomes false — resetting translateY any
+  // earlier (as dismiss() used to, synchronously alongside onClose())
+  // snapped the sheet back to its fully-visible position while the native
+  // Modal could still genuinely be presenting it, producing the reported
+  // "does not exit as cleanly" bounce/snap-back. iOS only, since RN never
+  // calls onDismiss on Android; Android already resets translateY safely
+  // via the fresh-open effect above, since Android's own Modal has no
+  // equivalent post-`visible=false` rendering lag to guard against.
+  function handleNativeDismissComplete() {
+    translateY.setValue(0);
   }
 
   const panResponder = useRef(
@@ -108,7 +124,7 @@ export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: 
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={dismiss}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={dismiss} onDismiss={handleNativeDismissComplete}>
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={dismiss} />
         <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]} {...panResponder.panHandlers}>

@@ -9,6 +9,7 @@ import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
 import { requiredMonthlyForGoal, computeGoalAllocation, classifyGoalDateFields } from '../../lib/calculations/goalAllocation';
 import { computeFixedCosts } from '../../lib/calculations/safeToSpend';
+import { parseMoneyInput } from '../../lib/calculations/money';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { spacing } from '../../theme/tokens';
 
@@ -78,6 +79,38 @@ function parsePositiveContributionAmount(text: string): number | null {
   return isFinite(value) && value > 0 ? value : null;
 }
 
+export type TargetAmountResolution = { kind: 'clear' } | { kind: 'invalid' } | { kind: 'set'; amount: number };
+
+/** Target Amount correction — the single, pure decision made from a raw
+ * draft string, shared by both the explicit commit action and the dirty-
+ * state check below (one definition, so they can never silently disagree
+ * about what a given draft means). Empty/whitespace-only -> 'clear'
+ * (preserves the existing "blank clears the target" rule). Anything else
+ * is validated with Navilo's strict money grammar (parseMoneyInput) —
+ * never parseFloat's permissive prefix-matching — so "12.345" / " abc" /
+ * "-5" / "1,200" all resolve to 'invalid', never a silently truncated or
+ * wrong number. */
+export function resolveTargetAmountDraft(draft: string): TargetAmountResolution {
+  const trimmed = draft.trim();
+  if (trimmed.length === 0) return { kind: 'clear' };
+  const parsed = parseMoneyInput(trimmed);
+  if (!parsed.valid) return { kind: 'invalid' };
+  return { kind: 'set', amount: parsed.amount };
+}
+
+/** Whether the current draft differs from what's actually persisted —
+ * drives isDirty (and therefore every dismissal path's existing discard-
+ * protection, unmodified) so an uncommitted amount edit is protected the
+ * same way an uncommitted partial/invalid Target Date already is. An
+ * invalid, non-empty draft is always dirty — there is unresolved input
+ * sitting in the field regardless of whether it could ever be committed. */
+export function isTargetAmountDraftDirty(draft: string, committedTargetAmount: number | null): boolean {
+  const resolution = resolveTargetAmountDraft(draft);
+  if (resolution.kind === 'clear') return committedTargetAmount !== null;
+  if (resolution.kind === 'invalid') return true;
+  return resolution.amount !== committedTargetAmount;
+}
+
 export function GoalDetailSheet({
   goal,
   onClose,
@@ -99,7 +132,17 @@ export function GoalDetailSheet({
   // "Discard changes?" prompt (§2).
   const [contributionError, setContributionError] = useState(false);
   const [name, setName] = useState(goal?.name ?? '');
-  const [targetAmount, setTargetAmount] = useState(goal?.targetAmount ? String(goal.targetAmount) : '');
+  // Target Amount correction — a local draft only, never persisted per
+  // keystroke (see commitTargetAmount below). Deliberately named
+  // differently from the old `targetAmount` state it replaces: everywhere
+  // else in this file that needs "the target amount" now means
+  // goal.targetAmount (the last committed value), never this draft.
+  const [targetAmountDraft, setTargetAmountDraft] = useState(goal?.targetAmount ? String(goal.targetAmount) : '');
+  // Inline validation feedback for a non-empty draft that fails
+  // resolveTargetAmountDraft — mirrors contributionError's existing
+  // pattern (deliberately separate from isDirty/discardConfirmation, same
+  // reasoning as contributionError above).
+  const [targetAmountError, setTargetAmountError] = useState(false);
   const [targetMonth, setTargetMonth] = useState(dateParts(goal?.targetDate ?? null).month);
   const [targetYear, setTargetYear] = useState(dateParts(goal?.targetDate ?? null).year);
   const [priority, setPriority] = useState<GoalPriority>(goal?.priority ?? 'medium');
@@ -128,7 +171,8 @@ export function GoalDetailSheet({
   useEffect(() => {
     setContribution('');
     setName(goal?.name ?? '');
-    setTargetAmount(goal?.targetAmount ? String(goal.targetAmount) : '');
+    setTargetAmountDraft(goal?.targetAmount ? String(goal.targetAmount) : '');
+    setTargetAmountError(false);
     const parts = dateParts(goal?.targetDate ?? null);
     setTargetMonth(parts.month);
     setTargetYear(parts.year);
@@ -229,34 +273,45 @@ export function GoalDetailSheet({
     [colors, radius, spacing, typography]
   );
 
-  const amountValue = parseFloat(targetAmount);
   // Classifies the two raw date-input strings — 'empty'/'valid'/'partial'/
   // 'past' (Stream A follow-up §3). Shared with handleSaveDate below and
   // with the regression tests via the same exported helper, so there is
   // exactly one definition of "what counts as a valid future date."
   const dateFieldsState = classifyGoalDateFields(targetMonth, targetYear);
 
-  // Live preview using the form's current values, synced to the goal on
-  // every edit — Lulu calculates this, the user never hand-types it
-  // (PRD ask). Deliberately never falls back to goal.targetDate when the
-  // visible fields are partial or a rejected past date (Stream A follow-up
-  // §3C/§3D: "do not show a monthly amount calculated from a hidden old
-  // date") — only a currently-valid field pair drives the estimate; anything
-  // else previews as "no date" (the existing 36-month fallback), never a
-  // stale committed value the user can no longer see. Null-safe: this sheet
-  // stays mounted with goal=null between uses, and every hook below must
-  // still run in that case (hooks must run in the same order on every
-  // render — no hooks after an early return).
-  const previewGoal: Goal | null = goal
-    ? {
-        ...goal,
-        targetAmount: isNaN(amountValue) ? null : amountValue,
-        targetDate:
-          dateFieldsState === 'valid'
-            ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString()
-            : null,
-      }
-    : null;
+  // Live preview using the form's current TARGET DATE values only, synced
+  // to the goal on every date-field edit — Lulu calculates this, the user
+  // never hand-types it (PRD ask). Deliberately never falls back to
+  // goal.targetDate when the visible fields are partial or a rejected past
+  // date (Stream A follow-up §3C/§3D: "do not show a monthly amount
+  // calculated from a hidden old date") — only a currently-valid field pair
+  // drives the estimate; anything else previews as "no date" (the existing
+  // 36-month fallback), never a stale committed value the user can no
+  // longer see. Null-safe: this sheet stays mounted with goal=null between
+  // uses, and every hook below must still run in that case (hooks must run
+  // in the same order on every render — no hooks after an early return).
+  // Target Amount correction — this NO LONGER live-previews from a typed
+  // draft. `targetAmount` here comes from the `...goal` spread alone, i.e.
+  // the last COMMITTED value, exactly matching the required behaviour that
+  // the progress ring / required-monthly / allocation calculations must
+  // keep using the last committed target while an amount edit is in
+  // progress, and only change once via commitTargetAmount below. (Stream D,
+  // D2 — still memoized on exactly its true logical inputs, now goal,
+  // dateFieldsState, targetYear, targetMonth; amountValue no longer exists
+  // as an input.)
+  const previewGoal: Goal | null = useMemo(
+    () =>
+      goal
+        ? {
+            ...goal,
+            targetDate:
+              dateFieldsState === 'valid'
+                ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString()
+                : null,
+          }
+        : null,
+    [goal, dateFieldsState, targetYear, targetMonth]
+  );
   const requiredMonthly = previewGoal ? requiredMonthlyForGoal(previewGoal) : 0;
 
   // How this goal actually fares against the user's real budget and every
@@ -273,25 +328,42 @@ export function GoalDetailSheet({
   if (!goal) return null;
 
   const progress = goal.targetAmount ? goal.currentAmount / goal.targetAmount : 0;
+  // Target Amount correction — whether the current draft differs from what
+  // goal.targetAmount actually holds (see isTargetAmountDraftDirty above).
+  // Feeds both isDirty and hasOtherDirtyField below, exactly like a
+  // partial/invalid/past target date already does, so an uncommitted
+  // amount edit gets the identical protection an uncommitted date edit
+  // already had — including from "Add & close" (see hasOtherDirtyField's
+  // own comment: that path calls onClose() directly, bypassing
+  // confirmDiscardIfDirty entirely, so it must never be offered while an
+  // uncommitted amount draft is sitting in the field).
+  const targetAmountDirty = isTargetAmountDraftDirty(targetAmountDraft, goal.targetAmount);
   // What can genuinely be lost by closing this sheet: an in-progress
-  // contribution amount, or a date edit that was never fully valid and so
-  // never autosaved (Stream A follow-up §3C: "closing must not silently
-  // replace the visible partial entry with an undisclosed active date" —
-  // reusing this same established discard-confirmation mechanism, not a new
-  // one). Name/target amount/priority, and any *complete, valid* date,
-  // already autosaved the instant they changed, so there is nothing to
-  // protect for those (regression-protection review, Stream A §6).
+  // contribution amount, an uncommitted Target Amount draft, or a date edit
+  // that was never fully valid and so never autosaved (Stream A follow-up
+  // §3C: "closing must not silently replace the visible partial entry with
+  // an undisclosed active date" — reusing this same established discard-
+  // confirmation mechanism, not a new one). Name/priority, and any
+  // *committed* target amount or *complete, valid* date, already autosaved
+  // the instant they changed, so there is nothing to protect for those
+  // (regression-protection review, Stream A §6).
   const isDirty =
-    contribution.trim().length > 0 || dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past';
+    contribution.trim().length > 0 ||
+    dateFieldsState === 'partial' ||
+    dateFieldsState === 'invalid' ||
+    dateFieldsState === 'past' ||
+    targetAmountDirty;
   // Drives the footer's state-aware label (pending-contribution UX
   // correction) — the same strict parse handleAddContribution itself
   // uses, so the button's presence never promises something the handler
-  // wouldn't actually apply. A dirty target date (partial/invalid/past)
-  // deliberately keeps the footer at "Done" even with a valid pending
-  // amount — "Add & close" only ever shows when it can safely deliver
-  // exactly what it says (invalid-contribution-handling correction, §3D):
-  // it must never close over a still-unresolved date issue.
-  const hasOtherDirtyField = dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past';
+  // wouldn't actually apply. A dirty target date (partial/invalid/past) or
+  // an uncommitted target amount draft deliberately keeps the footer at
+  // "Done" even with a valid pending contribution amount — "Add & close"
+  // only ever shows when it can safely deliver exactly what it says
+  // (invalid-contribution-handling correction, §3D): it must never close
+  // over a still-unresolved date OR amount issue.
+  const hasOtherDirtyField =
+    dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past' || targetAmountDirty;
   const hasValidPendingContribution = parsePositiveContributionAmount(contribution) !== null;
   const hasInvalidPendingContribution = contribution.trim().length > 0 && !hasValidPendingContribution;
   const showAddAndClose = hasValidPendingContribution && !hasOtherDirtyField;
@@ -489,10 +561,50 @@ export function GoalDetailSheet({
     }
   }
 
-  function handleSaveTarget(text: string) {
-    setTargetAmount(text);
-    const value = parseFloat(text);
-    persistCalculatedFields({ targetAmount: isNaN(value) ? null : value });
+  // Target Amount correction — keystrokes only ever update the local
+  // draft; nothing is persisted here (contrast with the old
+  // handleSaveTarget this replaces, which called persistCalculatedFields
+  // on every keystroke — the confirmed root cause of intermediate values
+  // reaching AppStateContext/AsyncStorage and the connected calculations).
+  function handleTargetAmountChange(text: string) {
+    setTargetAmountDraft(text);
+    if (targetAmountError) setTargetAmountError(false);
+  }
+
+  // The explicit completion action — reachable ONLY from the "Set" button
+  // below, never from any dismissal path (Close/backdrop/swipe all route
+  // through confirmDiscardIfDirty using isDirty/targetAmountDirty above,
+  // none of which ever calls this function). This is deliberately NOT an
+  // onBlur handler: blur can fire as a side effect of the very interactions
+  // that dismiss this sheet (tapping the backdrop, swiping), which would
+  // make "did the dirty-check run before persistence" an event-order
+  // assumption rather than a structural guarantee. An explicit, separate
+  // tap can never race against a close tap, since they are two different
+  // taps by construction.
+  function commitTargetAmount() {
+    const resolution = resolveTargetAmountDraft(targetAmountDraft);
+    if (resolution.kind === 'invalid') {
+      setTargetAmountError(true);
+      return;
+    }
+    setTargetAmountError(false);
+    if (resolution.kind === 'clear') {
+      // Preserves the existing product rule: an intentionally-blanked
+      // Target Amount clears the stored target, same as the old
+      // handleSaveTarget's isNaN(value) -> null branch — just committed
+      // deliberately now, instead of on the keystroke that happened to
+      // produce an empty string.
+      if (goal!.targetAmount !== null) persistCalculatedFields({ targetAmount: null });
+      return;
+    }
+    // Normalise the visible draft to the committed value (e.g. "1200" and
+    // "1200.00" both resolve to the same amount here) so re-tapping Set on
+    // an unchanged value is a genuine no-op below, not a redundant write
+    // (equivalent-formatting correction).
+    setTargetAmountDraft(String(resolution.amount));
+    if (resolution.amount !== goal!.targetAmount) {
+      persistCalculatedFields({ targetAmount: resolution.amount });
+    }
   }
 
   // Keeps the visible MM/YYYY fields and the stored targetDate in agreement
@@ -645,14 +757,23 @@ export function GoalDetailSheet({
       <TextInput style={styles.input} value={name} onChangeText={handleSaveName} placeholderTextColor={colors.textMuted} />
 
       <Text style={styles.label}>Target amount</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
-        value={targetAmount}
-        onChangeText={handleSaveTarget}
-      />
+      <View style={styles.row}>
+        <TextInput
+          style={styles.input}
+          placeholder="$0"
+          placeholderTextColor={colors.textMuted}
+          keyboardType="decimal-pad"
+          value={targetAmountDraft}
+          onChangeText={handleTargetAmountChange}
+          accessibilityLabel="Target amount"
+        />
+        <Button label="Set" onPress={commitTargetAmount} style={styles.addButton} />
+      </View>
+      {targetAmountError ? (
+        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
+          Enter a valid amount greater than $0, using up to two decimal places, or leave it blank to clear the target.
+        </Text>
+      ) : null}
 
       <Text style={styles.label}>Target date</Text>
       <View style={styles.row}>

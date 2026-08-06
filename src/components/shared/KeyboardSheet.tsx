@@ -26,6 +26,9 @@ export function KeyboardSheet({
   discardTitle,
   discardMessage,
   gesturesEnabled = true,
+  onDismiss,
+  animationType = 'slide',
+  minSheetHeight,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -47,6 +50,33 @@ export function KeyboardSheet({
    * from whatever's rendered behind it, but this makes the same guarantee
    * explicit and independently verifiable at this layer too). */
   gesturesEnabled?: boolean;
+  /** Forwarded unchanged to the underlying native Modal's own onDismiss
+   * (Stream D, D1 follow-up) — fires once RN reports this Modal's native
+   * dismissal has actually finished. iOS only; RN never calls this on
+   * Android. Optional and forwarded as-is so every existing caller that
+   * doesn't pass it behaves exactly as before. Never invoked manually from
+   * this component's own JS-driven slide animation — it must reflect the
+   * real native event, not an approximation of it. */
+  onDismiss?: () => void;
+  /** Forwarded to the underlying native Modal's own animationType (Stream
+   * D, Option B runtime spike) — defaults to 'slide' so every existing
+   * caller that doesn't pass this renders exactly as before. A caller sets
+   * this to 'none' only for the one render where it is also flipping
+   * `visible` to false as an accepted-handoff dismissal, so that specific
+   * native dismissal transition is instant instead of animated. This
+   * component never changes the value itself — the owning form (which
+   * knows whether the current close is an ordinary dismissal or an
+   * accepted handoff) is solely responsible for choosing it. */
+  animationType?: 'slide' | 'none';
+  /** Optional fixed minimum sheet height (Stream D, persistent-host proof-
+   * of-pattern) — omitted by every existing caller, which keeps today's
+   * purely intrinsic/capped-at-85% sizing unchanged. A caller that embeds
+   * more than one screen's worth of swappable content inside this one
+   * sheet (so the sheet's own Modal/backdrop never re-presents between
+   * screens) sets this to hold the sheet at one stable height across every
+   * internal screen change, avoiding a visible height jump when content is
+   * swapped without a fresh Modal presentation. */
+  minSheetHeight?: number;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radius, spacing, typography } = useTheme();
@@ -58,9 +88,30 @@ export function KeyboardSheet({
 
   function dismiss() {
     Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
-      translateY.setValue(0);
       onClose();
     });
+  }
+
+  // Correction pass — the sheet's own JS-driven position must NOT be reset
+  // to 0 (fully on-screen) until the REAL native dismissal has actually
+  // finished. RN's Modal keeps rendering `children` on iOS until this fires
+  // (its internal `isRendered` flag only flips false here), not merely
+  // until `visible` becomes false — resetting translateY any earlier (e.g.
+  // inside dismiss()'s own JS-animation-complete callback, immediately
+  // before calling onClose()) snapped the sheet back to its fully-visible
+  // position while the native Modal could still be genuinely presenting
+  // it, producing a visible flash/blank-content artifact between the JS
+  // animation finishing and the native dismissal actually completing.
+  // Always forwarded to the underlying Modal's own onDismiss regardless of
+  // whether this component's own caller supplied one, so this reset fires
+  // for every dismissal path (swipe, backdrop, Cancel, and any caller-
+  // driven close) — iOS only, since RN never calls onDismiss on Android;
+  // Android already resets translateY safely via the fresh-open effect
+  // above, since Android's own Modal has no equivalent post-`visible=false`
+  // rendering lag to guard against.
+  function handleNativeDismissComplete() {
+    translateY.setValue(0);
+    onDismiss?.();
   }
 
   function requestClose() {
@@ -168,11 +219,15 @@ export function KeyboardSheet({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={requestClose}>
+    <Modal visible={visible} animationType={animationType} transparent onRequestClose={requestClose} onDismiss={handleNativeDismissComplete}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} disabled={!gesturesEnabled} />
         <Animated.View
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg), transform: [{ translateY }] }]}
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom, spacing.lg), transform: [{ translateY }] },
+            minSheetHeight ? { minHeight: minSheetHeight } : null,
+          ]}
           {...panResponder.panHandlers}
         >
           <View style={styles.grabber} />

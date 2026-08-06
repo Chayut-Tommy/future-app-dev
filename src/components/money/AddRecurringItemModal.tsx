@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,6 +40,21 @@ const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; emoji
   { label: 'Insurance', icon: 'shield-checkmark-outline', emoji: '🛡️' },
   { label: 'Other', icon: 'ellipse-outline', emoji: '➕' },
 ];
+
+// Deferred loan handoff (Stream D, D1, corrected): chooseBillType() used to
+// call onClose() and onSelectLoan() in the same synchronous handler,
+// batching this sheet's own Modal dismissal and AddWealthItemModal's
+// presentation into one React commit — the same same-tick dual-native-
+// Modal-transition defect fixed in AddAnythingSheet.tsx/OptionsSheet.tsx.
+// KeyboardSheet now forwards RN's real onDismiss (native-dismissal-complete
+// signal) through to its own underlying Modal, so on iOS this sheet defers
+// onSelectLoan to that real event — never a timer. RN's Modal never calls
+// onDismiss on Android, so LOAN_HANDOFF_DEFER_MS below is an Android-only
+// fallback HEURISTIC, not a documented or guaranteed RN transition
+// duration — it matches OptionsSheet.tsx's own long-standing Android
+// fallback constant purely for consistency with an existing, already-
+// accepted approximation in this codebase.
+const LOAN_HANDOFF_DEFER_MS = 300;
 
 const FREQUENCIES: { value: PayFrequency; label: string }[] = [
   { value: 'weekly', label: 'Weekly' },
@@ -127,8 +142,62 @@ export function AddRecurringItemModal({
   const isEditing = !!editItem;
   const usesDayOfMonth = frequency === 'monthly';
 
+  // First-accepted-tap-wins deferred loan handoff (Stream D, D1, corrected).
+  // On iOS, runPendingLoanHandoff is passed to KeyboardSheet's onDismiss —
+  // the real native Modal dismissal-complete event, no timer involved. RN
+  // never calls onDismiss on Android, so handoffTimerRef below is an
+  // Android-only fallback there, owned by this ref, cleared before every
+  // reschedule and on unmount. visible is intentionally NOT a trigger for
+  // clearing pendingLoanTypeRef — the selection must survive the visible
+  // prop turning false so it can still be delivered when the real iOS
+  // onDismiss (or the Android fallback) fires shortly after.
+  const pendingLoanTypeRef = useRef<LiabilityType | null>(null);
+  const handoffInProgressRef = useRef(false);
+  const handoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stream D, Option B runtime spike: KeyboardSheet's animationType for its
+  // NEXT dismissal transition. Stays 'slide' for every ordinary close
+  // (Cancel/backdrop/swipe/Android-Back). chooseBillType's loan branch
+  // below flips it to 'none' and calls onClose() synchronously in the same
+  // handler, so React batches both into the same commit — the native Modal
+  // (owned by KeyboardSheet) receives animationType='none' and visible=
+  // false together, making that one dismissal instant instead of animated.
+  // Must NOT be reset merely because `visible` became false — see
+  // runPendingLoanHandoff() and the fresh-open effect below for the only
+  // two places it resets.
+  const [dismissAnimationType, setDismissAnimationType] = useState<'slide' | 'none'>('slide');
+
+  useEffect(() => {
+    return () => {
+      if (handoffTimerRef.current) clearTimeout(handoffTimerRef.current);
+    };
+  }, []);
+
+  // Invoked once either the real iOS onDismiss fires or the Android
+  // fallback timer elapses. Fires on EVERY dismissal (backdrop/swipe/
+  // Cancel/back included, since KeyboardSheet's onDismiss is unconditional
+  // once wired), so an ordinary dismissal with nothing pending is always a
+  // safe no-op here.
+  function runPendingLoanHandoff() {
+    const type = pendingLoanTypeRef.current;
+    pendingLoanTypeRef.current = null;
+    handoffInProgressRef.current = false;
+    if (type !== null) onSelectLoan?.(type);
+    // Reset only now that the pending handoff (if any) has been delivered
+    // and this sheet's own native dismissal is already complete (that's
+    // what triggered this function) — never merely on `visible` becoming
+    // false. A no-op when nothing was pending, since dismissAnimationType
+    // is already 'slide' for every ordinary dismissal.
+    setDismissAnimationType('slide');
+  }
+
   useEffect(() => {
     if (!visible) return;
+    // A fresh open must never carry over a stale in-progress handoff,
+    // pending loan type, or non-animated dismissal override from a
+    // previous time this sheet was shown.
+    handoffInProgressRef.current = false;
+    pendingLoanTypeRef.current = null;
+    setDismissAnimationType('slide');
     if (editItem) {
       const itemFrequency = editItem.frequency === 'irregular' ? 'monthly' : editItem.frequency;
       setIcon((editItem.icon as keyof typeof Ionicons.glyphMap) ?? 'home-outline');
@@ -177,9 +246,29 @@ export function AddRecurringItemModal({
     // explicit repayment date — one shared flow handles that
     // (AddWealthItemModal), so hand off instead of duplicating loan logic
     // here (PRD ask, §B4; generalized from mortgage-only, Stream C).
+    // First-accepted-tap-wins (Stream D, D1, corrected) — a second loan-
+    // preset tap while a handoff is already in progress is dropped, not
+    // queued or substituted. onSelectLoan is never called in the same tick
+    // as onClose(): on iOS it's deferred to KeyboardSheet's real onDismiss
+    // (wired below); only on Android — where RN never calls onDismiss — is
+    // the LOAN_HANDOFF_DEFER_MS fallback timer scheduled.
     if (p.handoffLoanType) {
+      if (handoffInProgressRef.current) return;
+      handoffInProgressRef.current = true;
+      pendingLoanTypeRef.current = p.handoffLoanType;
+      // Skip the animated dismissal for an accepted handoff (Stream D,
+      // Option B) — flips animationType to 'none' in the SAME synchronous
+      // call as onClose(), so React 18's automatic batching lands both in
+      // one commit (verified against RN's own Fabric
+      // RCTModalHostViewComponentView.mm: updateProps applies
+      // animationType before ensurePresentedOnlyIfNeeded checks visible,
+      // within one synchronous native call per commit).
+      setDismissAnimationType('none');
       onClose();
-      onSelectLoan?.(p.handoffLoanType);
+      if (Platform.OS === 'android') {
+        if (handoffTimerRef.current) clearTimeout(handoffTimerRef.current);
+        handoffTimerRef.current = setTimeout(runPendingLoanHandoff, LOAN_HANDOFF_DEFER_MS);
+      }
       return;
     }
     setIcon(p.icon);
@@ -293,6 +382,8 @@ export function AddRecurringItemModal({
         isDirty={false}
         title="📅 What's this bill for?"
         footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+        onDismiss={Platform.OS === 'ios' ? runPendingLoanHandoff : undefined}
+        animationType={dismissAnimationType}
       >
         <View style={styles.categoryGrid}>
           {BILL_PRESETS.map((p) => (

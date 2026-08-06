@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { Asset, AssetType, Liability, LiabilityType, PayFrequency } from '../../types/models';
+import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { DatePickerModal } from '../shared/DatePickerModal';
 import { Button } from '../shared/Button';
@@ -17,6 +17,22 @@ import { generateId } from '../../lib/id';
 // never used as an identity/dedup key (Stream C correction — liability
 // type is a classification, never an identity).
 const SMART_LOAN_TYPES: LiabilityType[] = ['mortgage', 'car_loan', 'personal_loan'];
+
+// Deferred credit-card handoff (Stream D, D1, corrected): the credit_card
+// type chip used to call onClose() and onSelectCreditCard() in the same
+// synchronous handler, batching this sheet's own Modal dismissal and
+// AddCreditCardModal's presentation into one React commit — the same
+// same-tick dual-native-Modal-transition defect fixed in
+// AddAnythingSheet.tsx/OptionsSheet.tsx. KeyboardSheet now forwards RN's
+// real onDismiss (native-dismissal-complete signal) through to its own
+// underlying Modal, so on iOS this sheet defers onSelectCreditCard to that
+// real event — never a timer. RN's Modal never calls onDismiss on Android,
+// so CREDIT_CARD_HANDOFF_DEFER_MS below is an Android-only fallback
+// HEURISTIC, not a documented or guaranteed RN transition duration — it
+// matches OptionsSheet.tsx's own long-standing Android fallback constant
+// purely for consistency with an existing, already-accepted approximation
+// in this codebase.
+const CREDIT_CARD_HANDOFF_DEFER_MS = 300;
 
 // Type-aware field/placeholder wording (Stream C correction §5) — "Value"/
 // "Label" read as generic and, for a liability, "Value" can be confused
@@ -124,9 +140,51 @@ function messageForSaveFailure(err: unknown): string {
   return err instanceof LiabilityFailure && err.reason === 'duplicate_linked_repayment' ? DUPLICATE_REPAYMENT_ERROR : GENERIC_SAVE_ERROR;
 }
 
+export type LinkedRepaymentLookup = { status: 'none' } | { status: 'one'; repayment: RecurringItem } | { status: 'ambiguous' };
+
+/** VID-001 correction — resolves the existing repayment (if any) linked to
+ * a liability, using the exact same "any recurring item with this exact
+ * linkedLiabilityId" definition upsertLinkedRecurringItem itself uses
+ * (AppStateContext.tsx) — no additional active/type filter, since the
+ * canonical persistence and duplicate-detection path applies none either.
+ * A narrower filter here would let this form's notion of "the" linked
+ * repayment silently disagree with what Save actually reads/writes. */
+export function findLinkedRepayment(recurringItems: RecurringItem[], liabilityId: string): LinkedRepaymentLookup {
+  const matches = recurringItems.filter((r) => r.linkedLiabilityId === liabilityId);
+  if (matches.length === 0) return { status: 'none' };
+  if (matches.length > 1) return { status: 'ambiguous' };
+  return { status: 'one', repayment: matches[0] };
+}
+
+export interface RepaymentPrefill {
+  amount: string;
+  frequency: PayFrequency;
+  dayOfMonth: string;
+  nextDueDate: string | null;
+}
+
+/** VID-001 correction — derives the exact repayment form-field values to
+ * prefill from an existing linked RecurringItem. Monthly: prefers the
+ * preserved scheduleAnchorDay over deriving a day from nextDueDate, which
+ * may already be clamped to a short month (e.g. a day-31 anchor's most
+ * recent occurrence landing on Feb 28) — mirrors RecurringItem's own
+ * documented fallback (models.ts): "absent on data created before this
+ * field existed; every reader falls back to the current nextDueDate's own
+ * day-of-month in that case." Weekly/fortnightly: prefills the raw
+ * nextDueDate unchanged, matching both the exact shape the date picker
+ * itself already writes (date.toISOString()) and what performSave already
+ * reads back out for that branch. */
+export function prefillValuesFromRepayment(repayment: RecurringItem): RepaymentPrefill {
+  if (repayment.frequency === 'monthly') {
+    const day = repayment.scheduleAnchorDay ?? new Date(repayment.nextDueDate).getDate();
+    return { amount: String(repayment.amount), frequency: repayment.frequency, dayOfMonth: String(day), nextDueDate: null };
+  }
+  return { amount: String(repayment.amount), frequency: repayment.frequency, dayOfMonth: '', nextDueDate: repayment.nextDueDate };
+}
+
 export function AddWealthItemModal({
   visible,
-  kind,
+  kind: kindProp,
   editAsset,
   editLiability,
   presetAssetType,
@@ -185,6 +243,23 @@ export function AddWealthItemModal({
     updateLinkedRepaymentOnly,
   } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
+  // Dismissal-lifecycle correction — `kind` shadows the `kindProp` prop with
+  // a local, frozen copy used by every render/title/form-identity decision
+  // below (unchanged call sites — this is a rename of what `kind` refers
+  // to, not a rewrite of its ~25 read sites). Synced from `kindProp` ONLY
+  // inside the reset-on-open effect below, which already gates on
+  // `if (!visible) return`. Without this, a caller that clears its own
+  // routing state in the same synchronous call as onClose() (e.g.
+  // FloatingAddButton's `onClose={() => setWealthModal(null)}`, which
+  // flips `kind` to `null` on the very next render) would cause this
+  // form's own title/type-chip identity to visibly change to a DIFFERENT
+  // kind's content while RN's Modal is still genuinely rendering it during
+  // the physical dismissal — e.g. an "Add asset" form flashing to "Add
+  // Personal Loan" as it closes. Freezing `kind` the same way `liabilityType`/
+  // `assetType`/etc. (all local state, already correctly frozen) already
+  // were means the outgoing form's identity now stays stable for the whole
+  // dismissal, exactly like those other fields already did.
+  const [kind, setKind] = useState<'asset' | 'liability' | null>(kindProp);
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
   const [interestRate, setInterestRate] = useState('');
@@ -268,6 +343,29 @@ export function AddWealthItemModal({
   // or reopening after close) — never for a re-render of the same open
   // session.
   const submittingRef = useRef(false);
+  // First-accepted-tap-wins deferred credit-card handoff (Stream D, D1,
+  // corrected). On iOS, runPendingCreditCardHandoff is passed to
+  // KeyboardSheet's onDismiss — the real native Modal dismissal-complete
+  // event, no timer involved. RN never calls onDismiss on Android, so
+  // ccHandoffTimerRef below is an Android-only fallback there, owned by
+  // this ref, cleared before every reschedule and on unmount. visible is
+  // intentionally NOT a trigger for clearing the guard/pending state — the
+  // selection must survive the visible prop turning false so it can still
+  // be delivered once the real iOS onDismiss (or the Android fallback)
+  // fires shortly after.
+  const ccHandoffInProgressRef = useRef(false);
+  const ccHandoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stream D, Option B runtime spike: KeyboardSheet's animationType for its
+  // NEXT dismissal transition. Stays 'slide' for every ordinary close
+  // (Cancel/backdrop/swipe/Android-Back). The credit-card type-chip
+  // handler below flips it to 'none' and calls onClose() synchronously in
+  // the same handler, so React batches both into the same commit — the
+  // native Modal (owned by KeyboardSheet) receives animationType='none'
+  // and visible=false together, making that one dismissal instant instead
+  // of animated. Must NOT be reset merely because `visible` became false —
+  // see runPendingCreditCardHandoff() and the fresh-open effect below for
+  // the only two places it resets.
+  const [dismissAnimationType, setDismissAnimationType] = useState<'slide' | 'none'>('slide');
   // Stream C correction (Issue 6), Round-5 correction (Issue 1) — if the
   // guarded mutation below ever throws OR the production transition
   // reports `applied: false` (an update target that no longer exists,
@@ -304,6 +402,14 @@ export function AddWealthItemModal({
   // "already has a repayment" copy below.
   const targetLiability = targetLiabilityId ? data.liabilities.find((l) => l.id === targetLiabilityId) ?? null : null;
   const targetHasExistingRepayment = targetLiability ? data.recurringItems.some((r) => r.linkedLiabilityId === targetLiability.id) : false;
+  // VID-001 correction — the single source of truth for whether the
+  // target's linked repayment can be safely prefilled (exactly one match)
+  // or must instead block the whole repayment-update session (more than
+  // one match, an already-anomalous state). Recomputed fresh every render
+  // from live data, so it can never drift from what chooseExistingLiability
+  // ForRepayment prefilled at selection time.
+  const linkedRepaymentLookup = targetLiability ? findLinkedRepayment(data.recurringItems, targetLiability.id) : null;
+  const hasAmbiguousLinkedRepayment = linkedRepaymentLookup?.status === 'ambiguous';
   const targetLinkedAssetLabel = targetLiability
     ? targetLiability.type === 'car_loan' && targetLiability.linkedVehicleAssetId
       ? data.assets.find((a) => a.id === targetLiability.linkedVehicleAssetId)?.label ?? null
@@ -353,6 +459,28 @@ export function AddWealthItemModal({
     setTargetLiabilityId(l.id);
     setEditingLoanDetails(false);
     prefillFromLiability(l);
+    // VID-001 correction — prefillFromLiability only ever populated the
+    // LIABILITY's own fields (balance/rate/link); the repayment amount/
+    // frequency/day/date live entirely on a separate, linked RecurringItem
+    // and were never read here, so this "Update" form previously always
+    // rendered them blank even when a correct schedule already existed.
+    // Exactly one linked match: prefill it. Zero matches: leave blank — a
+    // genuine first-ever schedule. More than one match: also leave blank
+    // here (never guess which one) — hasAmbiguousLinkedRepayment blocks
+    // the session below instead.
+    const lookup = findLinkedRepayment(data.recurringItems, l.id);
+    if (lookup.status === 'one') {
+      const prefill = prefillValuesFromRepayment(lookup.repayment);
+      setRepaymentAmount(prefill.amount);
+      setRepaymentFrequency(prefill.frequency);
+      setRepaymentDayOfMonth(prefill.dayOfMonth);
+      setRepaymentNextDueDate(prefill.nextDueDate);
+    } else {
+      setRepaymentAmount('');
+      setRepaymentFrequency('monthly');
+      setRepaymentDayOfMonth('');
+      setRepaymentNextDueDate(null);
+    }
     setShowLiabilitySelector(false);
   }
   function chooseAddNewLiabilityForRepayment() {
@@ -382,6 +510,16 @@ export function AddWealthItemModal({
     // A genuinely new form session — see submittingRef's own comment for
     // why this is the only place it's ever cleared.
     submittingRef.current = false;
+    // Sync the frozen `kind` (see its own declaration comment above) from
+    // the live `kindProp` — only reachable here, past the `!visible` guard,
+    // so a close that clears the caller's own routing state can never pull
+    // this form's rendered identity out from under it mid-dismissal.
+    setKind(kindProp);
+    // A fresh open must never carry over a stale in-progress credit-card
+    // handoff (Stream D, D1) or non-animated dismissal override (Stream D,
+    // Option B) from a previous time this sheet was shown.
+    ccHandoffInProgressRef.current = false;
+    setDismissAnimationType('slide');
     setSaveErrorMessage(null);
     if (editAsset) {
       setLabel(editAsset.label);
@@ -434,20 +572,47 @@ export function AddWealthItemModal({
       // already exists; otherwise (0 existing, or intent is 'create')
       // this falls straight through to a blank "Add [Type]" form, exactly
       // like every other liability type already worked.
-      const matching = kind === 'liability' ? data.liabilities.filter((l) => l.type === resolvedType) : [];
-      const shouldOfferSelector = kind === 'liability' && (liabilityFlowIntent ?? 'create') === 'select_or_create_for_repayment' && matching.length > 0;
+      // Reads kindProp (the live prop), not the local `kind` — `setKind`
+      // above hasn't taken effect yet within this same synchronous callback
+      // (React state updates apply on the next render), so `kind` here
+      // would still be the PREVIOUS session's frozen value. This effect is
+      // exactly where fresh state is established FROM the live prop.
+      const matching = kindProp === 'liability' ? data.liabilities.filter((l) => l.type === resolvedType) : [];
+      const shouldOfferSelector = kindProp === 'liability' && (liabilityFlowIntent ?? 'create') === 'select_or_create_for_repayment' && matching.length > 0;
       setShowLiabilitySelector(shouldOfferSelector);
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
     }
-    setFormStep(kind === 'asset' && !editAsset && !presetAssetType ? 'category' : 'details');
+    setFormStep(kindProp === 'asset' && !editAsset && !presetAssetType ? 'category' : 'details');
     // data.liabilities is read only to decide whether to offer the
     // selector on open — deliberately not a dependency, matching the
     // established convention for this effect (it always reflects data at
     // the moment the effect fires, via closure, same as every other field
     // here that reads `data`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, kind, editAsset, editLiability, presetAssetType, presetLiabilityType, liabilityFlowIntent]);
+  }, [visible, kindProp, editAsset, editLiability, presetAssetType, presetLiabilityType, liabilityFlowIntent]);
+
+  useEffect(() => {
+    return () => {
+      if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
+    };
+  }, []);
+
+  // Invoked once either the real iOS onDismiss fires or the Android
+  // fallback timer elapses. Fires on EVERY dismissal (Cancel/backdrop/
+  // swipe/back included, since KeyboardSheet's onDismiss is unconditional
+  // once wired) — ccHandoffInProgressRef doubles as the "is a handoff
+  // actually pending" check, so an ordinary dismissal with no credit-card
+  // tap ever having occurred is always a safe no-op here.
+  function runPendingCreditCardHandoff() {
+    if (!ccHandoffInProgressRef.current) return;
+    ccHandoffInProgressRef.current = false;
+    onSelectCreditCard?.();
+    // Reset only now that the pending handoff has been delivered and this
+    // sheet's own native dismissal is already complete (that's what
+    // triggered this function) — never merely on `visible` becoming false.
+    setDismissAnimationType('slide');
+  }
 
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
@@ -466,7 +631,18 @@ export function AddWealthItemModal({
     label.trim().length > 0 &&
     !isNaN(parseFloat(value)) &&
     (!requiresNewPropertyName || newPropertyName.trim().length > 0) &&
-    (!requiresNewVehicleName || newVehicleName.trim().length > 0);
+    (!requiresNewVehicleName || newVehicleName.trim().length > 0) &&
+    // VID-001 correction — an ambiguous linked repayment must block Save
+    // entirely, not merely rely on the reactive duplicate_linked_repayment
+    // guard inside updateLinkedRepaymentOnlyTransition, which never even
+    // runs when the submitted repaymentPayload is undefined (a blank
+    // repayment session is a safe no-op there, not a duplicate check).
+    // Gating canSave here — checked both by the Save button's own
+    // `disabled` and defensively again at the top of performSave — is what
+    // actually guarantees this session can never mutate the liability or
+    // its linked recurring item while ambiguous, regardless of what (if
+    // anything) the user types.
+    !hasAmbiguousLinkedRepayment;
   const title =
     kind === 'asset'
       ? assetType === 'savings'
@@ -899,6 +1075,8 @@ export function AddWealthItemModal({
           <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
         </>
       }
+      onDismiss={Platform.OS === 'ios' ? runPendingCreditCardHandoff : undefined}
+      animationType={dismissAnimationType}
     >
       {saveErrorMessage ? (
         <View style={styles.helperBox}>
@@ -936,9 +1114,30 @@ export function AddWealthItemModal({
                 key={t.value}
                 style={[styles.typeChip, active ? styles.typeChipActive : null]}
                 onPress={() => {
+                  // First-accepted-tap-wins deferred handoff (Stream D,
+                  // D1, corrected) — onSelectCreditCard is never called in
+                  // the same tick as onClose(): on iOS it's deferred to
+                  // KeyboardSheet's real onDismiss (wired below); only on
+                  // Android — where RN never calls onDismiss — is the
+                  // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
                   if (kind === 'liability' && t.value === 'credit_card') {
+                    if (ccHandoffInProgressRef.current) return;
+                    ccHandoffInProgressRef.current = true;
+                    // Skip the animated dismissal for an accepted handoff
+                    // (Stream D, Option B) — flips animationType to 'none'
+                    // in the SAME synchronous call as onClose(), so React
+                    // 18's automatic batching lands both in one commit
+                    // (verified against RN's own Fabric
+                    // RCTModalHostViewComponentView.mm: updateProps applies
+                    // animationType before ensurePresentedOnlyIfNeeded
+                    // checks visible, within one synchronous native call
+                    // per commit).
+                    setDismissAnimationType('none');
                     onClose();
-                    onSelectCreditCard?.();
+                    if (Platform.OS === 'android') {
+                      if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
+                      ccHandoffTimerRef.current = setTimeout(runPendingCreditCardHandoff, CREDIT_CARD_HANDOFF_DEFER_MS);
+                    }
                     return;
                   }
                   if (kind === 'asset') {
@@ -1169,6 +1368,19 @@ export function AddWealthItemModal({
         </>
       ) : null}
       {isNewLoan ? (
+        hasAmbiguousLinkedRepayment ? (
+          // VID-001 correction — more than one recurring item already links
+          // to this liability (an already-anomalous state). Never guess
+          // which one to show or let this look like an ordinary blank
+          // first-time-schedule form: the input fields are not rendered at
+          // all, canSave is false (blocking Save above this render), and
+          // this reuses the SAME copy Save's own duplicate_linked_repayment
+          // failure already shows elsewhere in this file — one message,
+          // not a second, differently-worded one.
+          <View style={styles.helperBox}>
+            <Text style={styles.helperText}>{DUPLICATE_REPAYMENT_ERROR}</Text>
+          </View>
+        ) : (
         <>
           <View style={styles.helperBox}>
             <Text style={styles.helperText}>
@@ -1249,6 +1461,7 @@ export function AddWealthItemModal({
             <Text style={styles.deferRepaymentText}>I'll add the repayment schedule later</Text>
           </TouchableOpacity>
         </>
+        )
       ) : null}
       {isEditing ? (
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
