@@ -34,6 +34,7 @@ export function KeyboardSheet({
   onDismiss,
   animationType = 'slide',
   minSheetHeight,
+  onRequestDismiss,
   fixedSheetHeight,
 }: {
   visible: boolean;
@@ -83,6 +84,24 @@ export function KeyboardSheet({
    * internal screen change, avoiding a visible height jump when content is
    * swapped without a fresh Modal presentation. */
   minSheetHeight?: number;
+  /** Host-delegated dismiss decision (correction pass, Defect 1 fix) — when
+   * supplied, this component hands the ENTIRE dismiss decision to the host
+   * instead of using its own isDirty/discardTitle/discardMessage-driven
+   * confirmDiscardIfDirty flow: backdrop-tap, Android back, and the native
+   * Modal's own onRequestClose call this immediately; an interactive swipe
+   * dismiss first plays springBack() to completion (so the sheet is fully
+   * settled, never mid-motion, before any host-owned alert can appear) and
+   * only then calls this — never both at once, per the correction's
+   * dismissal-presentation requirement. The host is solely responsible for
+   * deciding whether anything needs confirming and for reopening any
+   * parked draft; this component makes no assumption about what "dismiss"
+   * ends up meaning. `isDirty` is still read (via isDirtyRef) purely to
+   * decide whether a swipe should spring back before delegating, or just
+   * dismiss immediately like an ordinary clean swipe-to-close — the host,
+   * not this component, still decides what actually happens once called.
+   * Every existing caller that omits this keeps its own original
+   * isDirty-gated confirmDiscardIfDirty behavior unchanged. */
+  onRequestDismiss?: () => void;
   /** Opt-in fixed total sheet height, in points (Option B premium-transition
    * correction) — omitted by every existing caller, which keeps today's
    * intrinsic/85%-capped/optional-minSheetHeight sizing byte-identical. A
@@ -185,11 +204,17 @@ export function KeyboardSheet({
   }
 
   function requestClose() {
+    if (onRequestDismiss) {
+      onRequestDismiss();
+      return;
+    }
     confirmDiscardIfDirty(isDirty, dismiss, discardTitle, discardMessage);
   }
 
-  function springBack() {
-    Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+  function springBack(onComplete?: () => void) {
+    Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start(() => {
+      onComplete?.();
+    });
   }
 
   // PanResponder.create is only ever invoked once, on the first render (its
@@ -216,6 +241,8 @@ export function KeyboardSheet({
   discardMessageRef.current = discardMessage;
   const gesturesEnabledRef = useRef(gesturesEnabled);
   gesturesEnabledRef.current = gesturesEnabled;
+  const onRequestDismissRef = useRef(onRequestDismiss);
+  onRequestDismissRef.current = onRequestDismiss;
 
   const panResponder = useRef(
     PanResponder.create({
@@ -226,7 +253,18 @@ export function KeyboardSheet({
       },
       onPanResponderRelease: (_, gesture) => {
         if (gesture.dy > DISMISS_DISTANCE || gesture.vy > DISMISS_VELOCITY) {
-          if (isDirtyRef.current) {
+          if (onRequestDismissRef.current) {
+            // Delegated dismiss — never show a host-owned alert while the
+            // sheet still looks like it's mid-swipe. A clean (non-dirty)
+            // swipe still dismisses immediately, exactly like the
+            // non-delegated branch below, so an ordinary swipe-to-close
+            // isn't punished with an extra spring-back-then-close beat.
+            if (isDirtyRef.current) {
+              springBack(() => onRequestDismissRef.current?.());
+            } else {
+              dismiss();
+            }
+          } else if (isDirtyRef.current) {
             springBack();
             confirmDiscardIfDirty(true, dismiss, discardTitleRef.current, discardMessageRef.current);
           } else {

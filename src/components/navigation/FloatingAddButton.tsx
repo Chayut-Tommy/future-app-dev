@@ -2,15 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { AddAnythingSheet, AddAnythingKind } from './AddAnythingSheet';
-import { AddIncomeModal } from '../income/AddIncomeModal';
-import { QuickAddModal } from '../dashboard/QuickAddModal';
-import { AddRecurringItemModal } from '../money/AddRecurringItemModal';
-import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
-import { AddCreditCardModal } from '../credit/AddCreditCardModal';
-import { AddGoalModal } from '../goals/AddGoalModal';
-import { TransferModal } from '../wealth/TransferModal';
-import { AssetType, LiabilityType } from '../../types/models';
+import { AddAnythingSheet } from './AddAnythingSheet';
 
 const TAB_BAR_CLEARANCE = Platform.OS === 'ios' ? 104 : 80;
 // Deliberately larger than any tab bar icon (22px) so "+" unmistakably
@@ -26,68 +18,18 @@ const BUTTON_SIZE = 64;
  * 4-tab layout — rather than tucked in a corner, so it's reachable with
  * one thumb from either hand and reads as deliberate, not an afterthought
  * (PRD ask, §13).
+ *
+ * Full-workspace extension — every one of AddAnythingSheet's thirteen
+ * tiles now transitions, inside that one persistent sheet, into its own
+ * embedded destination form. This component no longer owns any of the
+ * eight separate standalone Modals (Income/Expense/Income received/Bill/
+ * Transfer/Liability handoff/Wealth/Credit card/Goal) it used to mount
+ * alongside AddAnythingSheet as a dismiss-and-defer fallback — that
+ * mechanism, and the onSelect callback it depended on, are fully retired.
  */
 export function FloatingAddButton() {
-  const { spacing, colors, glow } = useTheme();
+  const { colors, glow } = useTheme();
   const [sheetVisible, setSheetVisible] = useState(false);
-  const [incomeVisible, setIncomeVisible] = useState(false);
-  const [incomeReceivedVisible, setIncomeReceivedVisible] = useState(false);
-  const [expenseVisible, setExpenseVisible] = useState(false);
-  const [billVisible, setBillVisible] = useState(false);
-  const [transferVisible, setTransferVisible] = useState(false);
-  const [goalVisible, setGoalVisible] = useState(false);
-  const [creditCardVisible, setCreditCardVisible] = useState(false);
-  // Generalized from a mortgage-only `mortgageVisible` boolean (Stream C) —
-  // AddRecurringItemModal's Mortgage/Car Loan/Personal Loan presets all
-  // hand off here with the exact LiabilityType, so one AddWealthItemModal
-  // instance below opens on the matching type chip regardless of which was
-  // picked.
-  const [loanHandoff, setLoanHandoff] = useState<LiabilityType | null>(null);
-  const [wealthModal, setWealthModal] = useState<{ kind: 'asset' | 'liability'; presetAssetType?: AssetType } | null>(null);
-
-  function handleSelect(kind: AddAnythingKind) {
-    switch (kind) {
-      case 'income':
-        setIncomeVisible(true);
-        break;
-      case 'income_received':
-        setIncomeReceivedVisible(true);
-        break;
-      case 'expense':
-        setExpenseVisible(true);
-        break;
-      case 'bill':
-        setBillVisible(true);
-        break;
-      case 'transfer':
-        setTransferVisible(true);
-        break;
-      case 'cash':
-        setWealthModal({ kind: 'asset', presetAssetType: 'cash' });
-        break;
-      case 'savings':
-        setWealthModal({ kind: 'asset', presetAssetType: 'savings' });
-        break;
-      case 'investment':
-        setWealthModal({ kind: 'asset', presetAssetType: 'etf' });
-        break;
-      case 'property':
-        setWealthModal({ kind: 'asset', presetAssetType: 'property' });
-        break;
-      case 'retirement':
-        setWealthModal({ kind: 'asset', presetAssetType: 'super' });
-        break;
-      case 'liability':
-        setWealthModal({ kind: 'liability' });
-        break;
-      case 'creditCard':
-        setCreditCardVisible(true);
-        break;
-      case 'goal':
-        setGoalVisible(true);
-        break;
-    }
-  }
 
   const styles = useMemo(
     () =>
@@ -110,7 +52,7 @@ export function FloatingAddButton() {
           ...glow(colors.accent),
         },
       }),
-    [spacing, colors, glow]
+    [colors, glow]
   );
 
   return (
@@ -118,31 +60,7 @@ export function FloatingAddButton() {
       <TouchableOpacity style={styles.button} onPress={() => setSheetVisible(true)} activeOpacity={0.85}>
         <Ionicons name="add" size={34} color={colors.onAccent} />
       </TouchableOpacity>
-      <AddAnythingSheet visible={sheetVisible} onClose={() => setSheetVisible(false)} onSelect={handleSelect} />
-      <AddIncomeModal visible={incomeVisible} onClose={() => setIncomeVisible(false)} />
-      <QuickAddModal visible={expenseVisible} onClose={() => setExpenseVisible(false)} />
-      <QuickAddModal visible={incomeReceivedVisible} onClose={() => setIncomeReceivedVisible(false)} initialType="income" />
-      <AddRecurringItemModal visible={billVisible} onClose={() => setBillVisible(false)} onSelectLoan={(type) => setLoanHandoff(type)} />
-      <AddWealthItemModal
-        visible={loanHandoff !== null}
-        kind="liability"
-        presetLiabilityType={loanHandoff ?? undefined}
-        liabilityFlowIntent="select_or_create_for_repayment"
-        onClose={() => setLoanHandoff(null)}
-      />
-      <TransferModal visible={transferVisible} onClose={() => setTransferVisible(false)} />
-      <AddGoalModal visible={goalVisible} onClose={() => setGoalVisible(false)} />
-      <AddWealthItemModal
-        visible={wealthModal !== null}
-        kind={wealthModal?.kind ?? null}
-        presetAssetType={wealthModal?.presetAssetType}
-        onSelectCreditCard={() => {
-          setWealthModal(null);
-          setCreditCardVisible(true);
-        }}
-        onClose={() => setWealthModal(null)}
-      />
-      <AddCreditCardModal visible={creditCardVisible} onClose={() => setCreditCardVisible(false)} />
+      <AddAnythingSheet visible={sheetVisible} onClose={() => setSheetVisible(false)} />
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -15,6 +15,7 @@ import { precedingOccurrence, isPrecedingOccurrenceEligibleForPrompt } from '../
 import { generateId } from '../../lib/id';
 import { categoryEmoji } from '../../lib/categoryEmoji';
 import { brand } from '../../lib/brand';
+import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 const INCOME_SOURCE_IDS = ['cat-salary', 'cat-side-hustle', 'cat-investment-income', 'cat-rental-income', 'cat-gift', 'cat-other-income'];
 
@@ -77,16 +78,33 @@ const FREQUENCIES: { value: PayFrequency; label: string }[] = [
  * see one aggregate `monthlyIncome`, kept in sync automatically in
  * AppStateContext (`syncIncomeAggregate`) from however many sources exist.
  */
-export function AddIncomeModal({
-  visible,
-  onClose,
-  editItem,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  /** Present = editing this existing income source instead of adding a new one. */
-  editItem?: RecurringItem | null;
-}) {
+export type AddIncomeModalHandle = EmbeddedStepHandle;
+
+export const AddIncomeModal = forwardRef<
+  AddIncomeModalHandle,
+  {
+    visible: boolean;
+    onClose: () => void;
+    /** Present = editing this existing income source instead of adding a new one. */
+    editItem?: RecurringItem | null;
+    /** True only when rendered inside the embedded Add Anything -> Income
+     * source route — activates real dirty-detection and a "Discard income?"
+     * confirmation on Cancel/backdrop/swipe/Android Back, and reroutes the
+     * three internal steps (category/details/midCycle) into plain content
+     * returned to the host instead of each wrapping its own KeyboardSheet.
+     * All three steps stay internal to this one embedded route — the host
+     * never sees or manages formStep itself. */
+    embedded?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
+    onCanSaveChange?: (canSave: boolean) => void;
+    onTitleChange?: (title: string) => void;
+    onSaveSuccess?: () => void;
+    onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+  }
+>(function AddIncomeModal(
+  { visible, onClose, editItem, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
+  ref
+) {
   const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem, addRecurringIncomeWithMidCycleOccurrence } = useAppState();
   const { requestPrompt } = useSavingsAllocationPrompt();
   const { colors, radius, spacing, typography } = useTheme();
@@ -188,6 +206,26 @@ export function AddIncomeModal({
     nextDueDate !== initialSnapshot.current.nextDueDate ||
     unknownDate !== initialSnapshot.current.unknownDate;
 
+  // Correction pass (Defect 2 fix) — while embedded, the host's global
+  // parked-draft guard must see this form as dirty for as long as ANY
+  // unsaved change has ever existed this session across ALL THREE internal
+  // steps, not only while isDetailsDirty is momentarily true — see
+  // QuickAddModal.tsx's identical correction for the full reasoning. The
+  // STANDALONE requestCancel/handleRequestClose paths above intentionally
+  // keep reading the raw isDetailsDirty — the latch only changes what the
+  // HOST is told via onDirtyChange.
+  const hasBeenDirtyRef = useRef(false);
+  if (embedded && isDetailsDirty) hasBeenDirtyRef.current = true;
+  const reportedDirty = embedded ? hasBeenDirtyRef.current : isDetailsDirty;
+
+  useEffect(() => {
+    onDirtyChange?.(reportedDirty);
+  }, [reportedDirty, onDirtyChange]);
+
+  useEffect(() => {
+    onTitleChange?.(formStep === 'category' ? 'Add income source' : formStep === 'midCycle' ? 'One more thing' : isEditing ? 'Edit income source' : 'Add income source');
+  }, [formStep, isEditing, onTitleChange]);
+
   // B2.4 — existing Cash/Savings assets a backfilled "add to balance"
   // occurrence could credit. `id: undefined` represents Cash specifically —
   // it maps directly to targetAssetId being omitted, which
@@ -218,8 +256,18 @@ export function AddIncomeModal({
   const canSave = label.trim().length > 0 && parsedIncome.valid && (isIrregular || unknownDate || !!nextDueDate);
   const monthlyPreview = parsedIncome.valid ? toMonthlyAmount(parsedIncome.amount, frequency) : null;
 
+  // Save is only ever reachable from the details step — standalone has no
+  // Save button on 'category'/'midCycle' at all, and embedded must not
+  // expose one either (a stray tap while the mid-cycle prompt's own
+  // dedicated option buttons are the only valid next action must not
+  // silently re-trigger the mid-cycle branch below and mint a fresh,
+  // unused midCycleRecurringItemId).
+  useEffect(() => {
+    onCanSaveChange?.(canSave && formStep === 'details');
+  }, [canSave, formStep, onCanSaveChange]);
+
   function handleSave() {
-    if (!canSave || !parsedIncome.valid) return;
+    if (!canSave || !parsedIncome.valid || formStep !== 'details') return;
     // Qualification and the request itself are computed and fired
     // synchronously, before any state mutation below — the request must
     // survive regardless of what happens to this component afterward
@@ -290,7 +338,10 @@ export function AddIncomeModal({
     } else {
       addRecurringItem(payload);
     }
-    onClose();
+    // Embedded: hand control back to the host, which closes the whole Add
+    // Anything journey exactly once. Standalone: unchanged direct onClose().
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function handleDelete() {
@@ -309,6 +360,26 @@ export function AddIncomeModal({
     confirmDiscardIfDirty(isDetailsDirty, onClose, 'Discard income?', 'Your entered income details will be lost.');
   }
 
+  // Full-workspace extension — 'back' never discards (draft preserved
+  // across Back, matching every other newly-embedded destination); every
+  // other reason routes through the same dirty check requestCancel above
+  // already uses standalone, reusing isDetailsDirty as the single source of
+  // truth across all three internal steps (it is correctly false on
+  // 'category' and correctly still reflects the details fields on
+  // 'midCycle', since those fields are never cleared until a genuine save).
+  function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(isDetailsDirty, () => onConfirmedClose?.(reason), 'Discard income?', 'Your entered income details will be lost.');
+  }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: handleRequestClose,
+  }));
+
   // B2.4 — options 3/4 ("first payment is later" / "not sure") both save
   // the recurring item exactly as the ordinary path already would: no
   // transaction, no balance effect, the entered next-payment date
@@ -318,7 +389,8 @@ export function AddIncomeModal({
     if (!midCyclePayload || midCycleSubmitting) return;
     setMidCycleSubmitting(true);
     addRecurringItem(midCyclePayload);
-    onClose();
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function chooseMidCycleAlreadyIncluded() {
@@ -326,7 +398,8 @@ export function AddIncomeModal({
     setMidCycleSubmitting(true);
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'already_included' };
     addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
-    onClose();
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function chooseMidCycleAddToBalance(targetAssetId: string | undefined) {
@@ -334,7 +407,8 @@ export function AddIncomeModal({
     setMidCycleSubmitting(true);
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'add_to_balance', targetAssetId };
     addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
-    onClose();
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function chooseSource(sourceId: string) {
@@ -438,14 +512,8 @@ export function AddIncomeModal({
   );
 
   if (formStep === 'midCycle' && midCyclePayload && midCycleDate) {
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="💼 One more thing"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} disabled={midCycleSubmitting} />}
-      >
+    const midCycleContent = (
+      <>
         <Text style={styles.midCycleTitle}>{`Did you receive your ${formatDayMonth(midCycleDate)} income?`}</Text>
         <Text style={styles.midCycleBody}>Recording it helps Navilo understand this month more accurately.</Text>
 
@@ -503,19 +571,27 @@ export function AddIncomeModal({
             </TouchableOpacity>
           </>
         )}
-      </KeyboardSheet>
+      </>
     );
-  }
 
-  if (formStep === 'category') {
+    if (embedded) return midCycleContent;
+
     return (
       <KeyboardSheet
         visible={visible}
         onClose={onClose}
         isDirty={false}
-        title="💼 Add income source"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+        title="💼 One more thing"
+        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} disabled={midCycleSubmitting} />}
       >
+        {midCycleContent}
+      </KeyboardSheet>
+    );
+  }
+
+  if (formStep === 'category') {
+    const categoryContent = (
+      <>
         {/* UX correction — the helper copy was rewritten to "Tell Navilo
             where your income comes from." (shorter, more direct). No
             numberOfLines/ellipsizeMode is set — RN's numberOfLines={n}
@@ -536,26 +612,26 @@ export function AddIncomeModal({
             </TouchableOpacity>
           ))}
         </View>
+      </>
+    );
+
+    if (embedded) return categoryContent;
+
+    return (
+      <KeyboardSheet
+        visible={visible}
+        onClose={onClose}
+        isDirty={false}
+        title="💼 Add income source"
+        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+      >
+        {categoryContent}
       </KeyboardSheet>
     );
   }
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={onClose}
-      title={isEditing ? 'Edit income source' : 'Add income source'}
-      isDirty={isDetailsDirty}
-      discardTitle="Discard income?"
-      discardMessage="Your entered income details will be lost."
-      gesturesEnabled={!pickerOpen}
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
-        </>
-      }
-    >
+  const content = (
+    <>
       <Text style={styles.label}>Name</Text>
       <TextInput style={styles.input} placeholder="e.g. Salary" placeholderTextColor={colors.textMuted} value={label} onChangeText={setLabel} />
 
@@ -660,9 +736,31 @@ export function AddIncomeModal({
           <Text style={styles.deleteText}>Delete income source</Text>
         </TouchableOpacity>
       ) : null}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={onClose}
+      title={isEditing ? 'Edit income source' : 'Add income source'}
+      isDirty={isDetailsDirty}
+      discardTitle="Discard income?"
+      discardMessage="Your entered income details will be lost."
+      gesturesEnabled={!pickerOpen}
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+        </>
+      }
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});
 
 const SOURCE_LABEL: Record<string, string> = {
   'cat-salary': 'Salary',

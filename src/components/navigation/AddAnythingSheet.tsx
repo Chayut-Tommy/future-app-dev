@@ -7,14 +7,22 @@ import { brand } from '../../lib/brand';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { TransferForm, TransferFormHandle } from '../wealth/TransferForm';
-import { AddWealthItemModal, AddWealthItemModalHandle } from '../wealth/AddWealthItemModal';
-import { AssetType } from '../../types/models';
-import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { AddWealthItemModal, AddWealthItemModalHandle, LIABILITY_DISPLAY_NAME } from '../wealth/AddWealthItemModal';
+import { AddRecurringItemModal, AddRecurringItemModalHandle } from '../money/AddRecurringItemModal';
+import { AddIncomeModal, AddIncomeModalHandle } from '../income/AddIncomeModal';
+import { QuickAddModal, QuickAddModalHandle } from '../dashboard/QuickAddModal';
+import { AddCreditCardModal, AddCreditCardModalHandle } from '../credit/AddCreditCardModal';
+import { AddGoalModal, AddGoalModalHandle } from '../goals/AddGoalModal';
+import { AssetType, LiabilityType } from '../../types/models';
+import { decideAssetTileSelection } from './addAssetTransitionController';
 import {
-  reduceAddAssetTransition,
-  initialAddAssetTransitionState,
-  decideAssetTileSelection,
-} from './addAssetTransitionController';
+  AddWorkspaceRoute,
+  reduceAddWorkspaceTransition,
+  initialAddWorkspaceTransitionState,
+  isRouteActiveInTransition,
+  isRouteSettledFront,
+  EmbeddedCloseReason,
+} from './addWorkspaceTransitionController';
 import { computeAddWorkspaceGeometry } from './addWorkspaceGeometry';
 
 export type AddAnythingKind =
@@ -79,14 +87,13 @@ const GROUPS: AddAnythingGroup[] = [
   },
 ];
 
-// RN Modal's onDismiss (fires once native dismissal has actually finished)
-// is iOS-only — this approximates the same wait on Android, which never
-// fires it. Still load-bearing for every kind EXCEPT 'transfer' (Stream D,
-// persistent-host proof-of-pattern): choosing one of those destinations
-// closes this whole sheet and defers the actual onSelect() call until this
-// Modal's own dismissal has genuinely completed, so the destination Modal
-// is never presented while this one is still mid-close.
-const ANDROID_DISMISS_FALLBACK_MS = 300;
+// Full-workspace extension — every tile now transitions, inside this
+// persistent host, into its own embedded destination (see
+// addWorkspaceTransitionController.ts). No tile any longer closes this
+// sheet and hands off to a separate, standalone Modal — the old dismiss-
+// and-defer fallback (choose()/onSelect/ANDROID_DISMISS_FALLBACK_MS) is
+// fully retired along with it, satisfying the explicit Phase 2 acceptance
+// criterion "no remaining destination opens a second Modal".
 
 // Navigation Transitions, Option B premium-transition correction — the
 // fixed-workspace rework retires the old natural-height-measurement scheme
@@ -96,33 +103,54 @@ const ANDROID_DISMISS_FALLBACK_MS = 300;
 // addWorkspaceGeometry.ts's computeAddWorkspaceGeometry and passed straight
 // to KeyboardSheet's fixedSheetHeight prop — it never changes as the
 // internal step changes, so there is nothing left to measure or stabilise
-// at this level. Each of the three steps (chooser/Transfer/Add Asset) is
-// instead one opaque, absolutely-positioned, independently-scrolling layer
-// that a single shared Animated.Value "push progress" per transition
-// translates horizontally by the workspace's own measured viewport width —
-// never opacity, never simultaneously-visible/"ghosted" layers.
+// at this level. Every step is one opaque, absolutely-positioned,
+// independently-scrolling layer that a single shared Animated.Value "push
+// progress" per transition translates horizontally by the workspace's own
+// measured viewport width — never opacity, never simultaneously-visible/
+// "ghosted" layers.
 const PUSH_TRANSITION_DURATION_MS = 220;
 
-type Screen = 'chooser' | 'transfer';
-type TransitionPhase = 'idle' | 'chooser-to-transfer' | 'transfer-to-chooser';
-
-// Navigation Transitions, Option B pilot — the exact same five tiles that
-// today each close this whole sheet and open a SEPARATE, standalone
-// AddWealthItemModal via FloatingAddButton's dismiss-and-defer fallback
-// (choose()) instead progressively transition, inside this persistent
-// host, into one embedded AddWealthItemModal (kind="asset") — mirroring
-// exactly how "Transfer money" already does this for embedded Transfer.
-// Every other tile (income/expense/bill/liability/creditCard/goal) is
-// completely unaffected and still routes through the unchanged choose()
-// fallback. Values match FloatingAddButton.tsx's own existing
-// kind->presetAssetType mapping exactly, so the type a user lands on here
-// is identical to what they'd have gotten from the now-bypassed fallback.
+// Navigation Transitions — full-workspace extension. The exact same tiles
+// that used to each close this whole sheet and open a SEPARATE, standalone
+// Modal (via FloatingAddButton's dismiss-and-defer fallback) now
+// progressively transition, inside this persistent host, into one embedded
+// destination form each — generalising the pattern first proven for
+// Transfer and Add Asset to the remaining seven destinations (Expense,
+// Income source, Income received, Bill, Liability, Credit card, Goal).
+// Values match FloatingAddButton.tsx's own former kind->presetAssetType
+// mapping exactly, so the type a user lands on here is identical to what
+// they'd have gotten from the now-retired fallback.
 const ASSET_PRESET_MAP: Partial<Record<AddAnythingKind, AssetType>> = {
   cash: 'cash',
   savings: 'savings',
   investment: 'etf',
   property: 'property',
   retirement: 'super',
+};
+
+// The seven destinations with a plain, unambiguous 1:1 tile<->route
+// mapping (Asset is deliberately excluded — five different tiles can open
+// it, so its own origin tile is tracked separately via
+// assetOriginTileKeyRef, exactly as the Option B pilot already did).
+const TILE_TO_ROUTE: Partial<Record<AddAnythingKind, Exclude<AddWorkspaceRoute, 'chooser' | 'transfer' | 'asset'>>> = {
+  income: 'incomeSource',
+  income_received: 'incomeReceived',
+  expense: 'expense',
+  bill: 'bill',
+  liability: 'liability',
+  creditCard: 'creditCard',
+  goal: 'goal',
+};
+
+const ROUTE_TILE_KEY: Partial<Record<AddWorkspaceRoute, AddAnythingKind>> = {
+  transfer: 'transfer',
+  incomeSource: 'income',
+  incomeReceived: 'income_received',
+  expense: 'expense',
+  bill: 'bill',
+  liability: 'liability',
+  creditCard: 'creditCard',
+  goal: 'goal',
 };
 
 // Correction pass — accessibility focus movement. iOS VoiceOver and Android
@@ -146,19 +174,70 @@ function focusElement(node: React.Component<unknown> | React.ElementRef<any> | n
   }
 }
 
-// Correction pass — asset-type switching (§3). Reuses Alert.alert directly,
+// Correction pass (§3) — asset-type switching. Reuses Alert.alert directly,
 // in the exact cancel/destructive shape confirmDiscardIfDirty already
 // standardises on, because this one confirmation needs button wording
 // confirmDiscardIfDirty's fixed "Keep editing"/"Discard" labels don't
 // provide ("Continue editing"/"Discard and switch" — the specific,
 // requested, neutral, coaching-not-shaming wording for switching TYPE,
-// distinct from discarding entirely).
+// distinct from discarding entirely). Unchanged from the Option B pilot.
 function confirmSwitchAssetType(onDiscardAndSwitch: () => void, onContinueEditing: () => void) {
+  const { Alert } = require('react-native') as typeof import('react-native');
   Alert.alert('Switch asset type?', 'Your current asset details will be discarded.', [
     { text: 'Continue editing', style: 'cancel', onPress: onContinueEditing },
     { text: 'Discard and switch', style: 'destructive', onPress: onDiscardAndSwitch },
   ]);
 }
+
+// Full-workspace extension — the per-destination discard-confirmation copy
+// used whenever the HOST itself needs to warn about losing a draft (tile-
+// switching while a different destination is dirty, or dismissing the
+// whole sheet while any draft is dirty). Every embedded form ALSO has its
+// own internal copy for its own Cancel/backdrop path — this table is a
+// separate, host-level layer, only reached when the host itself is the one
+// intercepting the action before it reaches the form's own requestClose.
+const DISCARD_COPY: Record<Exclude<AddWorkspaceRoute, 'chooser'>, { title: string; message: string }> = {
+  transfer: { title: 'Discard transfer?', message: 'Your transfer details will be lost.' },
+  asset: { title: 'Discard this asset?', message: 'Your new asset details will be lost.' },
+  expense: { title: 'Discard changes?', message: 'You have unsaved changes that will be lost.' },
+  incomeSource: { title: 'Discard income?', message: 'Your entered income details will be lost.' },
+  incomeReceived: { title: 'Discard changes?', message: 'You have unsaved changes that will be lost.' },
+  bill: { title: 'Discard this bill?', message: 'Your new bill details will be lost.' },
+  liability: { title: 'Discard this liability?', message: 'Your new liability details will be lost.' },
+  creditCard: { title: 'Discard this card?', message: 'Your new card details will be lost.' },
+  goal: { title: 'Discard this goal?', message: 'Your new goal details will be lost.' },
+};
+
+// Full-workspace extension — the small, repeated bundle of state every
+// persistent (draft-preserving) destination needs: whether it has ever
+// been entered this session (governs whether its layer is mounted at
+// all — the actual draft-preservation mechanism), its own reported
+// dirty/canSave/title, and a heading ref for accessibility focus on
+// Forward. A real, non-speculative abstraction: it replaces eight
+// near-identical blocks of useRef/useState that would otherwise be
+// hand-duplicated below. Transfer deliberately does NOT use this bundle —
+// it is exempt from draft preservation (Phase 2's explicit "Move Money
+// logic" exclusion) and unmounts on Back exactly as it already did before
+// this extension.
+function useEmbeddedDestinationState(initialTitle: string) {
+  const everEnteredRef = useRef(false);
+  const [canSave, setCanSave] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [title, setTitle] = useState(initialTitle);
+  const headingRef = useRef<Text>(null);
+  // Discard-orchestration correction — bumped exactly once by resetDraft()
+  // when "Discard & continue" is confirmed, forcing React to fully unmount
+  // and remount the embedded component (its own reset-on-open effect then
+  // runs fresh, exactly as any genuinely new mount already does) — the
+  // only way to guarantee a COMPLETE reset of a form's internal state, not
+  // just the fields its own isDirty computation happens to track. Never
+  // bumped by Back, by a same-destination restore, or by anything other
+  // than an explicit, user-confirmed "Discard & continue".
+  const [instanceKey, setInstanceKey] = useState(0);
+  return { everEnteredRef, canSave, setCanSave, isDirty, setIsDirty, title, setTitle, headingRef, instanceKey, setInstanceKey };
+}
+
+type EmbeddedDestinationState = ReturnType<typeof useEmbeddedDestinationState>;
 
 /**
  * "+" = add or update my money, "Lulu" = ask for guidance — a clear
@@ -166,178 +245,122 @@ function confirmSwitchAssetType(onDiscardAndSwitch: () => void, onContinueEditin
  * kind of manual entry, reachable from anywhere via the global floating +
  * button, so Today no longer needs its own Quick Actions row.
  *
- * Stream D, persistent-host proof-of-pattern: this is the public host
- * boundary FloatingAddButton renders. It now owns one internal screen
- * transition (chooser <-> embedded Transfer, rendered through the SAME
- * KeyboardSheet-owned Modal/backdrop/swipe/Android-Back/keyboard/scroll/
- * footer this sheet delegates to below) alongside its pre-existing dismiss-
- * and-defer fallback for every other destination, unchanged. Every other
- * kind still closes this sheet and hands off to its own standalone Modal,
- * exactly as before.
+ * Full-workspace extension — this is the public host boundary
+ * FloatingAddButton renders. It now owns ALL thirteen tiles' navigation
+ * (chooser <-> Transfer/Asset/Expense/Income source/Income received/Bill/
+ * Liability/Credit card/Goal), rendered through the SAME KeyboardSheet-
+ * owned Modal/backdrop/swipe/Android-Back/keyboard/scroll/footer this
+ * sheet delegates to below, driven by ONE shared route-transition reducer
+ * (reduceAddWorkspaceTransition) and ONE shared "push progress"
+ * Animated.Value — not one independent transition mechanism per
+ * destination. Every destination except Transfer preserves its draft
+ * across an in-session Back; Transfer is deliberately exempt (Phase 2's
+ * "Move Money logic" exclusion) and keeps its pre-existing
+ * unmounts-on-Back behaviour unchanged.
  */
-export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: boolean; onClose: () => void; onSelect: (kind: AddAnythingKind) => void }) {
+export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
 
-  // Synchronous, ref-based, cross-path chooser-selection lock (correction
-  // pass). React state (transitionPhase) is only visible to a new render —
-  // two taps arriving in the same tick, before that render happens, could
-  // both read the same stale value from their own closures. A ref read-
-  // then-write is atomic within one JS tick (RN dispatches each tap as its
-  // own synchronous callback; there is no interleaving between two
-  // handlers), so this ref — checked FIRST and set synchronously before any
-  // state setter, animation, or dismissal begins — is the ONLY correct
-  // first-tap-wins gate shared between embedded Transfer entry
-  // (enterTransfer) and every Option B fallback selection (choose). It
-  // stays held for the entire time a selection is "in progress": through a
-  // fallback's dismiss-and-defer delivery (released in runPendingSelection,
-  // after delivery), or through the whole time Transfer is the active
-  // screen (released only once backToChooser has safely restored the
-  // chooser, or the flow closes and a fresh open resets it).
+  // Synchronous, ref-based, cross-path first-tap-wins gate (correction
+  // pass, generalised). React state (the transition reducer) is only
+  // visible to a new render — two taps arriving in the same tick, before
+  // that render happens, could both read the same stale value from their
+  // own closures. A ref read-then-write is atomic within one JS tick, so
+  // this ref — checked FIRST and set synchronously before any state
+  // setter, animation, or dismissal begins — is the ONE first-tap-wins
+  // gate shared by every entry (enterRoute), handoff (handoffToRoute), and
+  // Back (backToChooser) path in this file. It stays held for the entire
+  // time a transition is "in progress", including the two-step BACK-then-
+  // FORWARD chain a cross-destination handoff uses internally.
   const selectionLockRef = useRef(false);
-  // Dedicated re-entrancy guard for backToChooser() specifically — it runs
-  // while selectionLockRef is (correctly) still held, so it cannot use that
-  // same ref as its own gate; a rapid double-tap on the Back control needs
-  // its own atomic check.
+  // Dedicated re-entrancy guard for backToChooser()/handoffToRoute()
+  // specifically — they run while selectionLockRef is (correctly) still
+  // held, so they cannot use that same ref as their own gate; a rapid
+  // double-tap on the Back control needs its own atomic check.
   const returningToChooserRef = useRef(false);
 
-  // ---- Fallback path for every kind except 'transfer' (Stream D, Option B
-  // — unchanged in spirit, still load-bearing; onClose target is now
-  // KeyboardSheet's own `onClose` prop rather than a raw Modal's). ----
-  // Retained alongside selectionLockRef above for Option B's own dismiss-
-  // and-defer completion lifecycle (still read/reset by runPendingSelection
-  // below), but it is no longer, by itself, the first-tap-wins gate —
-  // Transfer never touches it, so it could never have protected a Transfer-
-  // vs-fallback race on its own. selectionLockRef is the authoritative gate
-  // for both paths; this ref is Option-B-internal bookkeeping only.
-  const handoffInProgressRef = useRef(false);
-  const pendingKindRef = useRef<AddAnythingKind | null>(null);
-  const androidFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Option B's animationType='none' runtime spike (skip the native dismiss
-  // animation on an accepted fallback tile) is RETIRED as of this
-  // correction pass — device testing showed it exposes a real native
-  // compositing gap during a non-animated UIKit dismissal (dismissViewController
-  // Animated:NO's completion block fires asynchronously, after the view
-  // hierarchy may already have begun detaching, while RN's Modal keeps
-  // reporting itself as still rendering until that completion fires) —
-  // visible as chooser content disappearing while an empty white sheet
-  // host remained on screen. This sheet's Modal now always dismisses with
-  // KeyboardSheet's own default, real, animated `animationType="slide"`
-  // (the same as ordinary Cancel/backdrop/swipe already used, and the same
-  // as every other destination's own Modal presentation in this app) —
-  // the animated transition, not the "none" one, is what reliably keeps
-  // content visible for the sheet's entire physical closing animation.
-
-  // ---- Internal chooser <-> embedded-Transfer transition state (Stream D,
-  // persistent-host proof-of-pattern). Scoped to exactly these two screens
-  // for this proof — no route stack, no nested handoffs. ----
-  const [screen, setScreen] = useState<Screen>('chooser');
-  const [transitionPhase, setTransitionPhase] = useState<TransitionPhase>('idle');
-  // Opening-cycle / stale-completion guard: incremented on every push/pop
-  // request and on every fresh open. A transition's own .start() callback
-  // only applies its effect if this still matches the generation captured
-  // when it began — an interrupted, superseded, or late-firing completion
-  // can never touch state again once invalidated this way.
+  // ---- Shared route-transition state (full-workspace extension). ONE
+  // reducer, ONE generation counter, ONE progress value govern every
+  // destination — replacing the Option B pilot's separate
+  // screen/transitionPhase/chooserTransferProgress (Transfer-only) and
+  // addAssetTransition/addAssetGenerationRef/chooserAddAssetProgress
+  // (Asset-only) pairs. Only one non-chooser route is ever "current" at a
+  // time (enforced by selectionLockRef), so one shared progress value is
+  // sufficient and correct — never one Animated.Value per destination. ----
+  const [transition, dispatchTransition] = useReducer(reduceAddWorkspaceTransition, initialAddWorkspaceTransitionState);
   const generationRef = useRef(0);
-  // Premium-transition correction — one shared "push progress" Animated.Value
-  // per transition (chooser<->transfer, chooser<->addAsset), 0 = chooser is
-  // the settled front step, 1 = the destination is. Each drives BOTH sides'
-  // translateX via interpolation against the workspace's own measured
-  // viewport width (see chooserAwayProgress/render below) — never opacity,
-  // so the two layers are always opaque and adjacent, never simultaneously
-  // "ghosted" mid-transition. Replaces the old chooserAnim/transferAnim pair
-  // (which drove an opacity+24px cross-fade).
-  const chooserTransferProgress = useRef(new Animated.Value(0)).current;
+  const workspaceProgress = useRef(new Animated.Value(0)).current;
   const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
-  const transferFormRef = useRef<TransferFormHandle>(null);
-  const [transferCanSave, setTransferCanSave] = useState(false);
-  const [transferIsDirty, setTransferIsDirty] = useState(false);
+  // A focus request scheduled by a transition's own completion (animated or
+  // reduced-motion), consumed by the effect below only once `transition`
+  // has genuinely settled AND only if nothing has superseded it since
+  // (generation check). `fromRoute` is only meaningful when
+  // target === 'chooser' (Back) — it names the route just left, so the
+  // right tile can be refocused. Transfer deliberately never schedules a
+  // focus request (see backToChooser/beginForwardTransition below) — it
+  // had none before this extension, and this correction pass does not add
+  // one, preserving its exact existing accessibility footprint.
+  const pendingFocusRef = useRef<{ generation: number; target: AddWorkspaceRoute; fromRoute?: AddWorkspaceRoute } | null>(null);
+
   // The workspace's own clipped viewport width, in points — measured via a
   // non-height-affecting onLayout on the absolutely-positioned layers'
-  // container (see handleViewportLayout/styles.viewport below), since the
-  // correction's design reconciliation explicitly rejected assuming
-  // `windowWidth - spacing.lg*2` as the definitive value. That same formula
-  // is kept ONLY as a transient pre-measurement fallback — the sheet's own
-  // opening animation (well over 250ms) always finishes, and this layout
-  // always fires, before the user can possibly tap a tile and start a real
-  // transition, so the fallback is never actually the value a real
-  // transition animates against; it exists purely so an interpolation range
-  // is never mistakenly zero-width in the instant before that first layout.
+  // container (see handleViewportLayout/styles.viewport below). The
+  // `windowWidth - spacing.lg*2` formula is kept ONLY as a transient
+  // pre-measurement fallback — the sheet's own opening animation (well
+  // over 250ms) always finishes, and this layout always fires, before the
+  // user can possibly tap a tile and start a real transition.
   const windowDimensions = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [measuredViewportWidth, setMeasuredViewportWidth] = useState<number | null>(null);
   const viewportWidth = measuredViewportWidth ?? Math.max(windowDimensions.width - spacing.lg * 2, 0);
 
-  // ---- Navigation Transitions, Option B pilot: chooser <-> embedded Add
-  // Asset. Deliberately NOT wired into screen/transitionPhase/
-  // chooserTransferProgress/generationRef above — every one of those stays
-  // completely untouched by this pilot, and every Transfer-only code path
-  // that reads them keeps its exact existing behaviour. This is a second,
-  // independent application of the same reusable pattern: a settled
-  // "current" step plus an exiting "outgoing" one, driven by the pure
-  // addAssetTransitionController reducer (real-import tested), pointerEvents/
-  // accessibility-hidden while not the settled front step, and the workspace's
-  // own content-independent fixed height (never derived from this step's own
-  // content). selectionLockRef/returningToChooserRef ARE reused (shared
-  // first-tap-wins gate and Back re-entrancy guard, exactly as
-  // choose()/enterTransfer() already share them with each other) — safe
-  // because only one of {Transfer, Add Asset} can ever be entered at a
-  // time. chooserTransferProgress and chooserAddAssetProgress (below) are
-  // summed (chooserAwayProgress) to drive the chooser layer's own single
-  // translateX regardless of which destination it's swapping with — never
-  // simultaneously non-zero, since selectionLockRef guarantees only one
-  // transition is ever in flight.
-  const [addAssetTransition, dispatchAddAssetTransition] = useReducer(reduceAddAssetTransition, initialAddAssetTransitionState);
-  // Own dedicated generation counter (not generationRef above) — guards a
-  // stale Animated.timing completion from a transition that was itself
-  // superseded by a LATER Add Asset transition after an intervening RESET
-  // (dismiss + reopen + re-enter), which a shared counter could not
-  // distinguish from "still the same in-flight attempt".
-  const addAssetGenerationRef = useRef(0);
-  // Session-persistent — true from the first Forward until this whole
-  // sheet is fully dismissed and reopened fresh. Unlike showTransfer's
-  // conditional-unmount, this is what keeps the embedded AddWealthItemModal
-  // instance (and therefore its internal draft state) mounted across an
-  // in-session Back, satisfying "the user's valid draft is preserved" /
-  // "reselecting Add Asset restores the preserved draft".
-  const addAssetEverEnteredRef = useRef(false);
-  const [addAssetPresetType, setAddAssetPresetType] = useState<AssetType>('cash');
-  // See chooserTransferProgress above — the same shared-progress push
-  // mechanism, dedicated to the chooser<->Add Asset pair. Never shared with
-  // chooserTransferProgress itself (only one of the two is ever away from 0
-  // at a time, enforced by selectionLockRef).
-  const chooserAddAssetProgress = useRef(new Animated.Value(0)).current;
-  const addAssetModalRef = useRef<AddWealthItemModalHandle>(null);
-  const [addAssetCanSave, setAddAssetCanSave] = useState(false);
-  const [addAssetIsDirty, setAddAssetIsDirty] = useState(false);
-  const [addAssetTitle, setAddAssetTitle] = useState('Add asset');
-  // Correction pass — accessibility focus. Ref to the Add Asset step's own
-  // in-content heading (a real, always-present, never-unmounted-mid-session
-  // element once entered), and a per-tile ref map keyed by AddAnythingKind
-  // so Back can restore focus to the EXACT tile that opened the current
-  // draft, not a generic control.
-  const addAssetHeadingRef = useRef<Text>(null);
+  // ---- Transfer — unchanged in spirit from the Stream D proof-of-pattern:
+  // no draft preservation across Back (Phase 2's explicit "Move Money
+  // logic" exclusion), so no everEnteredRef/useEmbeddedDestinationState
+  // bundle for it. ----
+  const transferFormRef = useRef<TransferFormHandle>(null);
+  const [transferCanSave, setTransferCanSave] = useState(false);
+  const [transferIsDirty, setTransferIsDirty] = useState(false);
+  const transferHeadingRef = useRef<Text>(null);
+
+  // ---- Asset (cash/savings/investment/property/retirement) — the Option
+  // B pilot, now replumbed onto the shared reducer/progress value above
+  // but otherwise behaviourally unchanged: same multi-type-within-one-
+  // route switching (decideAssetTileSelection), same freshInstance/key-
+  // bump-on-confirmed-switch mechanism, same dedicated origin-tile
+  // tracking (five different tiles can open this one route). ----
+  const assetState = useEmbeddedDestinationState('Add asset');
+  const assetModalRef = useRef<AddWealthItemModalHandle>(null);
+  const [assetPresetType, setAssetPresetType] = useState<AssetType>('cash');
+  const assetOriginTileKeyRef = useRef<AddAnythingKind | null>(null);
+
+  // ---- The seven newly-embedded destinations (full-workspace extension).
+  // Each gets its own useEmbeddedDestinationState bundle (draft
+  // preservation) and its own concretely-typed imperative-handle ref. ----
+  const expenseState = useEmbeddedDestinationState('Add transaction');
+  const expenseModalRef = useRef<QuickAddModalHandle>(null);
+  const incomeReceivedState = useEmbeddedDestinationState('Add transaction');
+  const incomeReceivedModalRef = useRef<QuickAddModalHandle>(null);
+  const incomeSourceState = useEmbeddedDestinationState('Add income source');
+  const incomeSourceModalRef = useRef<AddIncomeModalHandle>(null);
+  const billState = useEmbeddedDestinationState('Add a bill');
+  const billModalRef = useRef<AddRecurringItemModalHandle>(null);
+  const liabilityState = useEmbeddedDestinationState('Add liability');
+  const liabilityModalRef = useRef<AddWealthItemModalHandle>(null);
+  // Bill -> Liability handoff (onRequestLoan) preset — null for the plain
+  // "Add liability" tile (a genuine 'create' intent), a real LiabilityType
+  // when arriving via the handoff (mirrors the standalone loanHandoff
+  // mechanism FloatingAddButton used to own).
+  const [liabilityHandoffType, setLiabilityHandoffType] = useState<LiabilityType | null>(null);
+  const creditCardState = useEmbeddedDestinationState('Add credit card');
+  const creditCardModalRef = useRef<AddCreditCardModalHandle>(null);
+  const goalState = useEmbeddedDestinationState('Add a goal');
+  const goalModalRef = useRef<AddGoalModalHandle>(null);
+
+  // Correction pass — accessibility focus restoration target for Back:
+  // which tile's own ref to focus once the chooser is settled again.
+  // Harmless for every tile never looked up by key.
   const assetTileRefs = useRef<Partial<Record<AddAnythingKind, React.ElementRef<typeof TouchableOpacity> | null>>>({});
-  // Which tile's preset the currently-open (or currently-preserved) draft
-  // actually belongs to — distinct from addAssetPresetType (a value, not an
-  // origin) because two different tiles can never map to the same
-  // AssetType in ASSET_PRESET_MAP today, but tracking the tile explicitly
-  // (not derived) keeps focus-restoration correct even if that ever
-  // changes. Updated only when a genuinely fresh session/type begins (see
-  // chooseAssetTile), never on a same-type restore.
-  const addAssetOriginTileKeyRef = useRef<AddAnythingKind | null>(null);
-  // A focus request scheduled by a transition's own completion (animated or
-  // reduced-motion), consumed by the effect below only once the transition
-  // has genuinely settled AND only if nothing has superseded it since
-  // (generation check) — see beginAddAssetTransitionAnimation/
-  // backToChooserFromAddAsset/handleAddAssetSaveSuccess for every place
-  // that can invalidate a still-pending request.
-  const pendingFocusRef = useRef<{ generation: number; target: 'addAsset' | 'chooser' } | null>(null);
-  // Bumped to force a full remount of the embedded AddWealthItemModal
-  // instance (see the `key` prop below) — the only two triggers are a fresh
-  // RESET (full sheet dismissal + reopen) and a confirmed "Discard and
-  // switch" between two different asset types (§3.C/§3.D) — never on a
-  // same-type restore, which must keep the SAME instance/state alive.
-  const [addAssetInstanceKey, setAddAssetInstanceKey] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -351,235 +374,599 @@ export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: bool
     };
   }, []);
 
+  // A fresh open must never carry over any stale in-progress transition,
+  // selection lock, or preserved draft from a previous time this sheet was
+  // shown — always starts back on the chooser with a fresh lock and no
+  // mounted destinations.
   useEffect(() => {
-    if (visible) {
-      // A fresh open must never carry over a stale in-progress handoff,
-      // pending selection, selection lock, or Transfer screen/transition
-      // state from a previous time this sheet was shown — always starts
-      // back on the chooser with a fresh lock.
-      selectionLockRef.current = false;
-      returningToChooserRef.current = false;
-      handoffInProgressRef.current = false;
-      pendingKindRef.current = null;
-      generationRef.current++;
-      setScreen('chooser');
-      setTransitionPhase('idle');
-      chooserTransferProgress.setValue(0);
-      // Navigation Transitions, Option B pilot — a fresh open must also
-      // discard any preserved Add Asset draft from a previous session
-      // (this is the ONLY place that draft is ever actually cleared; see
-      // addAssetEverEnteredRef's own declaration comment). The embedded
-      // AddWealthItemModal instance itself unmounts as a result (its
-      // wrapping layer is only rendered while addAssetEverEnteredRef.current
-      // is true), so the next Forward mounts it fresh, which in turn runs
-      // ITS OWN reset-on-open effect exactly as every other fresh open of
-      // that component already does.
-      addAssetGenerationRef.current++;
-      addAssetEverEnteredRef.current = false;
-      dispatchAddAssetTransition({ type: 'RESET' });
-      chooserAddAssetProgress.setValue(0);
-      setAddAssetCanSave(false);
-      setAddAssetIsDirty(false);
-      setAddAssetTitle('Add asset');
-      setAddAssetPresetType('cash');
-      // Correction pass — RESET must invalidate any focus work a still-
-      // in-flight (now-superseded) transition might have scheduled, and
-      // must force the NEXT entry into a genuinely fresh embedded instance
-      // (belt-and-braces alongside the wrapping layer's own unmount when
-      // addAssetEverEnteredRef.current goes false — see that ref's
-      // declaration comment) rather than depending solely on that unmount.
-      pendingFocusRef.current = null;
-      addAssetOriginTileKeyRef.current = null;
-      setAddAssetInstanceKey((k) => k + 1);
-    }
-  }, [visible, chooserTransferProgress, chooserAddAssetProgress]);
+    if (!visible) return;
+    selectionLockRef.current = false;
+    returningToChooserRef.current = false;
+    generationRef.current++;
+    dispatchTransition({ type: 'RESET' });
+    workspaceProgress.setValue(0);
+    pendingFocusRef.current = null;
+    pendingSwitchRef.current = null;
+    pendingDismissRef.current = null;
+    setTransferCanSave(false);
+    setTransferIsDirty(false);
+    setAssetPresetType('cash');
+    assetOriginTileKeyRef.current = null;
+    setLiabilityHandoffType(null);
+    const initialTitles: Record<Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>, string> = {
+      asset: 'Add asset',
+      expense: 'Add transaction',
+      incomeSource: 'Add income source',
+      incomeReceived: 'Add transaction',
+      bill: 'Add a bill',
+      liability: 'Add liability',
+      creditCard: 'Add credit card',
+      goal: 'Add a goal',
+    };
+    (Object.keys(initialTitles) as (keyof typeof initialTitles)[]).forEach((route) => {
+      const state = draftStateFor(route);
+      state.everEnteredRef.current = false;
+      state.setCanSave(false);
+      state.setIsDirty(false);
+      state.setTitle(initialTitles[route]);
+      state.setInstanceKey((k) => k + 1);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
-  // Correction pass — accessibility focus. Consumes a request scheduled by
-  // a transition's own completion (see beginAddAssetTransitionAnimation and
-  // backToChooserFromAddAsset below) only once addAssetTransition has
-  // genuinely settled (status 'idle') — guaranteeing the target element's
-  // pointerEvents/accessibilityElementsHidden props have already committed
-  // to their new, visible/interactive values by the time focus is
-  // requested, so this can never focus a still-hidden element. The
-  // generation check discards a request superseded by ANY later event
-  // (a newer transition, Back, RESET, or Save — all of which bump
-  // addAssetGenerationRef.current at their own start) before it can act.
+  // Correction pass — accessibility focus, generalised. Consumes a request
+  // scheduled by a transition's own completion (see beginForwardTransition/
+  // backToChooser below) only once `transition` has genuinely settled
+  // (status 'idle') — guaranteeing the target element's pointerEvents/
+  // accessibilityElementsHidden props have already committed to their new,
+  // visible/interactive values by the time focus is requested. The
+  // generation check discards a request superseded by ANY later event (a
+  // newer transition, Back, RESET, or Save — all of which bump
+  // generationRef.current at their own start) before it can act.
   useEffect(() => {
     const pending = pendingFocusRef.current;
     if (!pending) return;
-    if (addAssetTransition.status !== 'idle') return;
+    if (transition.status !== 'idle') return;
     pendingFocusRef.current = null;
-    if (pending.generation !== addAssetGenerationRef.current) return; // stale — superseded since it was scheduled
-    if (pending.target === 'addAsset') {
-      focusElement(addAssetHeadingRef.current);
-      AccessibilityInfo.announceForAccessibility(`${addAssetTitle} opened`);
-    } else {
-      const tileKey = addAssetOriginTileKeyRef.current;
+    if (pending.generation !== generationRef.current) return; // stale — superseded since it was scheduled
+    if (pending.target === 'chooser') {
+      const fromRoute = pending.fromRoute;
+      const tileKey = fromRoute === 'asset' ? assetOriginTileKeyRef.current : fromRoute ? ROUTE_TILE_KEY[fromRoute] ?? null : null;
       focusElement(tileKey ? assetTileRefs.current[tileKey] ?? null : null);
+    } else {
+      const heading = destinationHeadingRefFor(pending.target);
+      focusElement(heading?.current ?? null);
+      AccessibilityInfo.announceForAccessibility(`${destinationTitleFor(pending.target)} opened`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addAssetTransition]);
+  }, [transition]);
 
-  useEffect(() => {
-    return () => {
-      if (androidFallbackTimerRef.current) clearTimeout(androidFallbackTimerRef.current);
-    };
-  }, []);
-
-  // Invoked once this sheet's own native Modal dismissal has actually
-  // completed (iOS: via onDismiss below; Android: via the timed fallback,
-  // since RN never fires onDismiss there) — fires after EVERY dismissal
-  // (backdrop tap, swipe, Cancel/back, or a chosen non-Transfer tile), so
-  // an ordinary dismissal with nothing pending is always a safe no-op here.
-  function runPendingSelection() {
-    const kind = pendingKindRef.current;
-    pendingKindRef.current = null;
-    handoffInProgressRef.current = false;
-    if (kind !== null) onSelect(kind);
-    // Release the shared selection lock only now that delivery (if any) is
-    // complete — this Modal's own native dismissal is already complete
-    // (that's what triggered this function). A no-op when nothing was
-    // pending. Never released merely on `visible` becoming false.
-    selectionLockRef.current = false;
-  }
-
-  // Accepted-handoff dismissal for every kind except 'transfer' — calls
-  // onClose() directly (bypassing KeyboardSheet's own swipe/backdrop-
-  // triggered dismiss()), same as always; the resulting close now always
-  // uses KeyboardSheet's default, real, animated `animationType="slide"`
-  // (see the retirement note above) rather than a JS pre-close animation.
-  function choose(kind: AddAnythingKind) {
-    if (selectionLockRef.current) return; // synchronous first-tap-wins — shared with enterTransfer()
-    selectionLockRef.current = true;
-    handoffInProgressRef.current = true;
-    pendingKindRef.current = kind;
-    onClose();
-    if (Platform.OS === 'android') {
-      if (androidFallbackTimerRef.current) clearTimeout(androidFallbackTimerRef.current);
-      androidFallbackTimerRef.current = setTimeout(runPendingSelection, ANDROID_DISMISS_FALLBACK_MS);
+  function destinationHeadingRefFor(route: AddWorkspaceRoute): React.RefObject<Text | null> | null {
+    switch (route) {
+      case 'asset':
+        return assetState.headingRef;
+      case 'expense':
+        return expenseState.headingRef;
+      case 'incomeSource':
+        return incomeSourceState.headingRef;
+      case 'incomeReceived':
+        return incomeReceivedState.headingRef;
+      case 'bill':
+        return billState.headingRef;
+      case 'liability':
+        return liabilityState.headingRef;
+      case 'creditCard':
+        return creditCardState.headingRef;
+      case 'goal':
+        return goalState.headingRef;
+      default:
+        return null;
     }
   }
 
-  // ---- Internal chooser <-> Transfer transition (Stream D, persistent-
-  // host proof-of-pattern). For this proof, the chooser unmounts once
-  // Transfer is fully entered — no parent draft needs preserving here.
-  // LATER nested phases (Bill Type -> Mortgage/Car Loan/Personal Loan,
-  // Liability -> Credit Card) CANNOT reuse this same unmount rule: their
-  // parent route can hold typed field values before the nested hop, so its
-  // draft must stay mounted (or be fully preserved) across the hop instead
-  // of being discarded here. Not implemented in this pass. ----
+  function destinationTitleFor(route: AddWorkspaceRoute): string {
+    switch (route) {
+      case 'asset':
+        return assetState.title;
+      case 'expense':
+        return expenseState.title;
+      case 'incomeSource':
+        return incomeSourceState.title;
+      case 'incomeReceived':
+        return incomeReceivedState.title;
+      case 'bill':
+        return billState.title;
+      case 'liability':
+        return liabilityState.title;
+      case 'creditCard':
+        return creditCardState.title;
+      case 'goal':
+        return goalState.title;
+      default:
+        return '';
+    }
+  }
+
+  function draftStateFor(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>): EmbeddedDestinationState {
+    switch (route) {
+      case 'asset':
+        return assetState;
+      case 'expense':
+        return expenseState;
+      case 'incomeSource':
+        return incomeSourceState;
+      case 'incomeReceived':
+        return incomeReceivedState;
+      case 'bill':
+        return billState;
+      case 'liability':
+        return liabilityState;
+      case 'creditCard':
+        return creditCardState;
+      case 'goal':
+        return goalState;
+    }
+  }
+
+  // Full-workspace extension — every destination that can hold a draft
+  // across Back (i.e. every one except Transfer, which is exempt).
+  function draftDestinations(): { route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>; state: EmbeddedDestinationState }[] {
+    return (['asset', 'expense', 'incomeSource', 'incomeReceived', 'bill', 'liability', 'creditCard', 'goal'] as const).map((route) => ({
+      route,
+      state: draftStateFor(route),
+    }));
+  }
+
+  // `excludeRoute` lets a caller ask "is any OTHER destination dirty" —
+  // used by Asset's own tile-tap guard, which must not treat Asset's own
+  // dirty state (a separate, already-handled concern via
+  // decideAssetTileSelection) as if it were a different destination.
+  function findParkedDirtyDraft(excludeRoute?: AddWorkspaceRoute) {
+    return draftDestinations().find((d) => d.route !== excludeRoute && d.state.everEnteredRef.current && d.state.isDirty);
+  }
+
+  // Discard-orchestration correction — a human-readable name for the
+  // switching-confirmation copy ("Switch to {destination}?" / "Your
+  // unsaved {source} changes will be discarded."). Fixed per route, except
+  // 'asset', which represents five different preset types sharing one
+  // route — uses whichever preset is actually loaded/being requested.
+  function routeDisplayName(route: AddWorkspaceRoute, presetType?: AssetType | LiabilityType): string {
+    if (route === 'asset') {
+      switch ((presetType as AssetType | undefined) ?? assetPresetType) {
+        case 'cash':
+          return 'Cash';
+        case 'savings':
+          return 'Savings';
+        case 'etf':
+          return 'Investment';
+        case 'property':
+          return 'Property';
+        case 'super':
+          return 'Retirement savings';
+        default:
+          return 'Asset';
+      }
+    }
+    // Correction pass — a liability's customer-facing name is its loan
+    // TYPE (Personal Loan/Mortgage/Car Loan/...), never the generic
+    // "Liability" the reducer's own route name would otherwise produce.
+    // Falls back to the currently handed-off type (the type this
+    // workspace's own dirty/parked liability draft is FOR) when no
+    // explicit type is passed, mirroring the asset branch above exactly —
+    // reuses AddWealthItemModal's own LIABILITY_DISPLAY_NAME table so the
+    // two files can never drift.
+    if (route === 'liability') {
+      const type = (presetType as LiabilityType | undefined) ?? liabilityHandoffType ?? undefined;
+      return type ? LIABILITY_DISPLAY_NAME[type] : 'Liability';
+    }
+    switch (route) {
+      case 'chooser':
+        return 'chooser';
+      case 'transfer':
+        return 'Transfer';
+      case 'expense':
+        return 'Expense';
+      case 'incomeSource':
+        return 'Income source';
+      case 'incomeReceived':
+        return 'Income received';
+      case 'bill':
+        return 'Bill';
+      case 'creditCard':
+        return 'Credit card';
+      case 'goal':
+        return 'Goal';
+    }
+  }
+
+  // Discard-orchestration correction — the ONE place Alert.alert is ever
+  // invoked for a cross-destination switch (asset-type switching keeps its
+  // own separate, already-accepted confirmSwitchAssetType/wording, unifed
+  // by the same underlying principle but not this same call site). Called
+  // ONLY from an explicit destructive-intent handler (a tile tap, never a
+  // reactive effect or a side effect of Back/transition-completion).
+  // Presents the warning immediately, before any transition starts (the
+  // chooser — or whichever route the tap originated from — stays visually
+  // stationary throughout); `onKeepEditing` reopens the exact dirty source
+  // draft; `onDiscardAndContinue` resets that source exactly once and
+  // proceeds to the requested target exactly once. Generation-guarded
+  // against rapid taps producing duplicate alerts, and against a stale
+  // callback (from an alert that should no longer apply) acting after a
+  // newer request has already superseded it.
+  const pendingSwitchRef = useRef<number | null>(null);
+  const pendingSwitchGenerationRef = useRef(0);
+  function presentSwitchGuard(sourceLabel: string, targetLabel: string, onKeepEditing: () => void, onDiscardAndContinue: () => void) {
+    if (pendingSwitchRef.current !== null) return; // an alert is already showing — rapid-tap guard
+    const myGeneration = ++pendingSwitchGenerationRef.current;
+    pendingSwitchRef.current = myGeneration;
+    Alert.alert(`Switch to ${targetLabel}?`, `Your unsaved ${sourceLabel} changes will be discarded.`, [
+      {
+        text: 'Keep editing',
+        style: 'cancel',
+        onPress: () => {
+          if (pendingSwitchRef.current !== myGeneration) return; // stale — superseded since this alert was shown
+          pendingSwitchRef.current = null;
+          onKeepEditing();
+        },
+      },
+      {
+        text: 'Discard & continue',
+        style: 'destructive',
+        onPress: () => {
+          if (pendingSwitchRef.current !== myGeneration) return;
+          pendingSwitchRef.current = null;
+          onDiscardAndContinue();
+        },
+      },
+    ]);
+  }
+
+  // Resets one destination's underlying form state completely, by forcing
+  // a full unmount+remount (see useEmbeddedDestinationState's own
+  // instanceKey comment) — the ONLY thing "Discard & continue" ever does
+  // to the source besides transitioning away from it.
+  function resetDraft(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>) {
+    draftStateFor(route).setInstanceKey((k) => k + 1);
+  }
+
+  // "Keep editing" reopens the exact dirty source draft — a plain restore
+  // (the destination is already everEntered, so this is the same "same
+  // destination reselect" path every ordinary restore already uses).
+  // Correction pass — when this is invoked from the CHOOSER (every
+  // existing caller: reselectOrEnter, chooseAssetTile, the transfer
+  // branch of handleTilePress), a plain enterRoute is correct — the
+  // reducer's own FORWARD precondition requires chooser as the origin,
+  // which already holds. But presentSwitchGuard can ALSO be triggered
+  // from WITHIN another active destination (handleRequestLoanFromBill,
+  // called while Bill itself — not chooser — is current), where a plain
+  // enterRoute would silently no-op against that same precondition.
+  // Reuses the SAME handoff mechanism an ordinary cross-destination
+  // handoff already uses for exactly this reason.
+  function reopenSource(route: Exclude<AddWorkspaceRoute, 'chooser'>) {
+    if (transition.current === 'chooser') {
+      enterRoute(route);
+    } else {
+      handoffToRoute(route, () => {});
+    }
+  }
+
+  // Discard-orchestration correction (Defect 1 fix) — the outer
+  // KeyboardSheet's OWN dismiss attempts (swipe/backdrop/Android-back/
+  // native onRequestClose) are delegated here in full (see KeyboardSheet's
+  // own onRequestDismiss prop) rather than letting KeyboardSheet run its
+  // own isDirty-gated confirmDiscardIfDirty flow, because only the HOST
+  // knows whether the at-risk draft is the ACTIVE route or one PARKED
+  // behind the chooser — and only the host can push a parked route back
+  // open. Mirrors presentSwitchGuard's own generation-safe mechanism
+  // (rapid-tap guard + stale-callback guard), so repeated dismiss attempts
+  // can never stack duplicate alerts and a callback from an alert that's
+  // since been superseded (e.g. by the sheet closing and reopening for a
+  // later session — see the fresh-open effect above, which nulls this ref)
+  // can never act.
+  const pendingDismissRef = useRef<number | null>(null);
+  const pendingDismissGenerationRef = useRef(0);
+  function presentDismissGuard(dirtyRoute: Exclude<AddWorkspaceRoute, 'chooser'>, wasActive: boolean) {
+    if (pendingDismissRef.current !== null) return; // an alert is already showing — rapid-tap guard
+    const myGeneration = ++pendingDismissGenerationRef.current;
+    pendingDismissRef.current = myGeneration;
+    const copy = DISCARD_COPY[dirtyRoute];
+    Alert.alert(copy.title, copy.message, [
+      {
+        text: 'Keep editing',
+        style: 'cancel',
+        onPress: () => {
+          if (pendingDismissRef.current !== myGeneration) return; // stale — superseded since this alert was shown
+          pendingDismissRef.current = null;
+          // Only a PARKED draft needs pushing back open — an already-
+          // ACTIVE dirty route just needed the dismissal cancelled; the
+          // user is already looking at it.
+          if (!wasActive) reopenSource(dirtyRoute);
+        },
+      },
+      {
+        text: 'Discard',
+        style: 'destructive',
+        onPress: () => {
+          if (pendingDismissRef.current !== myGeneration) return;
+          pendingDismissRef.current = null;
+          if (dirtyRoute !== 'transfer') resetDraft(dirtyRoute); // transfer has no instanceKey/reset concept
+          handleRequestClose();
+        },
+      },
+    ]);
+  }
+
+  // The single entry point KeyboardSheet's onRequestDismiss calls for
+  // every dismiss attempt against the complete Add Anything sheet. A
+  // clean sheet closes immediately, exactly like before; a dirty one is
+  // routed through presentDismissGuard using the SAME at-risk-draft
+  // computation (activeRouteIsDirty/parkedDirtyDraft, declared below) the
+  // sheet's own chrome already relies on, so this can never disagree with
+  // what the user is actually looking at.
+  function handleRequestDismiss() {
+    if (!sheetIsDirty) {
+      handleRequestClose();
+      return;
+    }
+    const dirtyRoute = (activeRouteIsDirty ? transition.current : parkedDirtyDraft?.route) as Exclude<AddWorkspaceRoute, 'chooser'>;
+    presentDismissGuard(dirtyRoute, activeRouteIsDirty);
+  }
+
+  // Runs the shared push-progress animation (or, under Reduced Motion, an
+  // immediate content swap with no animation) for one FORWARD or BACK
+  // transition, then invokes `onSettled` once genuinely complete — guarded
+  // by `myGeneration` so a stale/interrupted completion can never act.
+  function runTransition(direction: 'forward' | 'back', myGeneration: number, onSettled: () => void) {
+    const fromValue = direction === 'forward' ? 0 : 1;
+    const toValue = direction === 'forward' ? 1 : 0;
+    if (reduceMotionEnabled) {
+      workspaceProgress.setValue(toValue);
+      onSettled();
+      return;
+    }
+    workspaceProgress.setValue(fromValue);
+    Animated.timing(workspaceProgress, { toValue, duration: PUSH_TRANSITION_DURATION_MS, useNativeDriver: true }).start(() => {
+      if (myGeneration !== generationRef.current) return; // stale-completion guard
+      onSettled();
+    });
+  }
+
+  // The actual FORWARD dispatch/animation/focus-scheduling, shared by every
+  // entry path (enterRoute, chooseAssetTile's proceedIntoAddAsset,
+  // handoffToRoute). Does NOT itself check/set selectionLockRef — every
+  // caller either checks it first (enterRoute) or is already holding it
+  // for the duration of a handoff (handoffToRoute).
+  function beginForwardTransition(route: AddWorkspaceRoute, returnStack?: AddWorkspaceRoute[]) {
+    const myGeneration = ++generationRef.current;
+    dispatchTransition({ type: 'FORWARD', route, returnStack });
+    runTransition('forward', myGeneration, () => {
+      dispatchTransition({ type: 'TRANSITION_COMPLETE' });
+      if (route !== 'transfer') {
+        pendingFocusRef.current = { generation: myGeneration, target: route };
+      }
+    });
+  }
+
+  function enterRoute(route: AddWorkspaceRoute, onCommit?: () => void) {
+    if (selectionLockRef.current) return; // synchronous first-tap-wins
+    selectionLockRef.current = true;
+    onCommit?.();
+    beginForwardTransition(route);
+  }
 
   function enterTransfer() {
-    if (selectionLockRef.current) return; // synchronous first-tap-wins — shared with choose()
-    selectionLockRef.current = true; // held for the entire time Transfer is the active screen (req #6)
-    const myGeneration = ++generationRef.current;
-    if (reduceMotionEnabled) {
-      chooserTransferProgress.setValue(1);
-      setScreen('transfer');
-      setTransitionPhase('idle');
-      return;
-    }
-    setTransitionPhase('chooser-to-transfer');
-    chooserTransferProgress.setValue(0);
-    Animated.timing(chooserTransferProgress, { toValue: 1, duration: PUSH_TRANSITION_DURATION_MS, useNativeDriver: true }).start(() => {
-      if (myGeneration !== generationRef.current) return; // stale-completion guard
-      setScreen('transfer');
-      setTransitionPhase('idle');
-    });
+    enterRoute('transfer');
   }
 
-  function backToChooser() {
+  // "Reselecting the same destination restores its draft; selecting a
+  // different destination while dirty needs accurate switch/discard
+  // confirmation" — generalised across all seven plain 1:1 destinations.
+  // Restoring an already-open draft never confirms (matches Asset's own
+  // 'proceed' outcome for a same-type reselect); entering a route for the
+  // first time (or after it was never dirty) proceeds directly unless some
+  // OTHER destination is currently dirty-and-parked, in which case
+  // presentSwitchGuard confirms BEFORE any transition starts — the current
+  // settled route (chooser, always, for this call site) stays visually
+  // stationary until the user answers.
+  function reselectOrEnter(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer' | 'asset'>) {
+    const state = draftStateFor(route);
+    const commit = () => {
+      state.everEnteredRef.current = true;
+    };
+    if (state.everEnteredRef.current) {
+      enterRoute(route, commit);
+      return;
+    }
+    const dirty = findParkedDirtyDraft();
+    if (dirty) {
+      presentSwitchGuard(
+        routeDisplayName(dirty.route),
+        routeDisplayName(route),
+        () => reopenSource(dirty.route),
+        () => {
+          resetDraft(dirty.route);
+          enterRoute(route, commit);
+        }
+      );
+      return;
+    }
+    enterRoute(route, commit);
+  }
+
+  // Discard-orchestration correction — Back pops transition.returnStack[0]
+  // as its target: 'chooser' for an ordinary entry, or a specific other
+  // destination for a cross-destination handoff, correctly preserving
+  // every deeper ancestor level for the NEXT Back too (the reducer's own
+  // returnStack field — see its declaration comment for why a single
+  // scalar field cannot represent a nested handoff chain). Never itself
+  // shows a discard prompt — Back is always non-destructive, preserving
+  // whatever draft it leaves behind exactly as-is.
+  function handleBack() {
     if (returningToChooserRef.current) return; // synchronous re-entrancy guard for Back itself
     returningToChooserRef.current = true;
+    const leavingRoute = transition.current;
+    const targetRoute = transition.returnStack[0];
     const myGeneration = ++generationRef.current;
-    if (reduceMotionEnabled) {
-      chooserTransferProgress.setValue(0);
-      setScreen('chooser');
-      setTransitionPhase('idle');
-      selectionLockRef.current = false; // released only once the chooser is restored (req #7)
-      returningToChooserRef.current = false;
-      return;
-    }
-    setTransitionPhase('transfer-to-chooser');
-    chooserTransferProgress.setValue(1);
-    Animated.timing(chooserTransferProgress, { toValue: 0, duration: PUSH_TRANSITION_DURATION_MS, useNativeDriver: true }).start(() => {
-      if (myGeneration !== generationRef.current) return;
-      setScreen('chooser');
-      setTransitionPhase('idle');
-      selectionLockRef.current = false; // released only once the chooser is restored (req #7)
+    dispatchTransition({ type: 'BACK' });
+    runTransition('back', myGeneration, () => {
+      dispatchTransition({ type: 'TRANSITION_COMPLETE' });
+      if (leavingRoute !== 'transfer') {
+        pendingFocusRef.current = { generation: myGeneration, target: targetRoute, fromRoute: leavingRoute };
+      }
+      selectionLockRef.current = false; // released only once the target route is settled
       returningToChooserRef.current = false;
     });
   }
 
-  // ---- Navigation Transitions, Option B pilot: chooser <-> embedded Add
-  // Asset. The actual Forward animation/dispatch/focus-scheduling is a
-  // separate function (below) so every proceed-path in chooseAssetTile
-  // (first entry, same-type restore, clean switch, confirmed
-  // discard-and-switch) can trigger it uniformly. ----
-  function beginAddAssetTransitionAnimation() {
-    const myGeneration = ++addAssetGenerationRef.current;
-    if (reduceMotionEnabled) {
-      chooserAddAssetProgress.setValue(1);
-      dispatchAddAssetTransition({ type: 'FORWARD' });
-      dispatchAddAssetTransition({ type: 'TRANSITION_COMPLETE' });
-      pendingFocusRef.current = { generation: myGeneration, target: 'addAsset' };
-      return;
-    }
-    dispatchAddAssetTransition({ type: 'FORWARD' });
-    chooserAddAssetProgress.setValue(0);
-    Animated.timing(chooserAddAssetProgress, { toValue: 1, duration: PUSH_TRANSITION_DURATION_MS, useNativeDriver: true }).start(() => {
-      if (myGeneration !== addAssetGenerationRef.current) return; // stale-completion guard
-      dispatchAddAssetTransition({ type: 'TRANSITION_COMPLETE' });
-      pendingFocusRef.current = { generation: myGeneration, target: 'addAsset' };
+  // Full-workspace extension — the two cross-destination handoffs (Bill ->
+  // Liability, Liability -> Credit card). Expressed as a FORCE_TO_CHOOSER
+  // step immediately chained into a FORWARD, both using the same accepted
+  // reducer contract that governs every other transition in this
+  // workspace (FORWARD only accepts a settled chooser as its origin) — so
+  // a direct non-chooser-to-non-chooser hop is a two-step chain rather
+  // than a special-cased third transition primitive. Nested-handoff
+  // amendment — the route being LEFT and its own full returnStack are
+  // captured HERE, before FORCE_TO_CHOOSER discards them from the reducer
+  // state, then threaded through as the next FORWARD's explicit
+  // returnStack override ([leavingRoute, ...its own stack]) — this is what
+  // lets a SECOND-level handoff (e.g. Liability -> Credit card, where
+  // Liability itself was entered via the Bill handoff) preserve BOTH
+  // ancestor levels rather than losing Bill entirely. selectionLockRef is
+  // deliberately never released between the two steps (the workspace is
+  // "busy" handing off; the chooser is never actually presented as an
+  // interactive resting state mid-handoff) — no Modal dismissal to
+  // sequence, no defer/timer dance.
+  function handoffToRoute(nextRoute: AddWorkspaceRoute, prepare: () => void) {
+    if (returningToChooserRef.current) return;
+    returningToChooserRef.current = true;
+    const leavingRoute = transition.current;
+    const inheritedStack = transition.returnStack;
+    const backGeneration = ++generationRef.current;
+    dispatchTransition({ type: 'FORCE_TO_CHOOSER' });
+    runTransition('back', backGeneration, () => {
+      dispatchTransition({ type: 'TRANSITION_COMPLETE' });
+      returningToChooserRef.current = false;
+      prepare();
+      beginForwardTransition(nextRoute, [leavingRoute, ...inheritedStack]);
     });
   }
 
-  // Correction pass (§3) — the single place that actually commits to a
-  // (possibly fresh) Add Asset session and begins the Forward transition.
-  // `freshInstance` forces a full remount of the embedded AddWealthItemModal
-  // (via the `key` prop below) — set only when genuinely starting over with
-  // a new type (first-ever entry, a clean switch, or a confirmed discard-
-  // and-switch), never for a same-type restore.
+  // Bill's own "Mortgage/Car loan/Personal loan" presets hand off here with
+  // the exact LiabilityType, mirroring the standalone loanHandoff mechanism
+  // FloatingAddButton used to own. Narrowly guarded against silently
+  // overwriting an existing, separately-dirty parked Liability draft — the
+  // one genuine new risk this in-host handoff introduces relative to the
+  // old separate-Modal version, where no such shared draft could exist.
+  // Uses the same presentSwitchGuard primitive as an ordinary tile switch
+  // (source and target both read "Liability" here, since re-entering with
+  // a different loan type discards and replaces the SAME route's draft).
+  function handleRequestLoanFromBill(type: LiabilityType) {
+    const proceed = () =>
+      handoffToRoute('liability', () => {
+        setLiabilityHandoffType(type);
+        liabilityState.everEnteredRef.current = true;
+      });
+    // Correction pass — re-tapping the SAME loan preset that is already
+    // the dirty, parked Liability draft (e.g. backing out of an unsaved
+    // Personal Loan to the picker, then to the Bill grid, then tapping
+    // "Personal Loan" again to continue) is a same-destination reselect,
+    // exactly like reselectOrEnter's own same-route branch below — nothing
+    // would be discarded by proceeding, so it must restore silently and
+    // never warn. Only a genuinely DIFFERENT loan type risks discarding
+    // that OTHER draft, and still warns — now correctly naming both the
+    // dirty source's own type and the newly-requested type instead of the
+    // generic "Liability" for both.
+    if (liabilityState.everEnteredRef.current && liabilityState.isDirty && liabilityHandoffType !== type) {
+      presentSwitchGuard(
+        routeDisplayName('liability', liabilityHandoffType ?? undefined),
+        routeDisplayName('liability', type),
+        () => reopenSource('liability'),
+        () => {
+          resetDraft('liability');
+          proceed();
+        }
+      );
+      return;
+    }
+    proceed();
+  }
+
+  // Liability's own credit-card type chip hands off here, mirroring the
+  // standalone onSelectCreditCard mechanism AddWealthItemModal already
+  // supports for the non-embedded case.
+  // Correction pass — Credit Card has no type variants (unlike Liability's
+  // loan types), so a dirty, parked Credit Card draft can only ever be
+  // THIS SAME draft — tapping the "Credit card" chip again is always a
+  // same-destination reselect (there is no "other" credit card it could be
+  // switching away from), matching handleRequestLoanFromBill's own
+  // same-type branch above. Never warns; always hands off, preserving
+  // whatever is already typed (handoffToRoute never resets the draft).
+  function handleRequestCreditCardFromLiability() {
+    handoffToRoute('creditCard', () => {
+      creditCardState.everEnteredRef.current = true;
+    });
+  }
+
+  // ---- Asset (cash/savings/investment/property/retirement) — Option B
+  // pilot logic, unchanged in behaviour, replumbed onto the shared
+  // primitives above. ----
   function proceedIntoAddAsset(tileKey: AddAnythingKind, presetType: AssetType, freshInstance: boolean) {
-    if (selectionLockRef.current) return; // synchronous first-tap-wins — shared with choose()/enterTransfer()
-    selectionLockRef.current = true; // held for the entire time Add Asset is the active step (mirrors req #6 for Transfer)
+    if (selectionLockRef.current) return; // synchronous first-tap-wins
+    selectionLockRef.current = true;
     if (freshInstance) {
-      setAddAssetInstanceKey((k) => k + 1);
+      assetState.setInstanceKey((k) => k + 1);
     }
-    setAddAssetPresetType(presetType);
-    addAssetOriginTileKeyRef.current = tileKey;
-    addAssetEverEnteredRef.current = true;
-    beginAddAssetTransitionAnimation();
+    setAssetPresetType(presetType);
+    assetOriginTileKeyRef.current = tileKey;
+    assetState.everEnteredRef.current = true;
+    beginForwardTransition('asset');
   }
 
-  // Correction pass (§3) — the chooser tile's own onPress target. Resolves
-  // exactly one of four required outcomes:
+  // Correction pass (§3) — the chooser tile's own onPress target for the
+  // five asset presets. Resolves exactly one of four required outcomes:
   // A. never entered this session -> plain first entry;
   // B. same asset type already open/preserved -> restore it exactly, no
   //    reset, no save;
   // C. a different type, current draft clean -> silently re-initialise
   //    with the newly selected type (nothing of value is lost);
   // D. a different type, current draft dirty -> "Switch asset type?"
-  //    confirmation; Continue editing returns to the existing draft
-  //    unchanged; Discard and switch clears it immediately (via
-  //    freshInstance's key bump, not deferred to a future reopen) and opens
-  //    a fresh form for the newly selected type. No asset is ever persisted
-  //    by any path here — only addAsset/updateAsset (inside
-  //    AddWealthItemModal's own unchanged Save path) ever persists one.
+  //    confirmation. No asset is ever persisted by any path here — only
+  //    addAsset/updateAsset (inside AddWealthItemModal's own unchanged
+  //    Save path) ever persists one. This inner decision (Asset's own
+  //    type-vs-type dirty check) is the Option B pilot's own
+  //    already-tested logic, preserved exactly, not re-authored by this
+  //    extension. Discard-orchestration correction, item 7 — closes the
+  //    previously-disclosed Asset gap: every asset tile now ALSO passes
+  //    through the SAME global dirty-destination guard every other tile
+  //    uses, before ever reaching the inner decision above, so tapping an
+  //    asset tile can no longer silently bypass a dirty Expense/Income/
+  //    Bill/Liability/Credit Card/Goal draft.
   function chooseAssetTile(tileKey: AddAnythingKind) {
     const presetType = ASSET_PRESET_MAP[tileKey];
     if (!presetType) return;
 
-    // The actual branching decision is the pure, real-import-tested
-    // decideAssetTileSelection (addAssetTransitionController.ts) — this
-    // function only supplies the current React state as plain values and
-    // carries out whichever outcome it returns; no decision logic is
-    // duplicated here.
+    const otherDirty = findParkedDirtyDraft('asset');
+    if (otherDirty) {
+      presentSwitchGuard(
+        routeDisplayName(otherDirty.route),
+        routeDisplayName('asset', presetType),
+        () => reopenSource(otherDirty.route),
+        () => {
+          resetDraft(otherDirty.route);
+          proceedWithAssetTileDecision(tileKey, presetType);
+        }
+      );
+      return;
+    }
+    proceedWithAssetTileDecision(tileKey, presetType);
+  }
+
+  function proceedWithAssetTileDecision(tileKey: AddAnythingKind, presetType: AssetType) {
     const outcome = decideAssetTileSelection({
-      everEntered: addAssetEverEnteredRef.current,
-      currentPresetType: addAssetPresetType,
+      everEntered: assetState.everEnteredRef.current,
+      currentPresetType: assetPresetType,
       selectedPresetType: presetType,
-      isDirty: addAssetIsDirty,
+      isDirty: assetState.isDirty,
     });
 
     switch (outcome.action) {
@@ -590,8 +977,8 @@ export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: bool
         proceedIntoAddAsset(tileKey, presetType, true);
         return;
       case 'confirmSwitch': {
-        const currentPresetType = addAssetPresetType;
-        const currentOriginTileKey = addAssetOriginTileKeyRef.current ?? tileKey;
+        const currentPresetType = assetPresetType;
+        const currentOriginTileKey = assetOriginTileKeyRef.current ?? tileKey;
         confirmSwitchAssetType(
           () => proceedIntoAddAsset(tileKey, presetType, true),
           () => proceedIntoAddAsset(currentOriginTileKey, currentPresetType, false)
@@ -601,125 +988,245 @@ export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: bool
     }
   }
 
-  // Back never discards (req #7/#8) — the embedded AddWealthItemModal stays
-  // mounted (see addAssetEverEnteredRef), so there is nothing to lose here;
-  // this only moves the chooser back to front, and returns accessibility
-  // focus to the exact tile that opened the current draft.
-  function backToChooserFromAddAsset() {
-    if (returningToChooserRef.current) return; // synchronous re-entrancy guard — shared with Transfer's own Back
-    returningToChooserRef.current = true;
-    const myGeneration = ++addAssetGenerationRef.current;
-    if (reduceMotionEnabled) {
-      chooserAddAssetProgress.setValue(0);
-      dispatchAddAssetTransition({ type: 'BACK' });
-      dispatchAddAssetTransition({ type: 'TRANSITION_COMPLETE' });
-      pendingFocusRef.current = { generation: myGeneration, target: 'chooser' };
-      selectionLockRef.current = false;
-      returningToChooserRef.current = false;
-      return;
-    }
-    dispatchAddAssetTransition({ type: 'BACK' });
-    chooserAddAssetProgress.setValue(1);
-    Animated.timing(chooserAddAssetProgress, { toValue: 0, duration: PUSH_TRANSITION_DURATION_MS, useNativeDriver: true }).start(() => {
-      if (myGeneration !== addAssetGenerationRef.current) return;
-      dispatchAddAssetTransition({ type: 'TRANSITION_COMPLETE' });
-      pendingFocusRef.current = { generation: myGeneration, target: 'chooser' };
-      selectionLockRef.current = false;
-      returningToChooserRef.current = false;
-    });
-  }
-
-  // Correction pass — a successful Save bypasses handleRequestClose (it
-  // calls the parent's onClose directly, matching Transfer's own
-  // onSaveSuccess wiring), so it must independently invalidate any
-  // still-pending focus work and any in-flight transition generation on its
-  // own, exactly as handleRequestClose already does for every other close
-  // path — "no stale focus callback moves focus after ... Save".
-  function handleAddAssetSaveSuccess() {
-    addAssetGenerationRef.current++;
+  // Successful Save on ANY destination bypasses the outer KeyboardSheet's
+  // own dismiss/discard gating entirely (it calls this directly, matching
+  // Transfer's and Asset's own established onSaveSuccess wiring) — so it
+  // must independently invalidate any still-pending focus work and any
+  // in-flight transition generation, exactly as backToChooser/the sheet's
+  // own onClose already do for every other close path.
+  function handleSaveSuccessClose() {
+    generationRef.current++;
     pendingFocusRef.current = null;
     onClose();
   }
 
-  // req #7 — closing the whole sheet, swiping it away, tapping the
-  // backdrop, or selecting a different destination while a dirty Add Asset
-  // draft is preserved must confirm before that draft is actually lost.
-  // Reselecting Add Asset itself is explicitly NOT routed through this
-  // guard (see the tile onPress wiring below) — that path restores the
-  // draft rather than discarding it.
-  function guardNavigateAwayFromAddAsset(proceed: () => void) {
-    if (addAssetEverEnteredRef.current && addAssetIsDirty) {
-      confirmDiscardIfDirty(true, proceed, 'Discard this asset?', 'Your new asset details will be lost.');
+  function handleConfirmedClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      handleBack();
     } else {
-      proceed();
+      onClose();
     }
+  }
+
+  // Full-workspace extension — the chooser tile grid's own dispatch table.
+  // The five asset presets keep their own dedicated decision function
+  // (chooseAssetTile); Transfer keeps its own dedicated entry (no draft to
+  // restore, ever, so a same-destination reselect never applies to it);
+  // the remaining seven share one generic reselectOrEnter path. Every
+  // branch here routes through the SAME presentSwitchGuard primitive
+  // before starting any transition (discard-orchestration correction).
+  function handleTilePress(key: AddAnythingKind) {
+    const assetPresetType = ASSET_PRESET_MAP[key];
+    if (assetPresetType) {
+      chooseAssetTile(key);
+      return;
+    }
+    if (key === 'transfer') {
+      const dirty = findParkedDirtyDraft();
+      if (dirty) {
+        presentSwitchGuard(
+          routeDisplayName(dirty.route),
+          routeDisplayName('transfer'),
+          () => reopenSource(dirty.route),
+          () => {
+            resetDraft(dirty.route);
+            enterTransfer();
+          }
+        );
+        return;
+      }
+      enterTransfer();
+      return;
+    }
+    const route = TILE_TO_ROUTE[key];
+    if (!route) return;
+    if (route === 'liability' && !liabilityState.everEnteredRef.current) {
+      // A genuinely fresh entry via the plain tile is always a 'create'
+      // intent — clears any Bill-handoff preset left over from a previous
+      // session so the plain tile never silently inherits a stale handoff
+      // type. Restoring an already-open liability draft (handled by
+      // reselectOrEnter below) preserves whatever intent it already had.
+      setLiabilityHandoffType(null);
+    }
+    reselectOrEnter(route);
   }
 
   // KeyboardSheet's own backdrop/swipe/Android-Back path — always closes
   // the whole Add flow (never "internal Back", which is its own explicit
-  // control below), matching every other destination's existing swipe/
-  // backdrop/Android-Back behaviour. Also invalidates any in-flight
-  // chooser<->Transfer transition so a stale completion callback can never
-  // fire after this sheet has started closing.
+  // control per destination below). Also invalidates any in-flight
+  // transition so a stale completion callback can never fire after this
+  // sheet has started closing.
   function handleRequestClose() {
     generationRef.current++;
-    addAssetGenerationRef.current++;
     pendingFocusRef.current = null;
     onClose();
   }
 
-  const activeScreen: Screen = transitionPhase === 'chooser-to-transfer' ? 'transfer' : transitionPhase === 'transfer-to-chooser' ? 'chooser' : screen;
+  // Full-workspace extension — the outer KeyboardSheet's own isDirty (and,
+  // via handleRequestDismiss above, its dismiss-guard copy) must reflect
+  // ANY currently-at-risk draft: the actively-open route's own dirty
+  // state, or (while resting on the chooser) any OTHER destination's
+  // parked-but-dirty draft — "backdrop/swipe follow the same dirty-state
+  // protection" applies to whichever one is genuinely at risk, not only
+  // the literal active route.
+  const activeRouteIsDirty = (() => {
+    if (transition.current === 'chooser') return false;
+    if (transition.current === 'transfer') return transferIsDirty;
+    return draftStateFor(transition.current).isDirty;
+  })();
+  const parkedDirtyDraft = findParkedDirtyDraft();
+  const sheetIsDirty = activeRouteIsDirty || !!parkedDirtyDraft;
 
-  // Navigation Transitions, Option B pilot — which of the three possible
-  // front steps (chooser/transfer/addAsset) chrome (title/footer/isDirty)
-  // should reflect right now. addAssetTransition.current flips immediately
-  // on FORWARD/BACK dispatch (before any animation completes), mirroring
-  // activeScreen's own "switch chrome the instant the transition begins"
-  // semantics for Transfer above.
-  const activeStep: Screen | 'addAsset' = activeScreen === 'transfer' ? 'transfer' : addAssetTransition.current === 'addAsset' ? 'addAsset' : 'chooser';
+  type ActiveChrome = { title: string; canSave: boolean; primaryLabel: string; showFooter: boolean };
+  function computeActiveChrome(): ActiveChrome {
+    switch (transition.current) {
+      case 'chooser':
+        return { title: `Add to ${brand.name}`, canSave: false, primaryLabel: 'Save', showFooter: false };
+      case 'transfer':
+        return { title: 'Move money', canSave: transferCanSave, primaryLabel: 'Transfer', showFooter: true };
+      case 'asset':
+        return { title: assetState.title, canSave: assetState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'expense':
+        return { title: expenseState.title, canSave: expenseState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'incomeSource':
+        return { title: incomeSourceState.title, canSave: incomeSourceState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'incomeReceived':
+        return { title: incomeReceivedState.title, canSave: incomeReceivedState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'bill':
+        return { title: billState.title, canSave: billState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'liability':
+        return { title: liabilityState.title, canSave: liabilityState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'creditCard':
+        return { title: creditCardState.title, canSave: creditCardState.canSave, primaryLabel: 'Save', showFooter: true };
+      case 'goal':
+        return { title: goalState.title, canSave: goalState.canSave, primaryLabel: 'Save', showFooter: true };
+    }
+  }
+  const activeChrome = computeActiveChrome();
 
-  const chooserVisibleForAddAsset = addAssetTransition.current === 'chooser' || addAssetTransition.outgoing === 'chooser';
-  const showChooser = (screen === 'chooser' || transitionPhase === 'transfer-to-chooser') && chooserVisibleForAddAsset;
-  const showTransfer = screen === 'transfer' || transitionPhase === 'chooser-to-transfer';
-  const showAddAsset = addAssetEverEnteredRef.current;
-  // Premium-transition correction — a layer is only interactive/visible to
-  // assistive technology while it is genuinely the settled (not mid-
-  // transition) front step; every other mounted layer (parked off-screen,
-  // or actively animating) is pointerEvents 'none' and hidden from
-  // VoiceOver/TalkBack. Same underlying settled-state checks the previous
-  // (retired) height-measurement gates used — chooserSettledFront/
-  // addAssetSettledFront are the direct renames of chooserIsSoloAndSettled/
-  // addAssetIsSoloAndSettled; transferSettledFront is newly derived from
-  // the SAME pre-existing screen/transitionPhase state, no new state added.
-  const chooserSettledFront =
-    screen === 'chooser' && transitionPhase === 'idle' && addAssetTransition.current === 'chooser' && addAssetTransition.status === 'idle';
-  const transferSettledFront = screen === 'transfer' && transitionPhase === 'idle';
-  const addAssetSettledFront = addAssetTransition.current === 'addAsset' && addAssetTransition.status === 'idle';
+  function callActiveSave() {
+    switch (transition.current) {
+      case 'transfer':
+        transferFormRef.current?.requestSave();
+        return;
+      case 'asset':
+        assetModalRef.current?.requestSave();
+        return;
+      case 'expense':
+        expenseModalRef.current?.requestSave();
+        return;
+      case 'incomeSource':
+        incomeSourceModalRef.current?.requestSave();
+        return;
+      case 'incomeReceived':
+        incomeReceivedModalRef.current?.requestSave();
+        return;
+      case 'bill':
+        billModalRef.current?.requestSave();
+        return;
+      case 'liability':
+        liabilityModalRef.current?.requestSave();
+        return;
+      case 'creditCard':
+        creditCardModalRef.current?.requestSave();
+        return;
+      case 'goal':
+        goalModalRef.current?.requestSave();
+        return;
+      default:
+        return;
+    }
+  }
+
+  function callActiveRequestCancel() {
+    switch (transition.current) {
+      case 'transfer':
+        transferFormRef.current?.requestClose('cancel');
+        return;
+      case 'asset':
+        assetModalRef.current?.requestClose('cancel');
+        return;
+      case 'expense':
+        expenseModalRef.current?.requestClose('cancel');
+        return;
+      case 'incomeSource':
+        incomeSourceModalRef.current?.requestClose('cancel');
+        return;
+      case 'incomeReceived':
+        incomeReceivedModalRef.current?.requestClose('cancel');
+        return;
+      case 'bill':
+        billModalRef.current?.requestClose('cancel');
+        return;
+      case 'liability':
+        liabilityModalRef.current?.requestClose('cancel');
+        return;
+      case 'creditCard':
+        creditCardModalRef.current?.requestClose('cancel');
+        return;
+      case 'goal':
+        goalModalRef.current?.requestClose('cancel');
+        return;
+      default:
+        return;
+    }
+  }
 
   // Premium-transition correction — the sheet's own outer height is fixed
-  // and content-independent (never derived from chooser/Transfer/Add Asset
-  // content), computed once per render from the window's own reactive
-  // dimensions and the device's current top safe-area inset. Passed
-  // straight to KeyboardSheet's fixedSheetHeight prop, which itself derives
-  // the actual keyboard-adjusted render height.
+  // and content-independent (never derived from any step's own content),
+  // computed once per render from the window's own reactive dimensions and
+  // the device's current top safe-area inset. Passed straight to
+  // KeyboardSheet's fixedSheetHeight prop, which itself derives the actual
+  // keyboard-adjusted render height.
   const { fixedSheetHeight } = computeAddWorkspaceGeometry({ windowHeight: windowDimensions.height, topInset: insets.top });
 
-  // Premium-transition correction — chooser's own translateX is driven by
-  // whichever of the two per-transition progress values is currently away
-  // from 0 (never both at once, enforced by selectionLockRef) — summing
-  // them gives one combined "how far chooser has been pushed away" value
-  // regardless of which destination caused it.
-  const chooserAwayProgress = useRef(Animated.add(chooserTransferProgress, chooserAddAssetProgress)).current;
-  const chooserTranslateX = chooserAwayProgress.interpolate({ inputRange: [0, 1], outputRange: [0, -viewportWidth] });
-  const transferTranslateX = chooserTransferProgress.interpolate({ inputRange: [0, 1], outputRange: [viewportWidth, 0] });
-  const addAssetTranslateX = chooserAddAssetProgress.interpolate({ inputRange: [0, 1], outputRange: [viewportWidth, 0] });
+  // Premium-transition correction, generalised — the chooser's own
+  // translateX is driven by the ONE shared progress value; whichever
+  // destination is currently the transition's "active side" (current or
+  // outgoing) shares that exact same value (mirrored, entering from the
+  // right as chooser exits left); every OTHER, merely-parked destination
+  // is pinned fully off-screen right regardless of the live progress value
+  // — never sharing the animated position of an unrelated, currently-
+  // active transition.
+  //
+  // Nested-handoff geometry correction, corrected round — every one of
+  // these four interpolations (including the two "stationary" ones added
+  // below) is memoized on viewportWidth alone, and destinationTranslateX
+  // (further down) now returns ONE of these four for every possible route
+  // state — never a bare JS number. The first attempt at this fix pinned
+  // a settled/back-entered route to a literal `0` and left every
+  // "uninvolved" route on a literal `viewportWidth` (both pre-existing,
+  // in the "uninvolved" case's case, since before any of this round's
+  // changes). On the physical device that meant certain routes' `<Animated.
+  // View>` transform prop flipped, across a single commit, from a plain
+  // number to a brand-new interpolation object newly connecting to an
+  // ALREADY-RUNNING native-driven animation (Liability's own exit,
+  // starting the instant Bill's Back fires) — the exact case React
+  // Native's Animated/native-driver bridge is least reliable at
+  // catching up on the very first frame. The device recording's
+  // "persistent blank Bill body, thin tile slivers, several seconds"
+  // symptom is consistent with the LATER-rendered, higher-stacked
+  // Liability layer failing to visibly complete that catch-up and
+  // remaining near its old resting position, covering Bill underneath —
+  // even though Bill's own position had by then become correct. Every
+  // interpolation below is therefore live for the FULL mounted lifetime
+  // of every destination layer — settled-and-onscreen and settled-and-
+  // offscreen are now constant-valued interpolations, not numbers — so no
+  // route's transform prop ever crosses that number-to-animated-node
+  // boundary again, on entry OR exit, in any direction.
+  const chooserTranslateX = useMemo(() => workspaceProgress.interpolate({ inputRange: [0, 1], outputRange: [0, -viewportWidth] }), [workspaceProgress, viewportWidth]);
+  const activeDestinationTranslateX = useMemo(() => workspaceProgress.interpolate({ inputRange: [0, 1], outputRange: [viewportWidth, 0] }), [workspaceProgress, viewportWidth]);
+  // Constant-valued (both ends of the range are the same number) but still
+  // a genuine AnimatedInterpolation — used for a route that is settled
+  // on-screen (front, at rest) regardless of whether it arrived via an
+  // ordinary forward entry or a cross-destination Back.
+  const stationaryOnscreenTranslateX = useMemo(() => workspaceProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 0] }), [workspaceProgress]);
+  // Same idea for a route that is not involved in the current transition
+  // at all — parked fully off-screen, but as a live node rather than a
+  // bare number, so a route's LATER entry (when it does become involved)
+  // switches between two live interpolations, never from a plain number.
+  const stationaryOffscreenTranslateX = useMemo(() => workspaceProgress.interpolate({ inputRange: [0, 1], outputRange: [viewportWidth, viewportWidth] }), [workspaceProgress, viewportWidth]);
 
-  // Non-height-affecting measurement of the workspace's own clipped
-  // viewport width (see viewportWidth's declaration above) — only ever
-  // reads/stores layout.width; never influences any style that could feed
-  // back into this View's own height, since every child it measures is
-  // position:'absolute' and therefore already excluded from this View's
-  // own layout contribution.
   function handleViewportLayout(e: { nativeEvent: { layout: { width: number } } }) {
     const measured = e.nativeEvent.layout.width;
     setMeasuredViewportWidth((prev) => (prev === measured ? prev : measured));
@@ -761,57 +1268,112 @@ export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: bool
     [colors, radius, spacing, typography, cardShadow]
   );
 
+  const showChooser = isRouteActiveInTransition(transition, 'chooser');
+
+  // Full-workspace extension — the shared wrapper every persistent
+  // destination layer uses: an opaque, absolutely-positioned,
+  // independently-scrolling layer with its own Back row and accessibility
+  // heading, mounted only while `mounted` is true (draft preservation),
+  // positioned by the shared progress value only while genuinely the
+  // transition's active side, and pointerEvents/accessibility-hidden
+  // unless genuinely the settled front step. A plain render-helper
+  // function (called inline, not used as a JSX component tag), so it
+  // carries no remount risk despite being defined inside this component's
+  // body.
+  // Nested-handoff geometry correction — a cross-destination Back (e.g.
+  // Liability -> Bill, via handleBack popping transition.returnStack
+  // straight to a non-chooser route) lands DIRECTLY on that route without
+  // ever passing back through chooser — unlike every transition this
+  // geometry was originally built for, which always has chooser on one
+  // side. activeDestinationTranslateX assumes ITS route is always ENTERING
+  // FROM OFF-SCREEN-RIGHT: workspaceProgress rests at 1 after an ordinary
+  // forward-settle, where the formula correctly evaluates to 0. A route
+  // that becomes `current` via BACK instead rests at workspaceProgress 0,
+  // where that SAME formula evaluates to viewportWidth — fully OFF-SCREEN
+  // — even once genuinely settled. Left uncorrected, that silently and
+  // permanently hides the returned-to route's content behind its own
+  // still-visible host chrome (title/footer, driven independently by
+  // transition.current).
+  //
+  // Every branch below returns one of the four live interpolations
+  // declared above — never a bare number (see their own shared comment
+  // for why: a route's transform prop must never cross the plain-number-
+  // to-freshly-attached-animated-node boundary, which is what actually
+  // broke on device the first time this was attempted). A settled/front
+  // route is always stationaryOnscreenTranslateX, regardless of whether it
+  // arrived via an ordinary forward entry or a cross-destination Back. The
+  // outgoing (exiting) route keeps the existing, unchanged
+  // activeDestinationTranslateX animation. A route becoming current via an
+  // ordinary FORWARD keeps its existing slide-in animation
+  // (activeDestinationTranslateX); one becoming current via a BACK is
+  // instead held at stationaryOnscreenTranslateX for the ENTIRE
+  // transition, not just once settled — it is revealed instantly and held
+  // there while the exiting sibling slides away above it. A route not
+  // involved at all stays on stationaryOffscreenTranslateX.
+  function destinationTranslateX(route: Exclude<AddWorkspaceRoute, 'chooser'>) {
+    if (isRouteSettledFront(transition, route)) return stationaryOnscreenTranslateX;
+    if (transition.outgoing === route) return activeDestinationTranslateX;
+    if (transition.current === route) return transition.direction === 'back' ? stationaryOnscreenTranslateX : activeDestinationTranslateX;
+    return stationaryOffscreenTranslateX;
+  }
+
+  function renderDestinationLayer(
+    route: Exclude<AddWorkspaceRoute, 'chooser'>,
+    mounted: boolean,
+    headingRef: React.RefObject<Text | null>,
+    title: string,
+    onBack: () => void,
+    children: React.ReactNode
+  ) {
+    if (!mounted) return null;
+    const settled = isRouteSettledFront(transition, route);
+    const translateX = destinationTranslateX(route);
+    return (
+      <Animated.View
+        key={route}
+        style={[styles.pushLayer, { transform: [{ translateX }] }]}
+        pointerEvents={settled ? 'auto' : 'none'}
+        accessibilityElementsHidden={!settled}
+        importantForAccessibility={settled ? 'auto' : 'no-hide-descendants'}
+      >
+        <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <TouchableOpacity style={styles.backRow} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={onBack}>
+            <Ionicons name="chevron-back" size={18} color={colors.accentStrong} />
+            <Text style={styles.backRowText}>Back</Text>
+          </TouchableOpacity>
+          <Text ref={headingRef} style={styles.body} accessibilityRole="header">
+            {title}
+          </Text>
+          {children}
+        </ScrollView>
+      </Animated.View>
+    );
+  }
+
   return (
     <KeyboardSheet
       visible={visible}
       onClose={handleRequestClose}
-      title={activeStep === 'transfer' ? 'Move money' : activeStep === 'addAsset' ? addAssetTitle : `Add to ${brand.name}`}
-      isDirty={activeStep === 'transfer' ? transferIsDirty : addAssetEverEnteredRef.current ? addAssetIsDirty : false}
-      discardTitle={activeStep === 'addAsset' ? 'Discard this asset?' : 'Discard transfer?'}
-      discardMessage={activeStep === 'addAsset' ? 'Your new asset details will be lost.' : 'Your transfer details will be lost.'}
+      title={activeChrome.title}
+      isDirty={sheetIsDirty}
+      onRequestDismiss={handleRequestDismiss}
       footer={
-        activeStep === 'transfer' ? (
+        activeChrome.showFooter ? (
           <>
-            <Button
-              label="Cancel"
-              variant="secondary"
-              onPress={() => transferFormRef.current?.requestClose('cancel')}
-              style={styles.footerButton}
-            />
-            <Button
-              label="Transfer"
-              onPress={() => transferFormRef.current?.requestSave()}
-              disabled={!transferCanSave}
-              style={styles.footerButton}
-            />
-          </>
-        ) : activeStep === 'addAsset' ? (
-          <>
-            <Button
-              label="Cancel"
-              variant="secondary"
-              onPress={() => addAssetModalRef.current?.requestClose('cancel')}
-              style={styles.footerButton}
-            />
-            <Button
-              label="Save"
-              onPress={() => addAssetModalRef.current?.requestSave()}
-              disabled={!addAssetCanSave}
-              style={styles.footerButton}
-            />
+            <Button label="Cancel" variant="secondary" onPress={callActiveRequestCancel} style={styles.footerButton} />
+            <Button label={activeChrome.primaryLabel} onPress={callActiveSave} disabled={!activeChrome.canSave} style={styles.footerButton} />
           </>
         ) : null
       }
-      onDismiss={Platform.OS === 'ios' ? runPendingSelection : undefined}
       fixedSheetHeight={fixedSheetHeight}
     >
       <View style={styles.viewport} onLayout={handleViewportLayout}>
         {showChooser ? (
           <Animated.View
             style={[styles.pushLayer, { transform: [{ translateX: chooserTranslateX }] }]}
-            pointerEvents={chooserSettledFront ? 'auto' : 'none'}
-            accessibilityElementsHidden={!chooserSettledFront}
-            importantForAccessibility={chooserSettledFront ? 'auto' : 'no-hide-descendants'}
+            pointerEvents={isRouteSettledFront(transition, 'chooser') ? 'auto' : 'none'}
+            accessibilityElementsHidden={!isRouteSettledFront(transition, 'chooser')}
+            importantForAccessibility={isRouteSettledFront(transition, 'chooser') ? 'auto' : 'no-hide-descendants'}
           >
             <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <Text style={styles.body}>What would you like to update?</Text>
@@ -819,133 +1381,215 @@ export function AddAnythingSheet({ visible, onClose, onSelect }: { visible: bool
                 <View key={group.title}>
                   <Text style={styles.groupTitle}>{group.title}</Text>
                   <View style={styles.grid}>
-                    {group.options.map((o) => {
-                      const assetPresetType = ASSET_PRESET_MAP[o.key];
-                      return (
-                        <TouchableOpacity
-                          key={o.key}
-                          ref={(el) => {
-                            // Correction pass — accessibility focus restoration
-                            // target for Back (§2). Harmless for every non-
-                            // asset tile (never looked up by key for those).
-                            assetTileRefs.current[o.key] = el;
-                          }}
-                          style={styles.tile}
-                          activeOpacity={0.8}
-                          onPress={() => {
-                            if (o.key === 'transfer') {
-                              guardNavigateAwayFromAddAsset(enterTransfer);
-                            } else if (assetPresetType) {
-                              // Navigation Transitions, Option B pilot —
-                              // resolves same-tile restore / different-tile
-                              // clean-switch / different-tile dirty-confirm
-                              // (§3) — never routed through
-                              // guardNavigateAwayFromAddAsset, which is only
-                              // for navigating AWAY to a non-asset destination
-                              // or closing the whole sheet.
-                              chooseAssetTile(o.key);
-                            } else {
-                              guardNavigateAwayFromAddAsset(() => choose(o.key));
-                            }
-                          }}
-                        >
-                          <View style={styles.iconBadge}>
-                            <Text style={styles.emoji}>{o.emoji}</Text>
-                          </View>
-                          <Text style={styles.tileLabel}>{o.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                    {group.options.map((o) => (
+                      <TouchableOpacity
+                        key={o.key}
+                        ref={(el) => {
+                          // Correction pass — accessibility focus restoration
+                          // target for Back (§2). Harmless for every tile
+                          // never looked up by key.
+                          assetTileRefs.current[o.key] = el;
+                        }}
+                        style={styles.tile}
+                        activeOpacity={0.8}
+                        onPress={() => handleTilePress(o.key)}
+                      >
+                        <View style={styles.iconBadge}>
+                          <Text style={styles.emoji}>{o.emoji}</Text>
+                        </View>
+                        <Text style={styles.tileLabel}>{o.label}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 </View>
               ))}
             </ScrollView>
           </Animated.View>
         ) : null}
-        {showTransfer ? (
-          <Animated.View
-            style={[styles.pushLayer, { transform: [{ translateX: transferTranslateX }] }]}
-            pointerEvents={transferSettledFront ? 'auto' : 'none'}
-            accessibilityElementsHidden={!transferSettledFront}
-            importantForAccessibility={transferSettledFront ? 'auto' : 'no-hide-descendants'}
-          >
-            <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <TouchableOpacity
-                style={styles.backRow}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                onPress={() => transferFormRef.current?.requestClose('back')}
-              >
-                <Ionicons name="chevron-back" size={18} color={colors.accentStrong} />
-                <Text style={styles.backRowText}>Back</Text>
-              </TouchableOpacity>
-              <TransferForm
-                ref={transferFormRef}
-                embedded
-                onCanSaveChange={setTransferCanSave}
-                onDirtyChange={setTransferIsDirty}
-                onSaveSuccess={onClose}
-                onConfirmedClose={(reason) => {
-                  if (reason === 'back') {
-                    backToChooser();
-                  } else {
-                    onClose();
-                  }
-                }}
-              />
-            </ScrollView>
-          </Animated.View>
-        ) : null}
-        {showAddAsset ? (
-          <Animated.View
-            style={[styles.pushLayer, { transform: [{ translateX: addAssetTranslateX }] }]}
-            pointerEvents={addAssetSettledFront ? 'auto' : 'none'}
-            accessibilityElementsHidden={!addAssetSettledFront}
-            importantForAccessibility={addAssetSettledFront ? 'auto' : 'no-hide-descendants'}
-          >
-            <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <TouchableOpacity
-                style={styles.backRow}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                onPress={() => addAssetModalRef.current?.requestClose('back')}
-              >
-                <Ionicons name="chevron-back" size={18} color={colors.accentStrong} />
-                <Text style={styles.backRowText}>Back</Text>
-              </TouchableOpacity>
-              {/* Correction pass — accessibility focus target for Forward
-                  (§2). A real, visible, always-present heading for the Add
-                  Asset step (distinct from the outer KeyboardSheet's own
-                  title, which is a separate native element this component
-                  cannot ref into) — the one stable element focusElement can
-                  reliably target and VoiceOver/TalkBack can land on and
-                  speak, satisfying "step heading or first appropriate
-                  field" without auto-focusing (and unexpectedly raising the
-                  keyboard for) the Label text input. */}
-              <Text ref={addAssetHeadingRef} style={styles.body} accessibilityRole="header">
-                {addAssetTitle}
-              </Text>
-              <AddWealthItemModal
-                key={addAssetInstanceKey}
-                ref={addAssetModalRef}
-                visible
-                embedded
-                kind="asset"
-                presetAssetType={addAssetPresetType}
-                onClose={onClose}
-                onDirtyChange={setAddAssetIsDirty}
-                onCanSaveChange={setAddAssetCanSave}
-                onTitleChange={setAddAssetTitle}
-                onSaveSuccess={handleAddAssetSaveSuccess}
-                onConfirmedClose={(reason) => {
-                  if (reason === 'back') {
-                    backToChooserFromAddAsset();
-                  } else {
-                    onClose();
-                  }
-                }}
-              />
-            </ScrollView>
-          </Animated.View>
-        ) : null}
+
+        {renderDestinationLayer(
+          'transfer',
+          isRouteActiveInTransition(transition, 'transfer'),
+          transferHeadingRef,
+          'Move money',
+          () => transferFormRef.current?.requestClose('back'),
+          <TransferForm
+            ref={transferFormRef}
+            embedded
+            onCanSaveChange={setTransferCanSave}
+            onDirtyChange={setTransferIsDirty}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'asset',
+          assetState.everEnteredRef.current,
+          assetState.headingRef,
+          assetState.title,
+          () => assetModalRef.current?.requestClose('back'),
+          <AddWealthItemModal
+            key={assetState.instanceKey}
+            ref={assetModalRef}
+            visible
+            embedded
+            kind="asset"
+            presetAssetType={assetPresetType}
+            onDirtyChange={assetState.setIsDirty}
+            onCanSaveChange={assetState.setCanSave}
+            onTitleChange={assetState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'expense',
+          expenseState.everEnteredRef.current,
+          expenseState.headingRef,
+          expenseState.title,
+          () => expenseModalRef.current?.requestClose('back'),
+          <QuickAddModal
+            key={expenseState.instanceKey}
+            ref={expenseModalRef}
+            visible
+            embedded
+            initialType="expense"
+            onDirtyChange={expenseState.setIsDirty}
+            onCanSaveChange={expenseState.setCanSave}
+            onTitleChange={expenseState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'incomeReceived',
+          incomeReceivedState.everEnteredRef.current,
+          incomeReceivedState.headingRef,
+          incomeReceivedState.title,
+          () => incomeReceivedModalRef.current?.requestClose('back'),
+          <QuickAddModal
+            key={incomeReceivedState.instanceKey}
+            ref={incomeReceivedModalRef}
+            visible
+            embedded
+            initialType="income"
+            onDirtyChange={incomeReceivedState.setIsDirty}
+            onCanSaveChange={incomeReceivedState.setCanSave}
+            onTitleChange={incomeReceivedState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'incomeSource',
+          incomeSourceState.everEnteredRef.current,
+          incomeSourceState.headingRef,
+          incomeSourceState.title,
+          () => incomeSourceModalRef.current?.requestClose('back'),
+          <AddIncomeModal
+            key={incomeSourceState.instanceKey}
+            ref={incomeSourceModalRef}
+            visible
+            embedded
+            onDirtyChange={incomeSourceState.setIsDirty}
+            onCanSaveChange={incomeSourceState.setCanSave}
+            onTitleChange={incomeSourceState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'bill',
+          billState.everEnteredRef.current,
+          billState.headingRef,
+          billState.title,
+          () => billModalRef.current?.requestClose('back'),
+          <AddRecurringItemModal
+            key={billState.instanceKey}
+            ref={billModalRef}
+            visible
+            embedded
+            onRequestLoan={handleRequestLoanFromBill}
+            onDirtyChange={billState.setIsDirty}
+            onCanSaveChange={billState.setCanSave}
+            onTitleChange={billState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'liability',
+          liabilityState.everEnteredRef.current,
+          liabilityState.headingRef,
+          liabilityState.title,
+          () => liabilityModalRef.current?.requestClose('back'),
+          <AddWealthItemModal
+            key={liabilityState.instanceKey}
+            ref={liabilityModalRef}
+            visible
+            embedded
+            kind="liability"
+            presetLiabilityType={liabilityHandoffType ?? undefined}
+            liabilityFlowIntent={liabilityHandoffType ? 'select_or_create_for_repayment' : 'create'}
+            onRequestCreditCard={handleRequestCreditCardFromLiability}
+            onDirtyChange={liabilityState.setIsDirty}
+            onCanSaveChange={liabilityState.setCanSave}
+            onTitleChange={liabilityState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'creditCard',
+          creditCardState.everEnteredRef.current,
+          creditCardState.headingRef,
+          creditCardState.title,
+          () => creditCardModalRef.current?.requestClose('back'),
+          <AddCreditCardModal
+            key={creditCardState.instanceKey}
+            ref={creditCardModalRef}
+            visible
+            embedded
+            onDirtyChange={creditCardState.setIsDirty}
+            onCanSaveChange={creditCardState.setCanSave}
+            onTitleChange={creditCardState.setTitle}
+            onClose={onClose}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
+
+        {renderDestinationLayer(
+          'goal',
+          goalState.everEnteredRef.current,
+          goalState.headingRef,
+          goalState.title,
+          () => goalModalRef.current?.requestClose('back'),
+          <AddGoalModal
+            key={goalState.instanceKey}
+            ref={goalModalRef}
+            visible
+            embedded
+            onClose={onClose}
+            onDirtyChange={goalState.setIsDirty}
+            onCanSaveChange={goalState.setCanSave}
+            onSaveSuccess={handleSaveSuccessClose}
+            onConfirmedClose={handleConfirmedClose}
+          />
+        )}
       </View>
     </KeyboardSheet>
   );

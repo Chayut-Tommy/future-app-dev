@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -48,8 +48,10 @@ const LIABILITY_NAME_FIELD: Record<LiabilityType, { field: string; placeholder: 
 };
 
 // Display name used in titles ("Add Car Loan" / "Update Car Loan") and the
-// repayment-selector step's heading.
-const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
+// repayment-selector step's heading — also the single source of truth
+// AddAnythingSheet.tsx's own routeDisplayName reuses for its discard/switch
+// alert copy, so a loan-type label can never drift between the two files.
+export const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
   mortgage: 'Mortgage',
   car_loan: 'Car Loan',
   personal_loan: 'Personal Loan',
@@ -239,19 +241,32 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
    * that don't fit this generic form — picking "Credit card" here hands
    * off to the dedicated AddCreditCardModal instead (PRD ask: credit card
    * is just one of the liability types you can add, not a separate flow
-   * to discover). */
+   * to discover). STANDALONE only — the defer-to-onDismiss/Android-timer
+   * dance below exists purely to sequence two separate native Modal
+   * presentations, which an embedded session never has (see
+   * onRequestCreditCard for the embedded equivalent). Never called when
+   * `embedded` is true. */
   onSelectCreditCard?: () => void;
+  /** Full-workspace extension — the embedded equivalent of
+   * onSelectCreditCard above. Called synchronously, directly, the instant
+   * the "Credit card" chip is tapped while embedded — no Modal dismissal
+   * to sequence, so no defer/timer dance is needed; the host (AddAnythingSheet)
+   * simply forwards this into its own route controller (chooser<->liability
+   * <->creditCard are all routes in the SAME persistent workspace, never
+   * separate Modal presentations). Never called when `embedded` is false. */
+  onRequestCreditCard?: () => void;
   onClose: () => void;
-  /** Navigation Transitions, Option B pilot (Add Anything -> Add Asset).
-   * True only for the one embedded host that renders this component without
-   * its own Modal/KeyboardSheet chrome, supplying that chrome itself and
-   * driving Save/Close through the ref handle above. Every existing caller
-   * omits this (defaults to false), which preserves 100% of the standalone
-   * rendering (own KeyboardSheet, own footer, own Cancel/Save wiring)
-   * unchanged. MUST only ever be combined with kind="asset" — liability and
-   * credit-card sessions always render standalone regardless of this flag
-   * (enforced by the embedded host, which only ever mounts this component
-   * with kind="asset"; see AddAnythingSheet.tsx). */
+  /** Navigation Transitions — Add Anything, full-workspace extension. True
+   * only for the embedded host that renders this component without its own
+   * Modal/KeyboardSheet chrome, supplying that chrome itself and driving
+   * Save/Close through the ref handle above. Every existing standalone
+   * caller omits this (defaults to false), which preserves 100% of the
+   * standalone rendering (own KeyboardSheet, own footer, own Cancel/Save
+   * wiring) unchanged. Originally scoped to kind="asset" only (Option B
+   * pilot); now also reachable with kind="liability", including its own
+   * type-selector step ("Which Car Loan is this repayment for?") and the
+   * credit-card handoff above — both now embedded-aware rather than always
+   * standalone. */
   embedded?: boolean;
   /** Live dirty-state report for the embedded host's own KeyboardSheet
    * isDirty gate (swipe/backdrop/Android-Back). Mirrored every render
@@ -282,6 +297,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   presetLiabilityType,
   liabilityFlowIntent,
   onSelectCreditCard,
+  onRequestCreditCard,
   onClose,
   embedded = false,
   onDirtyChange,
@@ -335,6 +351,16 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const [liabilityType, setLiabilityType] = useState<LiabilityType>('personal_loan');
   const [repaymentAmount, setRepaymentAmount] = useState('');
   const [repaymentFrequency, setRepaymentFrequency] = useState<PayFrequency>('monthly');
+  // Correction pass (repayment-schedule UX fix) — purely cosmetic: whether
+  // the user has actually interacted with the frequency chips this session,
+  // kept deliberately separate from repaymentScheduleTouched/Complete/
+  // Incomplete (the existing, tested validation signals, which must stay
+  // driven only by the amount/day/date fields). Without this, the chip row's
+  // `active` prop keyed directly on `repaymentFrequency === f.value` made
+  // "Monthly" render as selected even on a genuinely untouched, blank
+  // schedule, contradicting the helper text ("leave every field blank to
+  // skip this for now").
+  const [repaymentFrequencyTouched, setRepaymentFrequencyTouched] = useState(false);
   // Never assume a repayment is due today or one month from today (PRD
   // ask, §B4) — the user picks a real day of month, or explicitly defers
   // scheduling it. Both start unset so nothing is silently pre-filled.
@@ -345,7 +371,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // fortnightly car loan repayment still asked for "day of month").
   const [repaymentNextDueDate, setRepaymentNextDueDate] = useState<string | null>(null);
   const [repaymentPickerOpen, setRepaymentPickerOpen] = useState(false);
-  const [addRepaymentLater, setAddRepaymentLater] = useState(false);
   const [propertyLinkMode, setPropertyLinkMode] = useState<'none' | 'existing' | 'new'>('none');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const [newPropertyValue, setNewPropertyValue] = useState('');
@@ -373,6 +398,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // liability already exists; skipped entirely (falls straight to a blank
   // create form) otherwise.
   const [showLiabilitySelector, setShowLiabilitySelector] = useState(false);
+  // Correction pass (blank-Bill-after-Back-from-loan-handoff fix) — whether
+  // the picker above was genuinely offered THIS session, reset once per
+  // fresh open/instanceKey by the same effect that computes
+  // shouldOfferSelector below. Lets requestEmbeddedClose's own internal
+  // Back distinguish "there's a picker step to return to" from "this was
+  // always a plain single-step liability entry" without re-deriving
+  // shouldOfferSelector's own matching-liabilities lookup a second time.
+  const selectorEverShownRef = useRef(false);
   // The liability explicitly chosen from that selector — null means
   // "add a new one" (either the user tapped "+ Add a new X", or no
   // selector was ever shown because none existed, or intent is 'create').
@@ -456,6 +489,21 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const propertyAssets = data.assets.filter((a) => a.type === 'property');
   const vehicleAssets = data.assets.filter((a) => a.type === 'car');
   const usesRepaymentDayOfMonth = repaymentFrequency === 'monthly';
+  // Correction pass — replaces the removed "I'll add the repayment
+  // schedule later" checkbox with an explicit optional-schedule contract:
+  // blank saves the liability with no linked bill; ANY field entered
+  // requires the full set (amount + day-of-month or next-date, depending
+  // on frequency) before Save is allowed; a complete set always creates or
+  // updates exactly one linked bill. "Touched" reads only the two fields
+  // that start genuinely blank (amount, day/date) — frequency always has a
+  // valid default and is never itself evidence the user began a schedule.
+  const repaymentScheduleTouched = repaymentAmount.trim().length > 0 || repaymentDayOfMonth.trim().length > 0 || repaymentNextDueDate !== null;
+  const repaymentScheduleComplete = (() => {
+    const repaymentValue = parseFloat(repaymentAmount);
+    const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
+    return !isNaN(repaymentValue) && repaymentValue > 0 && (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
+  })();
+  const repaymentScheduleIncomplete = isNewLoan && repaymentScheduleTouched && !repaymentScheduleComplete;
   const resolvedIntent = liabilityFlowIntent ?? 'create';
   // The exact liability this session is updating (via the repayment
   // selector), if any — distinct from editLiability. Its own existing
@@ -471,6 +519,20 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // ForRepayment prefilled at selection time.
   const linkedRepaymentLookup = targetLiability ? findLinkedRepayment(data.recurringItems, targetLiability.id) : null;
   const hasAmbiguousLinkedRepayment = linkedRepaymentLookup?.status === 'ambiguous';
+  // Correction pass (existing linked-schedule safety) — no atomic "detach
+  // this bill, keep the liability" transition exists yet (upsertLinkedRecurringItem
+  // in AppStateContext.tsx is an unconditional no-op when handed no
+  // recurringItem, and no other liability transition supports removal
+  // either). Clearing the local form fields never touches the real linked
+  // RecurringItem, so offering "Clear repayment details" here — for a
+  // target with a real, already-saved linked repayment — would let the
+  // form visually show "no schedule" while that bill keeps affecting Money
+  // calculations undisclosed. Editing individual fields and Save is
+  // unaffected (that already correctly updates the same linked bill via
+  // updateLinkedRepaymentOnly); only the "clear to blank" affordance is
+  // hidden. Safe atomic removal is tracked as a separate backlog item, not
+  // implemented this round.
+  const hasSavedLinkedRepayment = !!targetLiabilityId && linkedRepaymentLookup?.status === 'one';
   const targetLinkedAssetLabel = targetLiability
     ? targetLiability.type === 'car_loan' && targetLiability.linkedVehicleAssetId
       ? data.assets.find((a) => a.id === targetLiability.linkedVehicleAssetId)?.label ?? null
@@ -514,50 +576,102 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     initialSnapshot.current = { ...initialSnapshot.current, label: '', value: '' };
   }
 
+  // Correction pass (parked-draft-loss fix) — both picker-row handlers below
+  // used to overwrite this form's own draft fields (label/value/interestRate/
+  // asset links/repayment fields) unconditionally, even when a dirty,
+  // unsaved draft from an earlier "Add a new X" session was already sitting
+  // here in this same mounted instance. That's reachable specifically
+  // because the host's own same-type-reselect guard (AddAnythingSheet.tsx)
+  // correctly re-enters this exact instance without resetting anything,
+  // leaving these two handlers as the only remaining place that could still
+  // silently destroy it. Reuses the existing isDirty signal below (declared
+  // later in the file, but only ever read once these handlers are actually
+  // invoked from an event, by which point the full render — and isDirty's
+  // assignment — has already completed) rather than inventing a second dirty
+  // check. "Keep editing" restores the parked draft directly (hides the
+  // selector; nothing else has been mutated yet at that point) rather than
+  // being a no-op, satisfying "re-entering must restore the parked form
+  // directly."
+  function confirmPickerSelectionIfDirty(onDiscard: () => void) {
+    if (!isDirty) {
+      onDiscard();
+      return;
+    }
+    Alert.alert(
+      `Discard this ${LIABILITY_DISPLAY_NAME[liabilityType]}?`,
+      `Your unsaved ${LIABILITY_DISPLAY_NAME[liabilityType]} details will be lost.`,
+      [
+        { text: 'Keep editing', style: 'cancel', onPress: () => setShowLiabilitySelector(false) },
+        { text: 'Discard', style: 'destructive', onPress: onDiscard },
+      ]
+    );
+  }
+
   // Stream C correction (Correction 1) — the "select or create for
   // repayment" step's own choice handlers.
   function chooseExistingLiabilityForRepayment(l: Liability) {
-    setTargetLiabilityId(l.id);
-    setEditingLoanDetails(false);
-    prefillFromLiability(l);
-    // VID-001 correction — prefillFromLiability only ever populated the
-    // LIABILITY's own fields (balance/rate/link); the repayment amount/
-    // frequency/day/date live entirely on a separate, linked RecurringItem
-    // and were never read here, so this "Update" form previously always
-    // rendered them blank even when a correct schedule already existed.
-    // Exactly one linked match: prefill it. Zero matches: leave blank — a
-    // genuine first-ever schedule. More than one match: also leave blank
-    // here (never guess which one) — hasAmbiguousLinkedRepayment blocks
-    // the session below instead.
-    const lookup = findLinkedRepayment(data.recurringItems, l.id);
-    if (lookup.status === 'one') {
-      const prefill = prefillValuesFromRepayment(lookup.repayment);
-      setRepaymentAmount(prefill.amount);
-      setRepaymentFrequency(prefill.frequency);
-      setRepaymentDayOfMonth(prefill.dayOfMonth);
-      setRepaymentNextDueDate(prefill.nextDueDate);
-    } else {
-      setRepaymentAmount('');
-      setRepaymentFrequency('monthly');
-      setRepaymentDayOfMonth('');
-      setRepaymentNextDueDate(null);
-    }
-    setShowLiabilitySelector(false);
+    confirmPickerSelectionIfDirty(() => {
+      setTargetLiabilityId(l.id);
+      setEditingLoanDetails(false);
+      prefillFromLiability(l);
+      // VID-001 correction — prefillFromLiability only ever populated the
+      // LIABILITY's own fields (balance/rate/link); the repayment amount/
+      // frequency/day/date live entirely on a separate, linked RecurringItem
+      // and were never read here, so this "Update" form previously always
+      // rendered them blank even when a correct schedule already existed.
+      // Exactly one linked match: prefill it. Zero matches: leave blank — a
+      // genuine first-ever schedule. More than one match: also leave blank
+      // here (never guess which one) — hasAmbiguousLinkedRepayment blocks
+      // the session below instead.
+      const lookup = findLinkedRepayment(data.recurringItems, l.id);
+      if (lookup.status === 'one') {
+        const prefill = prefillValuesFromRepayment(lookup.repayment);
+        setRepaymentAmount(prefill.amount);
+        setRepaymentFrequency(prefill.frequency);
+        setRepaymentDayOfMonth(prefill.dayOfMonth);
+        setRepaymentNextDueDate(prefill.nextDueDate);
+        setRepaymentFrequencyTouched(true);
+      } else {
+        setRepaymentAmount('');
+        setRepaymentFrequency('monthly');
+        setRepaymentDayOfMonth('');
+        setRepaymentNextDueDate(null);
+        setRepaymentFrequencyTouched(false);
+      }
+      setShowLiabilitySelector(false);
+    });
   }
   function chooseAddNewLiabilityForRepayment() {
-    setTargetLiabilityId(null);
-    setEditingLoanDetails(true);
-    resetLiabilityFieldsBlank();
-    setShowLiabilitySelector(false);
+    confirmPickerSelectionIfDirty(() => {
+      setTargetLiabilityId(null);
+      setEditingLoanDetails(true);
+      resetLiabilityFieldsBlank();
+      setShowLiabilitySelector(false);
+    });
   }
 
   function chooseRepaymentFrequency(f: PayFrequency) {
     setRepaymentFrequency(f);
+    setRepaymentFrequencyTouched(true);
     // Switching frequency invalidates whatever day/date was picked under
     // the old schedule (same rule Income and Bills already follow).
     setRepaymentDayOfMonth('');
     setRepaymentNextDueDate(null);
     setRepaymentPickerOpen(false);
+  }
+
+  // Correction pass (repayment-schedule contract) — returns the section to
+  // its blank state, matching the required "Clear repayment details"
+  // affordance. Purely local to this form session: it does not delete or
+  // touch any already-saved linked repayment on its own — only Save,
+  // afterwards, decides what (if anything) to persist, exactly like every
+  // other field in this form.
+  function clearRepaymentSchedule() {
+    setRepaymentAmount('');
+    setRepaymentFrequency('monthly');
+    setRepaymentFrequencyTouched(false);
+    setRepaymentDayOfMonth('');
+    setRepaymentNextDueDate(null);
   }
 
   const isEditing = !!(editAsset || editLiability);
@@ -571,6 +685,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // A genuinely new form session — see submittingRef's own comment for
     // why this is the only place it's ever cleared.
     submittingRef.current = false;
+    // Reset before the branches below — only the 'create' branch's own
+    // shouldOfferSelector computation (further down) may set this true
+    // again; editAsset/editLiability sessions never offer this picker.
+    selectorEverShownRef.current = false;
     // Sync the frozen `kind` (see its own declaration comment above) from
     // the live `kindProp` — only reachable here, past the `!visible` guard,
     // so a close that clears the caller's own routing state can never pull
@@ -620,10 +738,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setLiabilityType(resolvedType);
       setRepaymentAmount('');
       setRepaymentFrequency('monthly');
+      setRepaymentFrequencyTouched(false);
       setRepaymentDayOfMonth('');
       setRepaymentNextDueDate(null);
       setRepaymentPickerOpen(false);
-      setAddRepaymentLater(false);
       resetLiabilityFieldsBlank();
       setLabel('');
       setValue('');
@@ -641,6 +759,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       const matching = kindProp === 'liability' ? data.liabilities.filter((l) => l.type === resolvedType) : [];
       const shouldOfferSelector = kindProp === 'liability' && (liabilityFlowIntent ?? 'create') === 'select_or_create_for_repayment' && matching.length > 0;
       setShowLiabilitySelector(shouldOfferSelector);
+      selectorEverShownRef.current = shouldOfferSelector;
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
     }
@@ -703,7 +822,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // actually guarantees this session can never mutate the liability or
     // its linked recurring item while ambiguous, regardless of what (if
     // anything) the user types.
-    !hasAmbiguousLinkedRepayment;
+    !hasAmbiguousLinkedRepayment &&
+    // Correction pass (repayment-schedule contract) — a PARTIALLY entered
+    // schedule (e.g. an amount with no frequency/date yet) must block Save
+    // with inline validation rather than either silently discarding it
+    // (the old "later" checkbox's effect) or silently persisting an
+    // incomplete one. A genuinely blank schedule, or a genuinely complete
+    // one, both leave this true.
+    !repaymentScheduleIncomplete;
   const title =
     kind === 'asset'
       ? assetType === 'savings'
@@ -717,6 +843,12 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         : isEditing
         ? 'Edit asset'
         : 'Add asset'
+      : // Full-workspace extension — computed here too (not just inline in
+      // the selector step's own standalone KeyboardSheet below) so an
+      // embedded session's onTitleChange reports the exact same string via
+      // one single source of truth, never a second copy that could drift.
+      showLiabilitySelector
+      ? `Which ${LIABILITY_DISPLAY_NAME[liabilityType]} is this repayment for?`
       : editLiability
       ? `Edit ${LIABILITY_DISPLAY_NAME[liabilityType]}`
       : targetLiabilityId
@@ -746,6 +878,25 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // gate requestCancel already uses for the standalone Cancel button.
   function requestEmbeddedClose(reason: AddWealthItemCloseReason) {
     if (reason === 'back') {
+      // Correction pass (blank-Bill-after-Back-from-loan-handoff fix) —
+      // this form's own internal "which existing X is this for?" picker,
+      // once offered, is itself a real navigation step with its own Back
+      // target: a session that picked a row OR "Add a new X" and is now on
+      // the ordinary details form must Back INTERNALLY to that picker
+      // first, never straight out to the host. Only once genuinely ON the
+      // picker (or when it was never offered this session at all —
+      // liabilityFlowIntent 'create', the ordinary single-step liability
+      // entry) does Back forward to the host's own generic handleBack,
+      // exactly like every other single-step embedded destination. Modeled
+      // as an explicit step (selectorEverShownRef + showLiabilitySelector),
+      // not a remount or a deferred/timed close — the picker's own list and
+      // the "Add a new X" details form are simply two states of the one
+      // already-mounted instance, so returning to it is instant and keeps
+      // whatever was on it.
+      if (kind === 'liability' && selectorEverShownRef.current && !showLiabilitySelector) {
+        setShowLiabilitySelector(true);
+        return;
+      }
       onConfirmedClose?.(reason);
       return;
     }
@@ -786,14 +937,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   function wouldCreateNewLinkedRepayment(): boolean {
     if (kind !== 'liability' || editLiability || targetLiabilityId) return false;
     if (resolvedIntent !== 'select_or_create_for_repayment' || !SMART_LOAN_TYPES.includes(liabilityType)) return false;
-    const repaymentValue = parseFloat(repaymentAmount);
-    const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
-    return (
-      !addRepaymentLater &&
-      !isNaN(repaymentValue) &&
-      repaymentValue > 0 &&
-      (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate)
-    );
+    return repaymentScheduleComplete;
   }
 
   function handleSave() {
@@ -869,18 +1013,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           // that also fixed a latent inconsistency: the repayment-only path
           // needs the identical computation the isMortgage/isCarLoan/else
           // branches already had, so it is now computed once). Only creates
-          // a repayment definition once the user has actually chosen a
-          // day/date — never silently assumes "due one month from today"
-          // (PRD bug report, §B4). "I'll add this later" leaves any
-          // already-scheduled repayment untouched.
+          // a repayment definition once the user has actually entered a
+          // complete schedule (reuses the same repaymentScheduleComplete
+          // canSave already gates on) — never silently assumes "due one
+          // month from today" (PRD bug report, §B4). A genuinely blank
+          // schedule leaves any already-scheduled repayment untouched,
+          // exactly as the removed "I'll add this later" checkbox did.
           const repaymentValue = parseFloat(repaymentAmount);
           const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
-          const hasRepaymentSchedule =
-            SMART_LOAN_TYPES.includes(liabilityType) &&
-            !addRepaymentLater &&
-            !isNaN(repaymentValue) &&
-            repaymentValue > 0 &&
-            (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
+          const hasRepaymentSchedule = SMART_LOAN_TYPES.includes(liabilityType) && repaymentScheduleComplete;
           const repaymentPayload = hasRepaymentSchedule
             ? {
                 type: 'expense' as const,
@@ -1127,14 +1268,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // already exist (computed once on open — see the reset effect).
   if (kind === 'liability' && showLiabilitySelector) {
     const matching = data.liabilities.filter((l) => l.type === liabilityType);
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title={`Which ${LIABILITY_DISPLAY_NAME[liabilityType]} is this repayment for?`}
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-      >
+    const selectorContent = (
+      <>
         {matching.map((l) => {
           const linkedAssetLabel =
             l.type === 'car_loan' && l.linkedVehicleAssetId
@@ -1156,6 +1291,28 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           <Ionicons name="add" size={16} color={colors.accentStrong} />
           <Text style={styles.addNewRowText}>Add a new {LIABILITY_DISPLAY_NAME[liabilityType]}</Text>
         </TouchableOpacity>
+      </>
+    );
+    // Full-workspace extension — this internal sub-step (a choice made
+    // BEFORE the ordinary details form below is even reached) now stays
+    // inside the persistent embedded workspace exactly like the ordinary
+    // details form already does, rather than always opening its own
+    // standalone Modal. The host never needs to know this sub-step exists
+    // — canSave is already naturally false here (label/value are still
+    // blank; see resetLiabilityFieldsBlank), so the host's own Save button
+    // is correctly disabled without any extra wiring, and the shared
+    // `title` computation above already reports this step's exact heading.
+    // Tapping a row or "Add a new X" transitions straight into the ordinary
+    // details content below via existing internal state changes
+    // (chooseExistingLiabilityForRepayment/chooseAddNewLiabilityForRepayment)
+    // — no host involvement, same pattern the details form's own field
+    // changes already use.
+    if (embedded) {
+      return selectorContent;
+    }
+    return (
+      <KeyboardSheet visible={visible} onClose={onClose} isDirty={false} title={title} footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}>
+        {selectorContent}
       </KeyboardSheet>
     );
   }
@@ -1213,13 +1370,23 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                 key={t.value}
                 style={[styles.typeChip, active ? styles.typeChipActive : null]}
                 onPress={() => {
-                  // First-accepted-tap-wins deferred handoff (Stream D,
-                  // D1, corrected) — onSelectCreditCard is never called in
-                  // the same tick as onClose(): on iOS it's deferred to
-                  // KeyboardSheet's real onDismiss (wired below); only on
-                  // Android — where RN never calls onDismiss — is the
-                  // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
                   if (kind === 'liability' && t.value === 'credit_card') {
+                    // Full-workspace extension — embedded: no Modal to
+                    // dismiss, so no defer/timer dance at all. Directly and
+                    // synchronously hands off to the host's own route
+                    // controller (chooser<->liability<->creditCard, all
+                    // routes in the same persistent workspace).
+                    if (embedded) {
+                      onRequestCreditCard?.();
+                      return;
+                    }
+                    // Standalone — unchanged. First-accepted-tap-wins
+                    // deferred handoff (Stream D, D1, corrected) —
+                    // onSelectCreditCard is never called in the same tick
+                    // as onClose(): on iOS it's deferred to KeyboardSheet's
+                    // real onDismiss (wired below); only on Android — where
+                    // RN never calls onDismiss — is the
+                    // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
                     if (ccHandoffInProgressRef.current) return;
                     ccHandoffInProgressRef.current = true;
                     // Skip the animated dismissal for an accepted handoff
@@ -1481,13 +1648,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           </View>
         ) : (
         <>
+          <Text style={styles.label}>Repayment schedule (optional)</Text>
           <View style={styles.helperBox}>
             <Text style={styles.helperText}>
               Add your repayment amount and next repayment date and {brand.name} will automatically add "{label.trim() || LIABILITY_DISPLAY_NAME[liabilityType]}{' '}
-              repayment" to your Bills Calendar.
+              repayment" to your Bills Calendar. Leave every field blank to skip this for now.
             </Text>
           </View>
-          <Text style={styles.label}>Repayment amount (optional)</Text>
+          <Text style={styles.label}>Repayment amount</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. 3,000"
@@ -1499,7 +1667,12 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           <Text style={styles.label}>Repayment frequency</Text>
           <View style={styles.freqRow}>
             {REPAYMENT_FREQUENCIES.map((f) => {
-              const active = repaymentFrequency === f.value;
+              // Correction pass (repayment-schedule UX fix) — an untouched
+              // schedule must not show "Monthly" as visually selected, even
+              // though repaymentFrequency's own state default is 'monthly'
+              // (needed so the amount/day fields below have a valid
+              // frequency to key off before the user ever touches this row).
+              const active = (repaymentScheduleTouched || repaymentFrequencyTouched) && repaymentFrequency === f.value;
               return (
                 <TouchableOpacity
                   key={f.value}
@@ -1511,54 +1684,79 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
               );
             })}
           </View>
-          {!addRepaymentLater ? (
-            usesRepaymentDayOfMonth ? (
-              <>
-                <Text style={styles.label}>Day of month due</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. 15"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="number-pad"
-                  value={repaymentDayOfMonth}
-                  onChangeText={setRepaymentDayOfMonth}
-                />
-              </>
-            ) : (
-              <>
-                <Text style={styles.label}>Next repayment date</Text>
-                <TouchableOpacity
-                  style={styles.dateButton}
-                  onPress={() => {
-                    // Same gesture-isolation/keyboard-dismissal correction as
-                    // Income's date field (UX correction round) — a dedicated
-                    // modal instead of an inline calendar sharing this sheet's
-                    // own swipe-to-dismiss surface, so scrolling the calendar
-                    // can never be read as "close the whole loan form" and
-                    // silently discard entered name/amount/vehicle-link data.
-                    Keyboard.dismiss();
-                    setRepaymentPickerOpen(true);
-                  }}
-                >
-                  <Text style={[styles.dateButtonText, !repaymentNextDueDate ? styles.dateButtonPlaceholder : null]}>
-                    {repaymentNextDueDate ? formatDate(repaymentNextDueDate) : 'Choose a date'}
-                  </Text>
-                  <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-                </TouchableOpacity>
-                <Text style={styles.dateHint}>
-                  {repaymentFrequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
+          {usesRepaymentDayOfMonth ? (
+            <>
+              <Text style={styles.label}>Day of month due</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. 15"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                value={repaymentDayOfMonth}
+                onChangeText={setRepaymentDayOfMonth}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.label}>Next repayment date</Text>
+              <TouchableOpacity
+                style={styles.dateButton}
+                onPress={() => {
+                  // Same gesture-isolation/keyboard-dismissal correction as
+                  // Income's date field (UX correction round) — a dedicated
+                  // modal instead of an inline calendar sharing this sheet's
+                  // own swipe-to-dismiss surface, so scrolling the calendar
+                  // can never be read as "close the whole loan form" and
+                  // silently discard entered name/amount/vehicle-link data.
+                  Keyboard.dismiss();
+                  setRepaymentPickerOpen(true);
+                }}
+              >
+                <Text style={[styles.dateButtonText, !repaymentNextDueDate ? styles.dateButtonPlaceholder : null]}>
+                  {repaymentNextDueDate ? formatDate(repaymentNextDueDate) : 'Choose a date'}
                 </Text>
-              </>
-            )
+                <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+              <Text style={styles.dateHint}>
+                {repaymentFrequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
+              </Text>
+            </>
+          )}
+          {/* Correction pass (repayment-schedule contract) — replaces the
+              removed "I'll add the repayment schedule later" checkbox.
+              Shown only once the user has started a schedule but not yet
+              completed it, naming exactly what's still missing; Save stays
+              disabled (canSave's own repaymentScheduleIncomplete check)
+              until it clears. */}
+          {repaymentScheduleIncomplete ? (
+            <View style={styles.helperBox}>
+              <Text style={[styles.helperText, { color: colors.danger }]}>
+                {!repaymentAmount.trim()
+                  ? 'Enter a repayment amount.'
+                  : usesRepaymentDayOfMonth
+                  ? 'Enter a day from 1 to 31.'
+                  : 'Choose a next repayment date.'}
+              </Text>
+            </View>
           ) : null}
-          <TouchableOpacity onPress={() => setAddRepaymentLater((v) => !v)} style={styles.deferRepaymentLink}>
-            <Ionicons
-              name={addRepaymentLater ? 'checkbox' : 'square-outline'}
-              size={16}
-              color={addRepaymentLater ? colors.accentStrong : colors.textMuted}
-            />
-            <Text style={styles.deferRepaymentText}>I'll add the repayment schedule later</Text>
-          </TouchableOpacity>
+          {repaymentScheduleTouched && !hasSavedLinkedRepayment ? (
+            <TouchableOpacity onPress={clearRepaymentSchedule} style={styles.deferRepaymentLink}>
+              <Ionicons name="close-circle-outline" size={16} color={colors.textMuted} />
+              <Text style={styles.deferRepaymentText}>Clear repayment details</Text>
+            </TouchableOpacity>
+          ) : null}
+          {/* Correction pass (existing linked-schedule safety) — this
+              schedule is already saved as a real linked bill; clearing the
+              fields here can't safely remove it (no atomic detach
+              transition exists yet, see hasSavedLinkedRepayment above), so
+              the Clear action is hidden rather than left able to mislead. */}
+          {hasSavedLinkedRepayment ? (
+            <View style={styles.helperBox}>
+              <Text style={styles.helperText}>
+                This repayment is already saved to your Bills. To remove it, manage the linked bill from Money — editing the fields above and saving still updates it.
+              </Text>
+            </View>
+          ) : null}
         </>
         )
       ) : null}
@@ -1577,15 +1775,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     </>
   );
 
-  // Embedded (Navigation Transitions, Option B pilot) — no Modal, no
-  // KeyboardSheet, no footer of its own. The host supplies all of that and
-  // drives Save/Close through the ref handle above. Only ever reached with
-  // kind="asset" (see AddWealthItemModalHandle's own doc comment) — the
-  // category-step and liability-selector-step early returns above remain
-  // completely unreachable here for exactly that reason (both require
-  // conditions this pilot's caller never creates: no presetAssetType/
-  // editAsset for the category step, kind==='liability' for the selector
-  // step), so neither of those two branches needed any change at all.
+  // Embedded — no Modal, no KeyboardSheet, no footer of its own. The host
+  // supplies all of that and drives Save/Close through the ref handle
+  // above. Reachable with kind="asset" (Option B pilot — the category-step
+  // early return above stays unreachable here since the embedded host
+  // always supplies a presetAssetType) AND, since the full-workspace
+  // extension, with kind="liability" too (the type-selector step above is
+  // now embedded-aware in its own right, via its own `if (embedded)`
+  // return — this final check is only ever reached AFTER that step has
+  // already settled into the ordinary details content, for both kinds).
   if (embedded) {
     return content;
   }

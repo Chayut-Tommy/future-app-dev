@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,8 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { anchoredMonthlyDate } from '../../lib/calculations/recurringSchedule';
+import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 // Rent and Mortgage are deliberately separate presets, not one combined
 // entry (PRD ask): rent is a pure expense, mortgage also builds/reduces a
@@ -101,26 +103,53 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function AddRecurringItemModal({
-  visible,
-  onClose,
-  editItem,
-  onSelectLoan,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  /** Present = editing this existing bill instead of creating a new one. */
-  editItem?: RecurringItem | null;
-  /** A mortgage/car loan/personal loan needs liability linking (property or
-   * vehicle) and an explicit repayment date, not this generic bill form —
-   * picking one of those presets hands off to the one shared loan flow
-   * (AddWealthItemModal) instead of duplicating loan-specific logic in two
-   * places (PRD ask, §B4: "all entry points should use one shared mortgage
-   * creation/update function" — generalized to every loan type, Stream C).
-   * Receives the exact LiabilityType so the shared flow lands directly on
-   * the matching type chip. */
-  onSelectLoan?: (type: LiabilityType) => void;
-}) {
+export type AddRecurringItemModalHandle = EmbeddedStepHandle;
+
+export const AddRecurringItemModal = forwardRef<
+  AddRecurringItemModalHandle,
+  {
+    visible: boolean;
+    onClose: () => void;
+    /** Present = editing this existing bill instead of creating a new one. */
+    editItem?: RecurringItem | null;
+    /** A mortgage/car loan/personal loan needs liability linking (property or
+     * vehicle) and an explicit repayment date, not this generic bill form —
+     * picking one of those presets hands off to the one shared loan flow
+     * (AddWealthItemModal) instead of duplicating loan-specific logic in two
+     * places (PRD ask, §B4: "all entry points should use one shared mortgage
+     * creation/update function" — generalized to every loan type, Stream C).
+     * Receives the exact LiabilityType so the shared flow lands directly on
+     * the matching type chip. STANDALONE only — never called when
+     * `embedded` is true (see onRequestLoan below). */
+    onSelectLoan?: (type: LiabilityType) => void;
+    /** Full-workspace extension — the embedded equivalent of onSelectLoan
+     * above. Called synchronously, directly, the instant a loan preset is
+     * tapped while embedded — no Modal dismissal to sequence, so no defer/
+     * timer dance is needed; the host (AddAnythingSheet) forwards this into
+     * its own route controller (chooser<->bill<->liability are routes in
+     * the SAME persistent workspace, never separate Modal presentations).
+     * Never called when `embedded` is false. */
+    onRequestLoan?: (type: LiabilityType) => void;
+    /** True only when rendered inside the embedded Add Anything -> Bill
+     * route — activates real dirty-detection and a "Discard this bill?"
+     * confirmation on Cancel/backdrop/swipe/Android Back (this form has
+     * NEVER had discard confirmation for any dismissal path standalone —
+     * that stays completely unchanged; this is new, embedded-only
+     * protection, not a fix applied everywhere), and returns bare content
+     * for both the category and details steps instead of each owning its
+     * own KeyboardSheet. Omitted (the default) preserves 100% of the
+     * standalone rendering. */
+    embedded?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
+    onCanSaveChange?: (canSave: boolean) => void;
+    onTitleChange?: (title: string) => void;
+    onSaveSuccess?: () => void;
+    onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+  }
+>(function AddRecurringItemModal(
+  { visible, onClose, editItem, onSelectLoan, onRequestLoan, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
+  ref
+) {
   const { addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('home-outline');
@@ -141,6 +170,41 @@ export function AddRecurringItemModal({
 
   const isEditing = !!editItem;
   const usesDayOfMonth = frequency === 'monthly';
+
+  // UX correction — full-workspace extension. Genuine-change detection,
+  // relative to the values this form opened with — embedded mode only,
+  // mirroring TransferForm's/AddWealthItemModal's own established
+  // isDirty-gated-behind-`embedded` pattern. Standalone always reports
+  // false, preserving the pre-existing (always unconditional) dismissal
+  // behaviour exactly — this form has never had discard confirmation
+  // standalone, and that stays true here.
+  const initialSnapshot = useRef({ label: '', amount: '', frequency: 'monthly' as PayFrequency, dayOfMonth: '1', nextDueDate: null as string | null });
+  const isDirty =
+    embedded &&
+    (label !== initialSnapshot.current.label ||
+      amount !== initialSnapshot.current.amount ||
+      frequency !== initialSnapshot.current.frequency ||
+      dayOfMonth !== initialSnapshot.current.dayOfMonth ||
+      nextDueDate !== initialSnapshot.current.nextDueDate);
+
+  // Correction pass (Defect 2 fix) — same one-way latch as QuickAddModal.tsx
+  // and AddIncomeModal.tsx: the host's global parked-draft guard must see
+  // this form as dirty for as long as ANY unsaved change has ever existed
+  // this session, not only while isDirty is momentarily true (internal
+  // Back from 'details' to 'category' must not clear it). isDirty above is
+  // already hard-false whenever !embedded, so latching it directly (rather
+  // than re-gating on `embedded`) still correctly leaves standalone at its
+  // existing, unconditional-dismissal behaviour. The Cancel-while-active
+  // gate below (confirmDiscardIfDirty) intentionally keeps reading the raw
+  // isDirty — the latch only changes what the HOST is told via
+  // onDirtyChange.
+  const hasBeenDirtyRef = useRef(false);
+  if (isDirty) hasBeenDirtyRef.current = true;
+  const reportedDirty = embedded ? hasBeenDirtyRef.current : isDirty;
+
+  useEffect(() => {
+    onDirtyChange?.(reportedDirty);
+  }, [reportedDirty, onDirtyChange]);
 
   // First-accepted-tap-wins deferred loan handoff (Stream D, D1, corrected).
   // On iOS, runPendingLoanHandoff is passed to KeyboardSheet's onDismiss —
@@ -204,9 +268,12 @@ export function AddRecurringItemModal({
       setLabel(editItem.label);
       setAmount(String(editItem.amount));
       setFrequency(itemFrequency);
-      setDayOfMonth(dayOfMonthFrom(editItem.nextDueDate));
-      setNextDueDate(itemFrequency === 'monthly' ? null : editItem.nextDueDate);
+      const day = dayOfMonthFrom(editItem.nextDueDate);
+      setDayOfMonth(day);
+      const due = itemFrequency === 'monthly' ? null : editItem.nextDueDate;
+      setNextDueDate(due);
       setFormStep('details');
+      initialSnapshot.current = { label: editItem.label, amount: String(editItem.amount), frequency: itemFrequency, dayOfMonth: day, nextDueDate: due };
     } else {
       setIcon('home-outline');
       setLabel('');
@@ -215,9 +282,14 @@ export function AddRecurringItemModal({
       setDayOfMonth('1');
       setNextDueDate(null);
       setFormStep('category');
+      initialSnapshot.current = { label: '', amount: '', frequency: 'monthly', dayOfMonth: '1', nextDueDate: null };
     }
     setPickerOpen(false);
   }, [visible, editItem]);
+
+  useEffect(() => {
+    onTitleChange?.(formStep === 'category' ? "What's this bill for?" : isEditing ? 'Edit bill' : 'Add a bill');
+  }, [formStep, isEditing, onTitleChange]);
 
   function chooseFrequency(f: PayFrequency) {
     setFrequency(f);
@@ -241,18 +313,30 @@ export function AddRecurringItemModal({
     parsedAmount.valid &&
     (usesDayOfMonth ? dayValue >= 1 && dayValue <= 31 : !!nextDueDate);
 
+  useEffect(() => {
+    onCanSaveChange?.(canSave);
+  }, [canSave, onCanSaveChange]);
+
   function chooseBillType(p: (typeof BILL_PRESETS)[number]) {
     // Mortgage/car loan/personal loan need liability linking and an
     // explicit repayment date — one shared flow handles that
     // (AddWealthItemModal), so hand off instead of duplicating loan logic
     // here (PRD ask, §B4; generalized from mortgage-only, Stream C).
-    // First-accepted-tap-wins (Stream D, D1, corrected) — a second loan-
-    // preset tap while a handoff is already in progress is dropped, not
-    // queued or substituted. onSelectLoan is never called in the same tick
-    // as onClose(): on iOS it's deferred to KeyboardSheet's real onDismiss
-    // (wired below); only on Android — where RN never calls onDismiss — is
-    // the LOAN_HANDOFF_DEFER_MS fallback timer scheduled.
     if (p.handoffLoanType) {
+      // Full-workspace extension — embedded: no Modal to dismiss, so no
+      // defer/timer dance at all. Directly and synchronously hands off to
+      // the host's own route controller.
+      if (embedded) {
+        onRequestLoan?.(p.handoffLoanType);
+        return;
+      }
+      // Standalone — unchanged. First-accepted-tap-wins (Stream D, D1,
+      // corrected) — a second loan-preset tap while a handoff is already
+      // in progress is dropped, not queued or substituted. onSelectLoan is
+      // never called in the same tick as onClose(): on iOS it's deferred
+      // to KeyboardSheet's real onDismiss (wired below); only on Android —
+      // where RN never calls onDismiss — is the LOAN_HANDOFF_DEFER_MS
+      // fallback timer scheduled.
       if (handoffInProgressRef.current) return;
       handoffInProgressRef.current = true;
       pendingLoanTypeRef.current = p.handoffLoanType;
@@ -275,6 +359,23 @@ export function AddRecurringItemModal({
     setLabel(p.label);
     setFormStep('details');
   }
+
+  // UX correction — full-workspace extension. Embedded Cancel/backdrop/
+  // swipe/Android Back funnel through here. 'back' never discards — the
+  // embedded host preserves this draft across Back (mirroring the existing
+  // Add Asset pattern), so there is nothing to confirm losing.
+  function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(isDirty, () => onConfirmedClose?.(reason), 'Discard this bill?', 'Your new bill details will be lost.');
+  }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: handleRequestClose,
+  }));
 
   function handleSave() {
     if (!canSave || !parsedAmount.valid) return;
@@ -303,7 +404,12 @@ export function AddRecurringItemModal({
     } else {
       addRecurringItem(payload);
     }
-    onClose();
+    // Successful Save never goes through requestClose/confirmDiscardIfDirty
+    // — it must never produce a discard prompt. Embedded: hand control back
+    // to the host (which closes the whole Add Anything journey exactly
+    // once). Standalone: unchanged direct onClose().
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function handleDelete() {
@@ -375,6 +481,19 @@ export function AddRecurringItemModal({
   const selectedPreset = BILL_PRESETS.find((p) => p.icon === icon) ?? null;
 
   if (formStep === 'category') {
+    const categoryContent = (
+      <View style={styles.categoryGrid}>
+        {BILL_PRESETS.map((p) => (
+          <TouchableOpacity key={p.label} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseBillType(p)}>
+            <Text style={styles.categoryCardEmoji}>{p.emoji}</Text>
+            <Text style={styles.categoryCardLabel}>{p.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+
+    if (embedded) return categoryContent;
+
     return (
       <KeyboardSheet
         visible={visible}
@@ -385,30 +504,13 @@ export function AddRecurringItemModal({
         onDismiss={Platform.OS === 'ios' ? runPendingLoanHandoff : undefined}
         animationType={dismissAnimationType}
       >
-        <View style={styles.categoryGrid}>
-          {BILL_PRESETS.map((p) => (
-            <TouchableOpacity key={p.label} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseBillType(p)}>
-              <Text style={styles.categoryCardEmoji}>{p.emoji}</Text>
-              <Text style={styles.categoryCardLabel}>{p.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {categoryContent}
       </KeyboardSheet>
     );
   }
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={onClose}
-      title={isEditing ? 'Edit bill' : 'Add a bill'}
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
-        </>
-      }
-    >
+  const content = (
+    <>
       <View style={styles.selectedTypeRow}>
         <Text style={styles.selectedTypeEmoji}>{selectedPreset?.emoji ?? '📅'}</Text>
         <Text style={styles.selectedTypeLabel}>{selectedPreset?.label ?? 'Bill'}</Text>
@@ -478,6 +580,24 @@ export function AddRecurringItemModal({
           <Text style={styles.deleteText}>Delete bill</Text>
         </TouchableOpacity>
       ) : null}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={onClose}
+      title={isEditing ? 'Edit bill' : 'Add a bill'}
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+        </>
+      }
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});

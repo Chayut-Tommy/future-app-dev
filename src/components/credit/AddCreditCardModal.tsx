@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -9,6 +9,8 @@ import { Button } from '../shared/Button';
 import { buildDebtReducedCelebration } from '../../lib/celebrations';
 import { brand } from '../../lib/brand';
 import { resolveExpectedMonthlyRepayment } from '../../lib/calculations/creditHealth';
+import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 // Strips $, commas, spaces and other non-numeric characters before parsing
 // (PRD ask: handle pasted formatted currency) — scoped to the repayment
@@ -23,16 +25,32 @@ function parseRepaymentAmount(text: string): number {
   return value;
 }
 
-export function AddCreditCardModal({
-  visible,
-  onClose,
-  editCard,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  /** Present = editing this existing card instead of creating a new one. */
-  editCard?: CreditCard | null;
-}) {
+export type { EmbeddedCloseReason as AddCreditCardCloseReason };
+export type AddCreditCardModalHandle = EmbeddedStepHandle;
+
+export const AddCreditCardModal = forwardRef<
+  AddCreditCardModalHandle,
+  {
+    visible: boolean;
+    onClose: () => void;
+    /** Present = editing this existing card instead of creating a new one. */
+    editCard?: CreditCard | null;
+    /** True only when rendered inside the embedded Add Anything -> Credit
+     * Card route — activates real dirty-detection and a "Discard this
+     * card?" confirmation on Cancel/backdrop/swipe/Android Back, and
+     * returns bare content instead of owning its own KeyboardSheet.
+     * Omitted (the default) preserves this modal's original, unconditional-
+     * close standalone behaviour exactly (no discard confirmation existed
+     * before this — see the file-level note above), so standalone
+     * Money -> Add credit card UX is never silently changed by embedding. */
+    embedded?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
+    onCanSaveChange?: (canSave: boolean) => void;
+    onTitleChange?: (title: string) => void;
+    onSaveSuccess?: () => void;
+    onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+  }
+>(function AddCreditCardModal({ visible, onClose, editCard, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose }, ref) {
   const { addCreditCard, updateCreditCard, deleteCreditCard } = useAppState();
   const { celebrate } = useCelebration();
   const { colors, radius, spacing, typography } = useTheme();
@@ -46,6 +64,20 @@ export function AddCreditCardModal({
   const [saving, setSaving] = useState(false);
 
   const isEditing = !!editCard;
+
+  // UX correction — full-workspace extension. Genuine-change detection,
+  // relative to the values this form opened with — embedded mode only,
+  // mirroring TransferForm's/AddWealthItemModal's own established
+  // isDirty-gated-behind-`embedded` pattern exactly, so standalone
+  // behaviour (no snapshot taken, isDirty always false) is byte-identical
+  // to before this correction.
+  const initialSnapshot = useRef({ issuer: '', limit: '', balance: '', dueDay: '', expectedRepayment: '', minRequiredPayment: '', apr: '' });
+  // Synchronous double-submission guard, alongside the existing `saving`
+  // state guard below (kept as-is — it already correctly blocks a second
+  // Save while the first is in flight; this ref additionally protects the
+  // imperative requestSave() entry point the embedded host calls, the same
+  // belt-and-braces pattern AddWealthItemModal's submittingRef uses).
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -70,6 +102,18 @@ export function AddCreditCardModal({
       // separate, never merged into one input).
       setMinRequiredPayment(editCard.minimumPayment > 0 ? String(editCard.minimumPayment) : '');
       setApr(editCard.apr ? String(Math.round(editCard.apr * 10000) / 100) : '');
+      const resolvedRepayment = resolved > 0 ? String(resolved) : '';
+      const resolvedMin = editCard.minimumPayment > 0 ? String(editCard.minimumPayment) : '';
+      const resolvedApr = editCard.apr ? String(Math.round(editCard.apr * 10000) / 100) : '';
+      initialSnapshot.current = {
+        issuer: editCard.issuer,
+        limit: String(editCard.creditLimit),
+        balance: String(editCard.currentBalance),
+        dueDay: String(editCard.dueDay),
+        expectedRepayment: resolvedRepayment,
+        minRequiredPayment: resolvedMin,
+        apr: resolvedApr,
+      };
     } else {
       setIssuer('');
       setLimit('');
@@ -78,20 +122,47 @@ export function AddCreditCardModal({
       setExpectedRepayment('');
       setMinRequiredPayment('');
       setApr('');
+      initialSnapshot.current = { issuer: '', limit: '', balance: '', dueDay: '', expectedRepayment: '', minRequiredPayment: '', apr: '' };
     }
     setSaving(false);
   }, [visible, editCard]);
+
+  useEffect(() => {
+    onTitleChange?.(isEditing ? 'Edit credit card' : 'Add credit card');
+  }, [isEditing, onTitleChange]);
 
   const creditLimit = parseFloat(limit);
   const due = parseInt(dueDay, 10);
   const aprValue = parseFloat(apr);
   const canSave = issuer.trim().length > 0 && !isNaN(creditLimit) && !isNaN(due) && due >= 1 && due <= 31;
 
+  useEffect(() => {
+    onCanSaveChange?.(canSave);
+  }, [canSave, onCanSaveChange]);
+
+  // Embedded-only genuine-change detection — see initialSnapshot's own
+  // declaration comment. Standalone (embedded=false) always reports false,
+  // preserving the original unconditional-close Cancel/dismiss behaviour.
+  const isDirty =
+    embedded &&
+    (issuer !== initialSnapshot.current.issuer ||
+      limit !== initialSnapshot.current.limit ||
+      balance !== initialSnapshot.current.balance ||
+      dueDay !== initialSnapshot.current.dueDay ||
+      expectedRepayment !== initialSnapshot.current.expectedRepayment ||
+      minRequiredPayment !== initialSnapshot.current.minRequiredPayment ||
+      apr !== initialSnapshot.current.apr);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
   function handleSave() {
     // Guards against a fast double-tap creating two identical cards before
     // the sheet has a chance to close (PRD bug report, §10: "duplicate
     // credit cards").
-    if (!canSave || saving) return;
+    if (!canSave || saving || submittingRef.current) return;
+    submittingRef.current = true;
     setSaving(true);
     const payload = {
       issuer: issuer.trim(),
@@ -115,13 +186,38 @@ export function AddCreditCardModal({
     } else {
       addCreditCard(payload);
     }
-    onClose();
+    // Successful Save never goes through requestClose/confirmDiscardIfDirty
+    // — it must never produce a discard prompt. Embedded: hand control back
+    // to the host (which closes the whole Add Anything journey exactly
+    // once). Standalone: unchanged direct onClose().
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function handleDelete() {
     if (editCard) deleteCreditCard(editCard.id);
     onClose();
   }
+
+  // Cancel/backdrop/swipe/Android Back (embedded, via the host's own
+  // KeyboardSheet chrome) funnel through here when embedded. Standalone
+  // callers never invoke this — their own footer Cancel button still calls
+  // onClose directly, byte-identical to before this correction. 'back'
+  // never discards — the embedded host preserves this draft (the card
+  // stays mounted, exactly like the existing Add Asset pattern) whenever
+  // the user returns to the chooser, so there is nothing to confirm losing.
+  function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(isDirty, () => onConfirmedClose?.(reason), 'Discard this card?', 'Your credit card details will be lost.');
+  }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: handleRequestClose,
+  }));
 
   const styles = useMemo(
     () =>
@@ -161,18 +257,8 @@ export function AddCreditCardModal({
     [colors, radius, spacing, typography]
   );
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={onClose}
-      title={isEditing ? 'Edit credit card' : 'Add credit card'}
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave || saving} style={styles.footerButton} />
-        </>
-      }
-    >
+  const content = (
+    <>
       {!isEditing ? (
         <View style={styles.benefitBox}>
           <Text style={styles.benefitTitle}>Add your card so {brand.name} can help you:</Text>
@@ -243,6 +329,31 @@ export function AddCreditCardModal({
           <Text style={styles.deleteText}>Delete card</Text>
         </TouchableOpacity>
       ) : null}
+    </>
+  );
+
+  // Embedded — no Modal, no KeyboardSheet, no footer of its own. The host
+  // supplies all of that and drives Save/Close through the ref handle
+  // above, exactly mirroring AddWealthItemModal's own established
+  // embedded-mode contract.
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={onClose}
+      isDirty={isDirty}
+      title={isEditing ? 'Edit credit card' : 'Add credit card'}
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave || saving} style={styles.footerButton} />
+        </>
+      }
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});

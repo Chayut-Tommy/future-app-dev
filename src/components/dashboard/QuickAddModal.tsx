@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -10,6 +10,7 @@ import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { categoryEmoji } from '../../lib/categoryEmoji';
 import { brand } from '../../lib/brand';
+import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 const DATE_PRESETS = [
   { label: 'Today', daysAgo: 0 },
@@ -33,22 +34,41 @@ function dateParts(date: Date): { day: string; month: string; year: string } {
   return { day: String(date.getDate()), month: String(date.getMonth() + 1), year: String(date.getFullYear()) };
 }
 
-export function QuickAddModal({
-  visible,
-  onClose,
-  editTransaction,
-  initialType,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  /** Present = editing this existing transaction instead of creating a new one. */
-  editTransaction?: Transaction | null;
-  /** Opens straight into this segment — used for "Record income received"
-   * (PRD ask, §2), a one-off/ad-hoc amount that only ever updates cash via
-   * a normal income Transaction, and never touches user.monthlyIncome or
-   * payFrequency the way "Add income source" does. */
-  initialType?: 'income' | 'expense';
-}) {
+export type QuickAddModalHandle = EmbeddedStepHandle;
+
+export const QuickAddModal = forwardRef<
+  QuickAddModalHandle,
+  {
+    visible: boolean;
+    onClose: () => void;
+    /** Present = editing this existing transaction instead of creating a new one. */
+    editTransaction?: Transaction | null;
+    /** Opens straight into this segment — used for "Record income received"
+     * (PRD ask, §2), a one-off/ad-hoc amount that only ever updates cash via
+     * a normal income Transaction, and never touches user.monthlyIncome or
+     * payFrequency the way "Add income source" does. Also used to pick
+     * which embedded route (expense/incomeReceived) this instance renders. */
+    initialType?: 'income' | 'expense';
+    /** True only when rendered inside the embedded Add Anything -> Expense
+     * or -> Income received route — activates real dirty-detection and a
+     * "Discard changes?" confirmation, and reroutes both internal steps
+     * (category/details) into plain content returned to the host instead of
+     * each wrapping its own KeyboardSheet. The nested "Add cash balance
+     * first" AddWealthItemModal below stays a genuine standalone overlay
+     * either way (same as this form's own DatePickerModal-style secondary
+     * sheets elsewhere) — it is never itself embedded, so it is unaffected
+     * by this prop. */
+    embedded?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
+    onCanSaveChange?: (canSave: boolean) => void;
+    onTitleChange?: (title: string) => void;
+    onSaveSuccess?: () => void;
+    onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+  }
+>(function QuickAddModal(
+  { visible, onClose, editTransaction, initialType, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
+  ref
+) {
   const { data, addTransaction, updateTransaction, deleteTransaction } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [type, setType] = useState<'income' | 'expense'>('expense');
@@ -95,6 +115,33 @@ export function QuickAddModal({
   const hasCashAsset = data.assets.some((a) => a.type === 'cash');
   const nonCreditLiabilities = data.liabilities.filter((l) => l.type !== 'credit_card');
   const isDirty = amount !== initialSnapshot.current.amount || categoryId !== initialSnapshot.current.categoryId;
+
+  // Correction pass (Defect 2 fix) — while embedded, the host's global
+  // parked-draft guard must see this form as dirty for as long as ANY
+  // unsaved change has ever existed this session, not only while `isDirty`
+  // is momentarily true. A plain live-recomputed boolean is correct in
+  // principle, but the host also reads it while this form's OWN layer is
+  // hidden behind the chooser mid-transition/animation — a one-way latch
+  // is what actually guarantees the aggregate draft can never be
+  // misreported as clean by a stale/mid-transition read, regardless of
+  // internal step (`formStep`), route animation, or hidden-layer status.
+  // Clears only via a fresh mount (a new `instanceKey` from the host's own
+  // resetDraft) or this whole journey closing on save — both already
+  // unmount this component, which destroys the ref along with everything
+  // else, so no explicit clearing logic is needed here. The STANDALONE
+  // <KeyboardSheet isDirty={isDirty}> usage below is intentionally left on
+  // the raw, live value — the latch is an embedded-only correction.
+  const hasBeenDirtyRef = useRef(false);
+  if (embedded && isDirty) hasBeenDirtyRef.current = true;
+  const reportedDirty = embedded ? hasBeenDirtyRef.current : isDirty;
+
+  useEffect(() => {
+    onDirtyChange?.(reportedDirty);
+  }, [reportedDirty, onDirtyChange]);
+
+  useEffect(() => {
+    onTitleChange?.(formStep === 'category' ? "What's this for?" : isEditing ? 'Edit transaction' : 'Add transaction');
+  }, [formStep, isEditing, onTitleChange]);
 
   // Whether a real, addressable balance exists for the currently-selected
   // funding source — 'other' never has one; 'cash'/'credit_card'/'loan' only
@@ -196,8 +243,15 @@ export function QuickAddModal({
   const canSave =
     !isNaN(amountValue) && amountValue > 0 && !!categoryId && dateValid && (!requiresTransactionName || transactionName.trim().length > 0);
 
+  // Save is only ever reachable from the details step (category has no
+  // categoryId yet, so canSave is already false there in practice — this
+  // makes that gate explicit for the host's embedded footer too).
+  useEffect(() => {
+    onCanSaveChange?.(canSave && formStep === 'details');
+  }, [canSave, formStep, onCanSaveChange]);
+
   function handleSave() {
-    if (!canSave || !categoryId) return;
+    if (!canSave || !categoryId || formStep !== 'details') return;
     // Must be checked+set synchronously before anything else touches state
     // or calls a persistence action — see submittingRef's own comment.
     if (submittingRef.current) return;
@@ -245,7 +299,10 @@ export function QuickAddModal({
     } else {
       addTransaction(payload);
     }
-    onClose();
+    // Embedded: hand control back to the host, which closes the whole Add
+    // Anything journey exactly once. Standalone: unchanged direct onClose().
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
 
   function handleDelete() {
@@ -260,6 +317,22 @@ export function QuickAddModal({
       ]
     );
   }
+
+  // Full-workspace extension — 'back' never discards (draft preserved
+  // across Back); every other reason routes through the same dirty check
+  // the standalone Cancel button already uses inline below.
+  function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(isDirty, () => onConfirmedClose?.(reason));
+  }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: handleRequestClose,
+  }));
 
   const styles = useMemo(
     () =>
@@ -413,14 +486,8 @@ export function QuickAddModal({
       : null;
 
   if (formStep === 'category') {
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="What's this for?"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-      >
+    const categoryContent = (
+      <>
         <View style={styles.segment}>
           <TouchableOpacity
             style={[styles.segmentButton, type === 'expense' ? styles.segmentActive : null]}
@@ -450,23 +517,26 @@ export function QuickAddModal({
             </TouchableOpacity>
           ))}
         </View>
+      </>
+    );
+
+    if (embedded) return categoryContent;
+
+    return (
+      <KeyboardSheet
+        visible={visible}
+        onClose={onClose}
+        isDirty={false}
+        title="What's this for?"
+        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+      >
+        {categoryContent}
       </KeyboardSheet>
     );
   }
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={onClose}
-      title={isEditing ? 'Edit transaction' : 'Add transaction'}
-      isDirty={isDirty}
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={() => confirmDiscardIfDirty(isDirty, onClose)} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
-        </>
-      }
-    >
+  const content = (
+    <>
       {/* Read-only — this transaction's own primary identity, kept visibly
           separate from the editable category picker below (regression-
           protection review, B2.0B transaction-identity correction §1). Only
@@ -677,7 +747,33 @@ export function QuickAddModal({
         </TouchableOpacity>
       ) : null}
 
+      {/* Full-workspace extension — deliberately left as a standalone
+          overlay even when this form itself is embedded: it is a genuine
+          secondary sheet (same category as this form's own date/category
+          pickers elsewhere in the app), not a sibling Add Anything
+          destination, so it is never itself given `embedded`. RN's Modal
+          always renders in its own native top-level layer, so it still
+          appears correctly above the embedded workspace either way. */}
       <AddWealthItemModal visible={addCashVisible} kind="asset" presetAssetType="cash" onClose={() => setAddCashVisible(false)} />
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={onClose}
+      title={isEditing ? 'Edit transaction' : 'Add transaction'}
+      isDirty={isDirty}
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={() => confirmDiscardIfDirty(isDirty, onClose)} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+        </>
+      }
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});

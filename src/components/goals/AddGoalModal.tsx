@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -6,6 +6,8 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { LifeGoalType, GoalPriority } from '../../types/models';
 import { requiredMonthlyForGoal, classifyGoalDateFields, GoalDateFieldState } from '../../lib/calculations/goalAllocation';
+import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 const GOAL_TYPES: { value: LifeGoalType; label: string; emoji: string }[] = [
   { value: 'house_deposit', label: 'Buy property', emoji: '🏠' },
@@ -48,7 +50,27 @@ function dateValidationMessage(state: GoalDateFieldState): string | null {
   return null;
 }
 
-export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export type AddGoalModalHandle = EmbeddedStepHandle;
+
+export const AddGoalModal = forwardRef<
+  AddGoalModalHandle,
+  {
+    visible: boolean;
+    onClose: () => void;
+    /** True only when rendered inside the embedded Add Anything -> Goal
+     * route — activates real dirty-detection and a "Discard this goal?"
+     * confirmation on Cancel/backdrop/swipe/Android Back, and returns bare
+     * content instead of owning its own KeyboardSheet. Omitted (the
+     * default) preserves this modal's original, unconditional-discard-on-
+     * any-dismissal standalone behaviour exactly, so standalone
+     * Today/Goals -> Add goal UX is never silently changed by embedding. */
+    embedded?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
+    onCanSaveChange?: (canSave: boolean) => void;
+    onSaveSuccess?: () => void;
+    onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+  }
+>(function AddGoalModal({ visible, onClose, embedded = false, onDirtyChange, onCanSaveChange, onSaveSuccess, onConfirmedClose }, ref) {
   const { addGoal } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [type, setType] = useState<LifeGoalType | null>(null);
@@ -62,6 +84,19 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
   // GoalDetailSheet's Delete confirmation.
   const savingRef = useRef(false);
 
+  // UX correction — full-workspace extension. This is a create-only form
+  // (no editItem — see the props above), so its "opened with" values are
+  // always this same fixed set; no snapshot ref is needed to know what to
+  // compare against, unlike AddCreditCardModal/AddWealthItemModal which
+  // also support editing an existing record. Embedded-gated exactly like
+  // every other embedded destination — standalone always reports false.
+  const isDirty =
+    embedded && (type !== null || name !== '' || targetAmount !== '' || targetMonth !== '' || targetYear !== '' || priority !== 'medium');
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
   const amountState = classifyTargetAmount(targetAmount);
   // Shared with GoalDetailSheet and its regression tests via the same
   // exported classifier — never a second date-validation implementation
@@ -70,6 +105,10 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
   const dateMessage = dateValidationMessage(dateState);
 
   const canSave = type !== null && name.trim().length > 0 && amountState !== 'invalid' && dateState !== 'partial' && dateState !== 'invalid' && dateState !== 'past';
+
+  useEffect(() => {
+    onCanSaveChange?.(canSave);
+  }, [canSave, onCanSaveChange]);
 
   // Live preview using the shared canonical helper only — never a
   // reimplementation of the formula, the 36-month fallback, or the
@@ -104,11 +143,37 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
   }
 
   function handleClose() {
-    // Cancel, swipe-down and backdrop press all resolve to this same path —
-    // no goal is ever created on any dismissal route (Stream A New Goal
-    // correction pass §8).
+    // Standalone only (embedded never calls this — see handleRequestClose
+    // below). Cancel, swipe-down and backdrop press all resolve to this
+    // same path — no goal is ever created on any dismissal route (Stream A
+    // New Goal correction pass §8). Unchanged by this correction.
     reset();
     onClose();
+  }
+
+  // UX correction — full-workspace extension. Embedded Cancel/backdrop/
+  // swipe/Android Back funnel through here. 'back' never discards (and
+  // never resets) — the embedded host preserves this draft across Back
+  // (the form stays mounted, mirroring the existing Add Asset pattern),
+  // so there is nothing to confirm losing and no reason to wipe fields the
+  // user will see again immediately on reselecting Goal. Every other
+  // reason only resets AFTER a confirmed discard (or immediately, if the
+  // form was never dirty) — never pre-emptively, unlike the standalone
+  // handleClose above.
+  function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (reason === 'back') {
+      onConfirmedClose?.(reason);
+      return;
+    }
+    confirmDiscardIfDirty(
+      isDirty,
+      () => {
+        reset();
+        onConfirmedClose?.(reason);
+      },
+      'Discard this goal?',
+      'Your new goal details will be lost.'
+    );
   }
 
   function selectType(value: LifeGoalType, label: string) {
@@ -137,8 +202,18 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
       status: 'active',
     });
     reset();
-    onClose();
+    // Successful Save never goes through requestClose/confirmDiscardIfDirty
+    // — it must never produce a discard prompt. Embedded: hand control back
+    // to the host (which closes the whole Add Anything journey exactly
+    // once). Standalone: unchanged direct onClose().
+    if (embedded) onSaveSuccess?.();
+    else onClose();
   }
+
+  useImperativeHandle(ref, () => ({
+    requestSave: handleSave,
+    requestClose: handleRequestClose,
+  }));
 
   const styles = useMemo(
     () =>
@@ -179,18 +254,8 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
     [colors, radius, spacing, typography]
   );
 
-  return (
-    <KeyboardSheet
-      visible={visible}
-      onClose={handleClose}
-      title="New goal"
-      footer={
-        <>
-          <Button label="Cancel" variant="secondary" onPress={handleClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
-        </>
-      }
-    >
+  const content = (
+    <>
       <Text style={styles.label}>What are you working towards?</Text>
       <View style={styles.grid}>
         {GOAL_TYPES.map((g) => {
@@ -307,6 +372,30 @@ export function AddGoalModal({ visible, onClose }: { visible: boolean; onClose: 
           );
         })}
       </View>
+    </>
+  );
+
+  // Embedded — no Modal, no KeyboardSheet, no footer of its own. The host
+  // supplies all of that and drives Save/Close through the ref handle
+  // above, exactly mirroring AddWealthItemModal's own established
+  // embedded-mode contract.
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <KeyboardSheet
+      visible={visible}
+      onClose={handleClose}
+      title="New goal"
+      footer={
+        <>
+          <Button label="Cancel" variant="secondary" onPress={handleClose} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+        </>
+      }
+    >
+      {content}
     </KeyboardSheet>
   );
-}
+});

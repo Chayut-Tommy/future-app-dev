@@ -258,8 +258,8 @@ console.log('\n=== 8. Structural confirmation: the real file contains and wires 
     /const linkedRepaymentLookup = targetLiability \? findLinkedRepayment\(data\.recurringItems, targetLiability\.id\) : null;\s*\n\s*const hasAmbiguousLinkedRepayment = linkedRepaymentLookup\?\.status === 'ambiguous';/.test(WEALTH_MODAL_SRC)
   );
   assert(
-    '8h. canSave is gated on !hasAmbiguousLinkedRepayment, blocking Save before performSave is ever reachable',
-    /\(!requiresNewVehicleName \|\| newVehicleName\.trim\(\)\.length > 0\) &&[\s\S]{0,1200}?!hasAmbiguousLinkedRepayment;/.test(WEALTH_MODAL_SRC)
+    '8h. canSave is gated on !hasAmbiguousLinkedRepayment (and, correction pass, !repaymentScheduleIncomplete alongside it), blocking Save before performSave is ever reachable',
+    /\(!requiresNewVehicleName \|\| newVehicleName\.trim\(\)\.length > 0\) &&[\s\S]{0,1200}?!hasAmbiguousLinkedRepayment &&[\s\S]{0,900}?!repaymentScheduleIncomplete;/.test(WEALTH_MODAL_SRC)
   );
   assert(
     '8i. the render blocks the repayment input fields entirely when ambiguous, showing DUPLICATE_REPAYMENT_ERROR instead — no blank-looking editable form',
