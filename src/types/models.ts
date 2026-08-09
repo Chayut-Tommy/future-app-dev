@@ -15,7 +15,14 @@ export type LifeGoalType =
 // savings) — kept separate because they behave, and get coached,
 // differently (PRD ask). See computeLiquidCash for calculations that
 // genuinely need both combined (e.g. emergency-fund coverage).
-export type AssetType = 'cash' | 'savings' | 'etf' | 'shares' | 'super' | 'crypto' | 'property' | 'business' | 'car' | 'furniture' | 'collectibles' | 'other';
+// 'everyday' = Everyday Account (Everyday Account preflight/correction,
+// 2026-08-08) — a manually-maintained bank account balance, distinct from
+// 'cash' (which transactions auto-adjust). Deliberately NOT included in
+// computeLiquidCash (savings-threshold achievements/milestones/coaching) —
+// only in the short-term Money-available reading via
+// resolveIncludeInMoneyCalculations, per the explicit product decision that
+// an everyday spending balance is not necessarily savings.
+export type AssetType = 'cash' | 'savings' | 'everyday' | 'etf' | 'shares' | 'super' | 'crypto' | 'property' | 'business' | 'car' | 'furniture' | 'collectibles' | 'other';
 export type LiabilityType = 'mortgage' | 'credit_card' | 'car_loan' | 'personal_loan' | 'other';
 export type PayFrequency = 'weekly' | 'fortnightly' | 'monthly' | 'irregular';
 export type ThemePreference = 'light' | 'dark' | 'system';
@@ -83,7 +90,12 @@ export interface Category {
   icon: string;
 }
 
-export type PaymentSource = 'cash' | 'credit_card' | 'loan' | 'other';
+// 'everyday' (Everyday Account expense routing, 2026-08-08) — a debit-card
+// expense charged against a SPECIFIC Everyday Account, identified via
+// `targetAssetId`. Deliberately distinct from 'cash', which always
+// resolves to the single global Cash asset — 'everyday' always requires
+// an explicit account id, never a default lookup.
+export type PaymentSource = 'cash' | 'credit_card' | 'loan' | 'other' | 'everyday';
 
 /** Whether Navilo should keep a tracked balance (Cash asset, credit card, or
  * liability) in sync with a transaction — deliberately independent of
@@ -156,15 +168,22 @@ export interface Transaction {
    * is 'none', or balanceEffect is 'update' but no valid target existed to
    * apply one against, e.g. no Cash asset yet). */
   appliedBalanceEffect?: AppliedBalanceEffect;
-  /** Income only (B2.4). The specific Asset this income's balance effect
-   * should credit — set only when the user explicitly picked a destination
-   * other than the default (mid-cycle recurring-income initialisation's
-   * "add it to a balance" choice). Absent on every transaction created
-   * before this field existed, and on every ordinary income transaction
-   * going forward — both fall back to computeBalanceEffect's original
-   * Cash-asset lookup, fully backward compatible. Never meaningful for an
-   * expense transaction, which uses paymentSource/creditCardId/liabilityId
-   * instead. */
+  /** Two independent uses, both "the specific Asset this transaction's
+   * balance effect targets":
+   * (1) Income only (B2.4) — set only when the user explicitly picked a
+   * destination other than the default (mid-cycle recurring-income
+   * initialisation's "add it to a balance" choice). Absent on every
+   * ordinary income transaction, falling back to computeBalanceEffect's
+   * original Cash-asset lookup, fully backward compatible.
+   * (2) Expense with `paymentSource === 'everyday'` only (Everyday Account
+   * expense routing, 2026-08-08) — the specific Everyday Account this
+   * debit-card expense reduces. Required whenever paymentSource is
+   * 'everyday' (computeBalanceEffect returns no effect without it, exactly
+   * like 'credit_card'/'loan' without creditCardId/liabilityId). Absent on
+   * every transaction created before this field existed and on every
+   * `paymentSource !== 'everyday'` expense, which use
+   * paymentSource/creditCardId/liabilityId instead — fully backward
+   * compatible. */
   targetAssetId?: string;
 }
 
@@ -207,6 +226,13 @@ export interface Asset {
    * = included, savings = excluded until the user opts in (PRD ask: never
    * silently pool all savings into short-term spending estimates). */
   includeInMoneyCalculations?: boolean;
+  /** Only meaningful for `type === 'everyday'` — the free-text bank/provider
+   * name entered on the Everyday Account form (e.g. "Commonwealth Bank").
+   * Optional, unvalidated, purely descriptive — mirrors the existing
+   * `tickerSymbol` precedent (a type-specific optional field with no
+   * cross-type meaning). Never collect card numbers, PINs, CVVs, or any
+   * banking credential here or anywhere else on this model. */
+  provider?: string;
 }
 
 export interface Liability {

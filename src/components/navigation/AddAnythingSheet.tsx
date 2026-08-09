@@ -33,6 +33,7 @@ export type AddAnythingKind =
   | 'transfer'
   | 'cash'
   | 'savings'
+  | 'everyday'
   | 'investment'
   | 'property'
   | 'retirement'
@@ -72,6 +73,7 @@ const GROUPS: AddAnythingGroup[] = [
     options: [
       { key: 'cash', label: 'Add cash', emoji: '💵' },
       { key: 'savings', label: 'Add savings', emoji: '🏦' },
+      { key: 'everyday', label: 'Add everyday account', emoji: '🏧' },
       { key: 'investment', label: 'Add investment', emoji: '📈' },
       { key: 'property', label: 'Add property', emoji: '🏠' },
       { key: 'retirement', label: 'Add retirement savings', emoji: '🛡' },
@@ -123,6 +125,7 @@ const PUSH_TRANSITION_DURATION_MS = 220;
 const ASSET_PRESET_MAP: Partial<Record<AddAnythingKind, AssetType>> = {
   cash: 'cash',
   savings: 'savings',
+  everyday: 'everyday',
   investment: 'etf',
   property: 'property',
   retirement: 'super',
@@ -537,6 +540,8 @@ export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClo
           return 'Cash';
         case 'savings':
           return 'Savings';
+        case 'everyday':
+          return 'Everyday Account';
         case 'etf':
           return 'Investment';
         case 'property':

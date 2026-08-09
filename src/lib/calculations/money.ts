@@ -18,28 +18,66 @@ const STRICT_MONEY_RE = /^(\d+(\.\d{0,2})?|\.\d{1,2})$/;
 export type ParsedMoneyInput = { valid: true; amount: number; cents: number } | { valid: false };
 
 /**
- * Parses a raw, user-typed monetary string into integer cents. Deliberately
- * never routes through parseFloat for the actual conversion (which would
- * silently accept everything this function must reject) — format validity
- * is decided entirely by STRICT_MONEY_RE against the trimmed string, and
- * the numeric conversion itself splits on '.' and combines the two digit
- * strings with plain integer arithmetic, never a floating-point multiply-
- * by-100 (the exact operation that can't be trusted to round-trip cleanly
- * for values like 120.1234 in the first place — there is no such value to
- * round here, since the regex already rejected it).
+ * Shared string-to-cents conversion for both parseMoneyInput and
+ * parseMoneyInputAllowZero below — format validity is decided entirely by
+ * STRICT_MONEY_RE against the trimmed string, and the numeric conversion
+ * itself splits on '.' and combines the two digit strings with plain
+ * integer arithmetic, never a floating-point multiply-by-100 (the exact
+ * operation that can't be trusted to round-trip cleanly for values like
+ * 120.1234 in the first place — there is no such value to round here,
+ * since the regex already rejected it). Returns `undefined` for a
+ * malformed string or a cents value that overflows Number.isSafeInteger;
+ * callers decide their own lower-bound (zero-exclusive vs. zero-inclusive).
  */
-export function parseMoneyInput(raw: string): ParsedMoneyInput {
+function parseCentsFromString(raw: string): number | undefined {
   const trimmed = raw.trim();
-  if (!STRICT_MONEY_RE.test(trimmed)) return { valid: false };
+  if (!STRICT_MONEY_RE.test(trimmed)) return undefined;
 
   const [wholePart, fractionalPart = ''] = trimmed.split('.');
   const wholeDigits = wholePart === '' ? '0' : wholePart;
   const fractionalDigits = fractionalPart.padEnd(2, '0');
   const cents = Number(wholeDigits) * 100 + Number(fractionalDigits);
 
-  if (!Number.isSafeInteger(cents)) return { valid: false };
-  if (cents <= 0) return { valid: false };
+  if (!Number.isSafeInteger(cents)) return undefined;
+  return cents;
+}
 
+/**
+ * Parses a raw, user-typed monetary string into integer cents. Deliberately
+ * never routes through parseFloat for the actual conversion (which would
+ * silently accept everything this function must reject) — see
+ * `parseCentsFromString`'s own doc comment for the grammar/conversion
+ * rules. Rejects a zero or negative amount — the correct behaviour for
+ * every existing caller of this function (Goal target amount, Income
+ * amount, Bill amount), all of which require a genuinely positive value.
+ * Never widen this function's own zero-rejection to accommodate a new
+ * caller — see `parseMoneyInputAllowZero` below for that.
+ */
+export function parseMoneyInput(raw: string): ParsedMoneyInput {
+  const cents = parseCentsFromString(raw);
+  if (cents === undefined) return { valid: false };
+  if (cents <= 0) return { valid: false };
+  return { valid: true, amount: cents / 100, cents };
+}
+
+/**
+ * Everyday Account correction (2026-08-08) — identical grammar and
+ * conversion to `parseMoneyInput` (same `STRICT_MONEY_RE`, same
+ * `parseCentsFromString`), differing ONLY in accepting a genuinely zero
+ * amount: `cents === 0` is valid here, `cents < 0` never occurs (the
+ * regex has no sign branch, so a negative amount is already unreachable
+ * by construction — this is not a separate negative-rejection check, the
+ * grammar itself makes negative input malformed, same as parseMoneyInput).
+ * Scoped to the three liquid-balance forms (Cash, Savings, Everyday
+ * Account) that share one balance-entry branch in AddWealthItemModal.tsx
+ * and must not diverge in parsing behaviour within that shared branch —
+ * never use this for Goal/Income/Bill amounts, which must keep requiring
+ * a positive value via `parseMoneyInput` above, unchanged.
+ */
+export function parseMoneyInputAllowZero(raw: string): ParsedMoneyInput {
+  const cents = parseCentsFromString(raw);
+  if (cents === undefined) return { valid: false };
+  if (cents < 0) return { valid: false };
   return { valid: true, amount: cents / 100, cents };
 }
 

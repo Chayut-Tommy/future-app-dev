@@ -255,7 +255,7 @@ export function SafeToSpendHero({
           ) : (
             <>
               <Text style={styles.line}>Choose a balance to estimate your available money</Text>
-              <Text style={styles.explainer}>Add or select a cash balance that Navilo can use for short-term money calculations.</Text>
+              <Text style={styles.explainer}>Add or select a money balance that Navilo can use for short-term money calculations.</Text>
             </>
           )}
           {!hasIncludedBalance && onSelectBalances ? (

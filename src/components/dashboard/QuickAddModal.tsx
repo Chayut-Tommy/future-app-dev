@@ -3,7 +3,7 @@ import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
+import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
@@ -25,6 +25,7 @@ const DATE_PRESETS = [
 // (regression-protection review, Stream B1 §6).
 const PAYMENT_SOURCES: { value: PaymentSource; label: string }[] = [
   { value: 'cash', label: 'Cash' },
+  { value: 'everyday', label: 'Everyday account' },
   { value: 'credit_card', label: 'Credit card' },
   { value: 'loan', label: 'Loan-funded purchase' },
   { value: 'other', label: 'Other' },
@@ -32,6 +33,104 @@ const PAYMENT_SOURCES: { value: PaymentSource; label: string }[] = [
 
 function dateParts(date: Date): { day: string; month: string; year: string } {
   return { day: String(date.getDate()), month: String(date.getMonth() + 1), year: String(date.getFullYear()) };
+}
+
+// Everyday Account expense routing — same-name accounts must stay
+// distinguishable (they're already distinguished internally by id; this
+// makes that visible to the customer, since two identical labels would
+// otherwise be indistinguishable chips).
+function formatMoney(value: number): string {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Deletion-confirmation reversal target — 2026-08-09 correction. Identifies
+// the REAL account/card a transaction's stored effect would reverse, or
+// null when there is nothing to reverse (Record only, or a floored effect
+// that truly moved $0 — see AppStateContext's floor-then-reverse
+// correction). Never derives this from the transaction's CURRENT
+// paymentSource/creditCardId fields — those can diverge from what was
+// actually applied (the same invariant applyTransactionUpdate/Delete
+// already follow: "a reversal must always negate the last balance delta
+// Navilo actually applied"). Legacy transactions (balanceEffect undefined,
+// no appliedBalanceEffect ever captured) fall back to the exact same
+// target-resolution rule legacyApplyTransactionEffect uses internally, so
+// old transaction history keeps offering a meaningful reversal choice.
+function describeReversalTarget(data: AppData, t: Transaction): { label: string; amount: number } | null {
+  if (t.balanceEffect === undefined) {
+    if (t.type === 'income') {
+      const cash = data.assets.find((a) => a.type === 'cash');
+      return cash ? { label: cash.label, amount: t.amount } : null;
+    }
+    const source = t.paymentSource ?? 'cash';
+    if (source === 'cash') {
+      const cash = data.assets.find((a) => a.type === 'cash');
+      return cash ? { label: cash.label, amount: t.amount } : null;
+    }
+    if (source === 'credit_card' && t.creditCardId) {
+      const card = data.creditCards.find((c) => c.id === t.creditCardId);
+      return card ? { label: card.label, amount: t.amount } : null;
+    }
+    if (source === 'loan' && t.liabilityId) {
+      const liability = data.liabilities.find((l) => l.id === t.liabilityId);
+      return liability ? { label: liability.label, amount: t.amount } : null;
+    }
+    return null;
+  }
+
+  const effect = t.appliedBalanceEffect;
+  if (!effect) return null;
+  const amount = Math.abs(effect.delta);
+  if (amount === 0) return null;
+  if (effect.targetKind === 'asset') {
+    const asset = data.assets.find((a) => a.id === effect.targetId);
+    return asset ? { label: asset.label, amount } : null;
+  }
+  if (effect.targetKind === 'credit_card') {
+    const card = data.creditCards.find((c) => c.id === effect.targetId);
+    return card ? { label: card.label, amount } : null;
+  }
+  if (effect.targetKind === 'liability') {
+    const liability = data.liabilities.find((l) => l.id === effect.targetId);
+    return liability ? { label: liability.label, amount } : null;
+  }
+  return null;
+}
+
+// The base chip text before any disambiguation suffix — label, optional
+// provider, and balance. Two accounts only ever produce the identical
+// string here when their name, provider (including both blank), AND
+// balance all match.
+function everydayChipBaseText(a: Asset): string {
+  return `${a.label}${a.provider ? ` · ${a.provider}` : ''} (${formatMoney(a.currentValue)})`;
+}
+
+// Same-name disambiguation — provider alone doesn't guarantee uniqueness
+// (it's optional and can be blank on both accounts, PRD ask §3). Only
+// accounts whose full chip text collides get a minimal, accessible suffix
+// ("Account 1"/"Account 2", stable by array order) — a unique-looking
+// account is never touched. Keyed by stable account id, never a technical
+// id string exposed to the customer. Real routing always stays by `id`
+// (the map key here, and everydayAccountId elsewhere) — this only affects
+// what's displayed and announced, never which account gets debited.
+function disambiguateEverydayAccountLabels(accounts: Asset[]): Map<string, string> {
+  const counts = new Map<string, number>();
+  accounts.forEach((a) => {
+    const key = everydayChipBaseText(a);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  const seen = new Map<string, number>();
+  const labels = new Map<string, string>();
+  accounts.forEach((a) => {
+    const key = everydayChipBaseText(a);
+    if ((counts.get(key) ?? 0) <= 1) {
+      labels.set(a.id, key);
+      return;
+    }
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    labels.set(a.id, `${key} — Account ${n}`);
+  });
+  return labels;
 }
 
 export type QuickAddModalHandle = EmbeddedStepHandle;
@@ -80,6 +179,11 @@ export const QuickAddModal = forwardRef<
   const [paymentSource, setPaymentSource] = useState<PaymentSource>('cash');
   const [creditCardId, setCreditCardId] = useState<string | null>(null);
   const [liabilityId, setLiabilityId] = useState<string | null>(null);
+  // Everyday Account expense routing (2026-08-08) — mirrors creditCardId/
+  // liabilityId exactly: the specific account this expense is paid from,
+  // by stable id (never by label, so two identically-named accounts stay
+  // distinguishable).
+  const [everydayAccountId, setEverydayAccountId] = useState<string | null>(null);
   // The user's explicit choice, independent of paymentSource (regression-
   // protection review, Stream B1 UI integration) — expense-only; income
   // stays implicitly 'update' this pass (record-only income is out of
@@ -114,6 +218,26 @@ export const QuickAddModal = forwardRef<
   const isEditing = !!editTransaction;
   const hasCashAsset = data.assets.some((a) => a.type === 'cash');
   const nonCreditLiabilities = data.liabilities.filter((l) => l.type !== 'credit_card');
+  // Everyday Account expense routing — the 'everyday' Paid-from tile is
+  // only ever OFFERED (per the accepted spec) when at least one account
+  // exists, OR when the session already has 'everyday' selected (editing
+  // a legacy transaction whose account was later deleted must still show
+  // its own selection rather than silently vanishing from the row).
+  const everydayAccounts = data.assets.filter((a) => a.type === 'everyday');
+  const everydayAccountLabels = disambiguateEverydayAccountLabels(everydayAccounts);
+  const paymentSourceOptions = PAYMENT_SOURCES.filter((s) => s.value !== 'everyday' || everydayAccounts.length > 0 || paymentSource === 'everyday');
+  const selectedEverydayAccount = everydayAccountId ? everydayAccounts.find((a) => a.id === everydayAccountId) ?? null : null;
+  // The amount already charged to THIS SAME account by the transaction
+  // being edited (0 for a new transaction, or if editing a different
+  // source/account) — added back before the insufficient-funds check,
+  // mirroring exactly what applyTransactionUpdate's reverse-then-reapply
+  // will actually do, so this pre-Save check can never be stricter or
+  // looser than the real engine behaviour.
+  const editedTransactionPriorAmountOnSameAccount =
+    editTransaction && editTransaction.paymentSource === 'everyday' && editTransaction.targetAssetId === everydayAccountId
+      ? editTransaction.amount
+      : 0;
+  const everydayAvailableBalance = selectedEverydayAccount ? selectedEverydayAccount.currentValue + editedTransactionPriorAmountOnSameAccount : null;
   const isDirty = amount !== initialSnapshot.current.amount || categoryId !== initialSnapshot.current.categoryId;
 
   // Correction pass (Defect 2 fix) — while embedded, the host's global
@@ -150,7 +274,30 @@ export const QuickAddModal = forwardRef<
   // Stream B1 UI integration §3: never silently offer or apply "update" with
   // no real target).
   const hasValidBalanceTarget =
-    paymentSource === 'cash' ? hasCashAsset : paymentSource === 'credit_card' ? !!creditCardId : paymentSource === 'loan' ? !!liabilityId : false;
+    paymentSource === 'cash'
+      ? hasCashAsset
+      : paymentSource === 'credit_card'
+      ? !!creditCardId
+      : paymentSource === 'loan'
+      ? !!liabilityId
+      : paymentSource === 'everyday'
+      ? !!selectedEverydayAccount
+      : false;
+  // The customer-facing name of whatever hasValidBalanceTarget resolved to
+  // — 2026-08-09 correction, so the "Record only" hint can name the actual
+  // selected card/account ("...without changing your AMEX balance.")
+  // instead of only ever using generic wording.
+  const trackedBalanceTargetLabel = !hasValidBalanceTarget
+    ? undefined
+    : paymentSource === 'cash'
+    ? 'Cash'
+    : paymentSource === 'credit_card'
+    ? data.creditCards.find((c) => c.id === creditCardId)?.label
+    : paymentSource === 'loan'
+    ? nonCreditLiabilities.find((l) => l.id === liabilityId)?.label
+    : paymentSource === 'everyday'
+    ? selectedEverydayAccount?.label
+    : undefined;
   const prevHasValidBalanceTarget = useRef(hasValidBalanceTarget);
 
   useEffect(() => {
@@ -168,6 +315,7 @@ export const QuickAddModal = forwardRef<
       setPaymentSource(editTransaction.paymentSource ?? 'cash');
       setCreditCardId(editTransaction.creditCardId ?? null);
       setLiabilityId(editTransaction.liabilityId ?? null);
+      setEverydayAccountId(editTransaction.paymentSource === 'everyday' ? editTransaction.targetAssetId ?? null : null);
       setBalanceEffect(editTransaction.balanceEffect ?? 'update');
       // Round 6 correction — only a genuinely manual transaction's note is
       // ever editable here; a recurring-confirmed transaction keeps using
@@ -188,6 +336,7 @@ export const QuickAddModal = forwardRef<
       setPaymentSource('cash');
       setCreditCardId(null);
       setLiabilityId(null);
+      setEverydayAccountId(null);
       setBalanceEffect('update');
       setTransactionName('');
       initialSnapshot.current = { amount: '', categoryId: null };
@@ -240,8 +389,21 @@ export const QuickAddModal = forwardRef<
   const isEditingRecurringLinked = !!editTransaction?.recurringItemId;
   const hadExistingNote = !!editTransaction?.note;
   const requiresTransactionName = type === 'expense' && !isEditingRecurringLinked && (!isEditing || hadExistingNote);
+  // Everyday Account expense routing — negative balances are unsupported
+  // in the MVP (unlike Cash, which the engine silently floors at 0). Blocks
+  // Save with clear, neutral feedback rather than silently clamping,
+  // per the explicit requirement. `everydayAvailableBalance` already
+  // accounts for reversing this same transaction's own prior effect on
+  // the same account when editing (see its own declaration comment).
+  const insufficientEverydayFunds =
+    paymentSource === 'everyday' && !!selectedEverydayAccount && !isNaN(amountValue) && amountValue > (everydayAvailableBalance ?? 0);
   const canSave =
-    !isNaN(amountValue) && amountValue > 0 && !!categoryId && dateValid && (!requiresTransactionName || transactionName.trim().length > 0);
+    !isNaN(amountValue) &&
+    amountValue > 0 &&
+    !!categoryId &&
+    dateValid &&
+    (!requiresTransactionName || transactionName.trim().length > 0) &&
+    !insufficientEverydayFunds;
 
   // Save is only ever reachable from the details step (category has no
   // categoryId yet, so canSave is already false there in practice — this
@@ -281,6 +443,7 @@ export const QuickAddModal = forwardRef<
             paymentSource,
             creditCardId: paymentSource === 'credit_card' ? creditCardId ?? undefined : undefined,
             liabilityId: paymentSource === 'loan' ? liabilityId ?? undefined : undefined,
+            targetAssetId: paymentSource === 'everyday' ? everydayAccountId ?? undefined : undefined,
             balanceEffect: effectiveBalanceEffect,
             ...notePayload,
           }
@@ -307,13 +470,32 @@ export const QuickAddModal = forwardRef<
 
   function handleDelete() {
     if (!editTransaction) return;
+    // 2026-08-09 correction (revised) — every delete still shows an
+    // ordinary destructive-action confirmation (a single accidental tap
+    // must never silently delete a record). The only thing that changes on
+    // whether describeReversalTarget found a real applied effect is WHICH
+    // confirmation: a Record-only/zero-effect transaction is offered a
+    // plain delete with no balance-reversal choice at all (there is
+    // nothing to reverse); a transaction with a real applied effect keeps
+    // the existing choice between deleting only the record and deleting
+    // while reversing that exact effect. The account/card name is never
+    // put in a button label (could be arbitrarily long) — only in the
+    // message body.
+    const reversal = describeReversalTarget(data, editTransaction);
+    if (!reversal) {
+      Alert.alert('Delete transaction?', `Delete this transaction from ${brand.name}? No tracked balance will change.`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+      ]);
+      return;
+    }
     Alert.alert(
-      `Should ${brand.name} also adjust your cash balance?`,
-      `This transaction affected your Wealth picture. If you've already spent or moved that money elsewhere, ${brand.name} can leave your balances as they are.`,
+      'Delete transaction?',
+      `This transaction changed ${reversal.label} by ${formatMoney(reversal.amount)}. Would you like ${brand.name} to reverse that balance change?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'No, only delete record', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
-        { text: 'Yes, reverse cash impact', onPress: () => { deleteTransaction(editTransaction.id, true); onClose(); } },
+        { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+        { text: 'Delete & reverse', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, true); onClose(); } },
       ]
     );
   }
@@ -590,7 +772,7 @@ export const QuickAddModal = forwardRef<
         <>
           <Text style={styles.sectionLabel}>Paid from</Text>
           <View style={styles.presetRow}>
-            {PAYMENT_SOURCES.map((s) => {
+            {paymentSourceOptions.map((s) => {
               const active = paymentSource === s.value;
               return (
                 <TouchableOpacity
@@ -662,6 +844,45 @@ export const QuickAddModal = forwardRef<
             )
           ) : null}
 
+          {paymentSource === 'everyday' ? (
+            everydayAccounts.length > 0 ? (
+              <>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
+                  {everydayAccounts.map((a) => {
+                    const label = everydayAccountLabels.get(a.id) ?? everydayChipBaseText(a);
+                    const selected = everydayAccountId === a.id;
+                    return (
+                      <TouchableOpacity
+                        key={a.id}
+                        style={[styles.categoryChip, selected ? styles.categoryChipActive : null]}
+                        onPress={() => setEverydayAccountId(a.id)}
+                        accessibilityRole="button"
+                        accessibilityLabel={label}
+                        accessibilityState={{ selected }}
+                      >
+                        <Text style={[styles.categoryText, selected ? styles.categoryTextActive : null]}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                {everydayAccountId && !selectedEverydayAccount ? (
+                  <Text style={styles.hintText}>
+                    The original account for this transaction no longer exists. Choose an account above, or this transaction will be recorded
+                    without changing a balance.
+                  </Text>
+                ) : insufficientEverydayFunds ? (
+                  <Text style={[styles.hintText, { color: colors.danger }]}>
+                    This is more than the {formatMoney(everydayAvailableBalance ?? 0)} available in {selectedEverydayAccount?.label}.
+                  </Text>
+                ) : (
+                  <Text style={styles.hintText}>This account's balance will decrease — {brand.name} keeps it in sync with your Wealth picture.</Text>
+                )}
+              </>
+            ) : (
+              <Text style={styles.hintText}>This account is no longer available. This transaction will be recorded without changing a balance.</Text>
+            )
+          ) : null}
+
           {/* Tracked balance — deliberately its own, separately-labelled
               section (regression-protection review, Stream B1 UI
               integration §2): funding source is a factual record of how the
@@ -707,13 +928,21 @@ export const QuickAddModal = forwardRef<
           </View>
           <Text style={styles.hintText}>
             {hasValidBalanceTarget
-              ? `Record only saves this transaction without changing a balance tracked in ${brand.name}.`
+              ? balanceEffect === 'none' && trackedBalanceTargetLabel
+                ? `Record this transaction without changing your ${trackedBalanceTargetLabel} balance.`
+                : `Record only saves this transaction without changing a balance tracked in ${brand.name}.`
               : paymentSource === 'credit_card'
-              ? 'No cards added yet. This transaction will be recorded without changing a card balance.'
+              ? data.creditCards.length > 0
+                ? 'Select a card above to track this against it, or continue recording only.'
+                : 'No cards added yet. This transaction will be recorded without changing a card balance.'
               : paymentSource === 'loan'
-              ? 'No loans added yet. This transaction will be recorded without changing a liability balance.'
+              ? nonCreditLiabilities.length > 0
+                ? 'Select a loan above to track this against it, or continue recording only.'
+                : 'No loans added yet. This transaction will be recorded without changing a liability balance.'
               : paymentSource === 'cash'
               ? 'Add a cash balance above to track this against it, or continue recording only.'
+              : paymentSource === 'everyday'
+              ? 'Choose which everyday account this was paid from above to track this against it.'
               : `Record only saves this transaction without changing a balance tracked in ${brand.name}.`}
           </Text>
         </>

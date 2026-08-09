@@ -43,21 +43,32 @@ export interface SafeToSpendResult {
    * below for that. */
   spendSoFarThisCycle: number;
   /** The subset of `spendSoFarThisCycle` that actually reduced the balance
-   * represented in `includedMoneyBalance` — i.e. expenses with
-   * `paymentSource` unset or `'cash'`, and only counted at all if the
-   * single Cash asset those expenses move (`applyTransactionEffect` in
-   * AppStateContext, `data.assets.find(a => a.type === 'cash')`) both
-   * exists and is itself currently included in Money calculations. Credit
-   * card, loan, and 'other'-sourced expenses never reduce
-   * `includedMoneyBalance` (they grow a separate liability, or nothing),
-   * so they're excluded here even though they're part of
+   * represented in `includedMoneyBalance` — expenses with `paymentSource`
+   * unset or `'cash'` (only counted if the single Cash asset those expenses
+   * move — `applyTransactionEffect` in AppStateContext,
+   * `data.assets.find(a => a.type === 'cash')` — both exists and is itself
+   * currently included in Money calculations), plus expenses with
+   * `paymentSource === 'everyday'` (only counted if that specific
+   * transaction's `targetAssetId` still identifies an Everyday Account that
+   * currently exists and is itself currently included — Everyday Account
+   * correction, 2026-08-08: an Everyday Account reduces `includedMoneyBalance`
+   * exactly like Cash does, via the same `computeBalanceEffect`/
+   * `applyEffectDelta` pipeline, so excluding it here would misclassify a
+   * genuine Everyday-funded overspend as a bills/savings/goals shortfall —
+   * see `hasRecordedOverspend` in SafeToSpendHero.tsx, the one consumer of
+   * this field). Credit card, loan, and 'other'-sourced expenses never
+   * reduce `includedMoneyBalance` (they grow a separate liability, or
+   * nothing), so they're excluded here even though they're part of
    * `spendSoFarThisCycle`. Data-model limitation: a Transaction doesn't
-   * record which specific asset it affected — this is inferred
-   * structurally from `paymentSource` plus "is there an included Cash
-   * asset," the most precise scope the current model supports. Exists so
-   * Available Until Payday's hero can reconstruct "the cash position
-   * before this cycle's recorded spending" without over-crediting spend
-   * that never touched the cash it's measuring (PRD bug report: a
+   * record which specific asset it affected beyond `targetAssetId` — this
+   * is inferred structurally from `paymentSource` plus "is the specific
+   * target asset currently included," the most precise scope the current
+   * model supports; a transaction whose target account was later excluded
+   * or deleted is correctly no longer added back here, matching
+   * `includedMoneyBalance` no longer reflecting that account either.
+   * Exists so Available Until Payday's hero can reconstruct "the balance
+   * position before this cycle's recorded spending" without over-crediting
+   * spend that never touched the balance it's measuring (PRD bug report: a
    * commitments-only shortfall with $250 of credit-card spending was
    * misclassified as a recorded-spending overrun, because
    * `spendSoFarThisCycle` counted the credit-card spend even though it
@@ -227,17 +238,19 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   // 'cash')`) both exists and is itself included in Money calculations.
   const cashAsset = data.assets.find((a) => a.type === 'cash');
   const cashAssetIsIncluded = !!cashAsset && resolveIncludeInMoneyCalculations(cashAsset);
-  const cashVariableSpendSoFar = cashAssetIsIncluded
-    ? data.transactions
-        .filter(
-          (t) =>
-            t.type === 'expense' &&
-            (t.paymentSource === 'cash' || t.paymentSource === undefined) &&
-            new Date(t.date) >= cycleStart &&
-            new Date(t.date) <= today
-        )
-        .reduce((sum, t) => sum + t.amount, 0)
-    : 0;
+  const cashVariableSpendSoFar = data.transactions
+    .filter((t) => {
+      if (t.type !== 'expense') return false;
+      const d = new Date(t.date);
+      if (d < cycleStart || d > today) return false;
+      if (t.paymentSource === 'cash' || t.paymentSource === undefined) return cashAssetIsIncluded;
+      if (t.paymentSource === 'everyday' && t.targetAssetId) {
+        const account = data.assets.find((a) => a.id === t.targetAssetId && a.type === 'everyday');
+        return !!account && resolveIncludeInMoneyCalculations(account);
+      }
+      return false;
+    })
+    .reduce((sum, t) => sum + t.amount, 0);
 
   const remainingPool = discretionaryPool - variableSpendSoFar;
 

@@ -64,8 +64,14 @@ export interface MonthToDateActivity {
   income: number;
   spend: number;
   /** Expense transactions dated this calendar month whose paymentSource is
-   * 'cash' or unset (unset already treated as cash by applyTransactionEffect
-   * in AppStateContext — mirrored here, not re-derived). Additive fields
+   * 'cash', unset (unset already treated as cash by applyTransactionEffect
+   * in AppStateContext — mirrored here, not re-derived), or 'everyday'
+   * (Everyday Account correction, 2026-08-08 — an Everyday Account is a
+   * money balance exactly like Cash, and folding it into this same field
+   * keeps `cashSpend + creditCardSpend + otherSpend` an exhaustive partition
+   * of `spend` rather than silently dropping a whole payment source from
+   * every consumer's total; see ThisMonthCard's derived "Spending recorded"
+   * headline, which sums exactly these three fields). Additive fields
    * (PRD ask, This Month card, Finding #40) — income/spend keep their exact
    * existing meaning for every current consumer (Lulu Score, Monthly
    * Snapshot, Spending Tracker); cashSpend/creditCardSpend/otherSpend are
@@ -99,7 +105,7 @@ export function computeMonthToDateActivity(data: AppData, today: Date = new Date
   );
   const spend = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
   const cashSpend = monthExpenses
-    .filter((t) => t.paymentSource === 'cash' || t.paymentSource === undefined)
+    .filter((t) => t.paymentSource === 'cash' || t.paymentSource === undefined || t.paymentSource === 'everyday')
     .reduce((sum, t) => sum + t.amount, 0);
   const creditCardSpend = monthExpenses.filter((t) => t.paymentSource === 'credit_card').reduce((sum, t) => sum + t.amount, 0);
   const otherSpend = monthExpenses

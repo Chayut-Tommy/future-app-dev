@@ -11,6 +11,7 @@ import { InfoSheet } from '../../components/shared/InfoSheet';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddRecurringItemModal } from '../../components/money/AddRecurringItemModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
+import { AddAnythingSheet } from '../../components/navigation/AddAnythingSheet';
 import { SafeToSpendHero } from '../../components/money/SafeToSpendHero';
 import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet';
 import { SavingsAllocationDetailSheet } from '../../components/money/SavingsAllocationDetailSheet';
@@ -82,7 +83,11 @@ export function MoneyScreen() {
   const [thisMonthInfoVisible, setThisMonthInfoVisible] = useState(false);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [selectBalancesVisible, setSelectBalancesVisible] = useState(false);
-  const [addBalanceModalVisible, setAddBalanceModalVisible] = useState(false);
+  // Select Balances correction (2026-08-08) — was a dedicated Cash-preset
+  // AddWealthItemModal; now reuses the same general Add Anything chooser
+  // the global + button opens (Everyday/Cash/Savings are all real tiles in
+  // it already), rather than silently defaulting to Cash.
+  const [addBalanceChooserVisible, setAddBalanceChooserVisible] = useState(false);
   const [savingsAllocationDetailVisible, setSavingsAllocationDetailVisible] = useState(false);
   const [savingsAllocationDetailDate, setSavingsAllocationDetailDate] = useState<Date | null>(null);
   const [editSavingsAllocationVisible, setEditSavingsAllocationVisible] = useState(false);
@@ -612,14 +617,9 @@ export function MoneyScreen() {
       <SelectBalancesSheet
         visible={selectBalancesVisible}
         onClose={() => setSelectBalancesVisible(false)}
-        onAddBalance={() => setAddBalanceModalVisible(true)}
+        onAddBalance={() => setAddBalanceChooserVisible(true)}
       />
-      <AddWealthItemModal
-        visible={addBalanceModalVisible}
-        kind="asset"
-        presetAssetType="cash"
-        onClose={() => setAddBalanceModalVisible(false)}
-      />
+      <AddAnythingSheet visible={addBalanceChooserVisible} onClose={() => setAddBalanceChooserVisible(false)} />
       <SavingsAllocationDetailSheet
         visible={savingsAllocationDetailVisible}
         onClose={() => setSavingsAllocationDetailVisible(false)}

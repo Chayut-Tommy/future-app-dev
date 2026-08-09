@@ -69,7 +69,16 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
   const { colors, radius, spacing, typography } = useTheme();
 
   const cashAssets = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings');
-  const nonCashAssets = data.assets.filter((a) => a.type !== 'cash' && a.type !== 'savings');
+  // Everyday Account correction (2026-08-08) — deliberately excluded from
+  // BOTH `cashAssets` (already true before this fix — it was never
+  // included in the "From" source list) and `nonCashAssets` (the bug: an
+  // 'everyday' asset is neither 'cash' nor 'savings', so it fell through
+  // into this generic "everything else" bucket and appeared as a valid
+  // "To" destination). Move Money's negative-balance/insufficient-funds/
+  // atomicity handling for Everyday Account was explicitly deferred and
+  // has not been built — participating here at all is unsafe until that
+  // work is separately approved and implemented.
+  const nonCashAssets = data.assets.filter((a) => a.type !== 'cash' && a.type !== 'savings' && a.type !== 'everyday');
 
   const [fromId, setFromId] = useState<string | null>(cashAssets[0]?.id ?? null);
   const [toTarget, setToTarget] = useState<TransferTarget | null>(null);

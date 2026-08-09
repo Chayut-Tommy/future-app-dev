@@ -33,6 +33,7 @@ function formatMoney(value: number): string {
 const ASSET_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   cash: 'wallet-outline',
   savings: 'lock-closed-outline',
+  everyday: 'card-outline',
   etf: 'trending-up-outline',
   shares: 'bar-chart-outline',
   super: 'shield-outline',
@@ -58,7 +59,12 @@ type CategoryColor = 'accent' | 'navy' | 'market' | 'purple' | 'warning' | 'gold
 // Super gets its own major bucket rather than hiding inside Investments —
 // it's a distinct, significant part of most Australians' wealth (PRD ask).
 const ASSET_CATEGORIES: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap; color: CategoryColor; types: AssetType[] }[] = [
-  { key: 'cash', label: 'Cash', icon: 'wallet', color: 'accent', types: ['cash'] },
+  // Everyday Account correction (2026-08-08) — folded into the existing
+  // Cash category (relabelled) rather than a new top-level category, per
+  // the explicit product decision. Each account still renders as its own
+  // individually-tappable row below (items.map) — only the category
+  // header/total is shared. Savings stays separately classified, unchanged.
+  { key: 'cash', label: 'Cash & accounts', icon: 'wallet', color: 'accent', types: ['cash', 'everyday'] },
   { key: 'savings', label: 'Savings', icon: 'lock-closed', color: 'accent', types: ['savings'] },
   { key: 'investments', label: 'Investments', icon: 'trending-up', color: 'market', types: ['etf', 'shares', 'crypto'] },
   { key: 'super', label: 'Retirement Savings', icon: 'shield-checkmark', color: 'gold', types: ['super'] },

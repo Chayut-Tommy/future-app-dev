@@ -237,6 +237,20 @@ function computeBalanceEffect(
     return { targetKind: 'liability', targetId: liability.id, delta: t.amount };
   }
 
+  // Everyday Account expense routing (2026-08-08) — a debit-card expense
+  // charged against a SPECIFIC Everyday Account, identified by
+  // `targetAssetId` (never a default lookup, unlike 'cash'). Reuses the
+  // exact same `targetKind: 'asset'` shape the 'cash' branch above and the
+  // income targetAssetId branch already use — inherits the SAME
+  // applyEffectDelta mutation, the SAME reverse-then-reapply edit/delete
+  // pipeline, and the SAME Math.max(0, ...) floor, with no new engine
+  // logic. Global Cash is never touched by this branch.
+  if (source === 'everyday' && t.targetAssetId) {
+    const account = data.assets.find((a) => a.id === t.targetAssetId && a.type === 'everyday');
+    if (!account) return undefined;
+    return { targetKind: 'asset', targetId: account.id, delta: -t.amount };
+  }
+
   return undefined;
 }
 
@@ -250,37 +264,58 @@ function computeBalanceEffect(
 // fields"). A target that no longer exists (deleted independently) is a
 // safe, silent no-op — never an error, never redirected to a different
 // target, never fabricated against a new one.
-function applyEffectDelta(data: AppData, effect: AppliedBalanceEffect | undefined, sign: 1 | -1): AppData {
-  if (!effect) return data;
+//
+// Returns `actualDelta` — the effect-shaped delta (same sign convention as
+// AppliedBalanceEffect.delta) that the target's stored value ACTUALLY moved
+// by, after the Math.max(0, ...) floor below is accounted for. When the
+// floor doesn't bind, actualDelta === effect.delta exactly. When it does
+// (an insufficient source: Cash or Everyday debited below what it holds,
+// or a liability repaid below what's owed), actualDelta reflects only what
+// truly moved — floor-then-reverse phantom-credit correction, 2026-08-08:
+// every caller that is APPLYING a freshly-computed effect (sign=1, in
+// applyNewTransaction and applyTransactionUpdate's re-apply step) must
+// store this actualDelta as the transaction's appliedBalanceEffect, never
+// the effect's own intended delta — otherwise a later reversal negates the
+// INTENDED delta instead of what was truly removed, over-crediting the
+// target by exactly the amount the floor absorbed (regression-protection
+// review: "start Everyday $100, expense $50, change source to a $0 Cash —
+// Cash floors at $0 having only truly moved $0, but the stored intended
+// delta was -$50; changing back would then credit Cash the full $50 it
+// never actually lost"). This single choice — store what happened, not
+// what was intended — is the entire fix; nothing else about this function,
+// or about how reversals themselves apply, changes.
+function applyEffectDelta(data: AppData, effect: AppliedBalanceEffect | undefined, sign: 1 | -1): { data: AppData; actualDelta: number } {
+  if (!effect) return { data, actualDelta: 0 };
 
   if (effect.targetKind === 'asset') {
     const existing = data.assets.find((a) => a.id === effect.targetId);
-    if (!existing) return data;
-    // Floored at 0 — Cash should never read as a negative asset (PRD ask).
-    const updatedAssets = data.assets.map((a) =>
-      a.id === existing.id ? { ...a, currentValue: Math.max(0, a.currentValue + sign * effect.delta) } : a
-    );
-    return { ...data, assets: updatedAssets };
+    if (!existing) return { data, actualDelta: 0 };
+    // Floored at 0 — Cash and Everyday should never read as a negative asset (PRD ask).
+    const clamped = Math.max(0, existing.currentValue + sign * effect.delta);
+    const updatedAssets = data.assets.map((a) => (a.id === existing.id ? { ...a, currentValue: clamped } : a));
+    return { data: { ...data, assets: updatedAssets }, actualDelta: sign * (clamped - existing.currentValue) };
   }
 
   if (effect.targetKind === 'credit_card') {
     const card = data.creditCards.find((c) => c.id === effect.targetId);
-    if (!card) return data;
+    if (!card) return { data, actualDelta: 0 };
     const updatedCard: CreditCard = { ...card, currentBalance: card.currentBalance + sign * effect.delta };
     const withCard = { ...data, creditCards: data.creditCards.map((c) => (c.id === card.id ? updatedCard : c)) };
-    return upsertCreditCardLiability(withCard, updatedCard);
+    // No floor on a credit card's balance (it may legitimately go negative —
+    // "in credit" — see ThisMonthCard's cardsInCredit handling), so the
+    // actual delta always equals the intended one.
+    return { data: upsertCreditCardLiability(withCard, updatedCard), actualDelta: effect.delta };
   }
 
   if (effect.targetKind === 'liability') {
     const existing = data.liabilities.find((l) => l.id === effect.targetId);
-    if (!existing) return data;
-    const updatedLiabilities = data.liabilities.map((l) =>
-      l.id === existing.id ? { ...l, currentBalance: Math.max(0, l.currentBalance + sign * effect.delta) } : l
-    );
-    return { ...data, liabilities: updatedLiabilities };
+    if (!existing) return { data, actualDelta: 0 };
+    const clamped = Math.max(0, existing.currentBalance + sign * effect.delta);
+    const updatedLiabilities = data.liabilities.map((l) => (l.id === existing.id ? { ...l, currentBalance: clamped } : l));
+    return { data: { ...data, liabilities: updatedLiabilities }, actualDelta: sign * (clamped - existing.currentBalance) };
   }
 
-  return data;
+  return { data, actualDelta: 0 };
 }
 
 /** Resolves what scheduleAnchorDay a recurring item should have after being
@@ -381,8 +416,13 @@ export function applyNewTransaction(data: AppData, t: Omit<Transaction, 'id'>, t
     workingData = { ...workingData, assets };
   }
   const effect = computeBalanceEffect(workingData, { ...t, balanceEffect });
-  const withEffect = applyEffectDelta(workingData, effect, 1);
-  const newTransaction: Transaction = { ...t, id: transactionId, balanceEffect, appliedBalanceEffect: effect };
+  const { data: withEffect, actualDelta } = applyEffectDelta(workingData, effect, 1);
+  // Stores what was ACTUALLY applied (post-floor), not the intended effect
+  // — see applyEffectDelta's own doc comment (floor-then-reverse phantom-
+  // credit correction, 2026-08-08). Identical to `effect` whenever the
+  // floor didn't bind.
+  const appliedEffect: AppliedBalanceEffect | undefined = effect ? { ...effect, delta: actualDelta } : undefined;
+  const newTransaction: Transaction = { ...t, id: transactionId, balanceEffect, appliedBalanceEffect: appliedEffect };
   return { ...withEffect, transactions: [...workingData.transactions, newTransaction] };
 }
 
@@ -621,7 +661,7 @@ export function applyTransactionUpdate(data: AppData, id: string, patch: Partial
   // undefined) fall back to re-deriving from old's fields instead, the one
   // narrow, documented exception.
   let workingData: AppData =
-    old.balanceEffect === undefined ? legacyApplyTransactionEffect(data, old, -1) : applyEffectDelta(data, old.appliedBalanceEffect, -1);
+    old.balanceEffect === undefined ? legacyApplyTransactionEffect(data, old, -1) : applyEffectDelta(data, old.appliedBalanceEffect, -1).data;
 
   const balanceEffect: BalanceEffectMode = merged.balanceEffect ?? 'update';
   if (merged.type === 'income' && balanceEffect === 'update') {
@@ -629,9 +669,14 @@ export function applyTransactionUpdate(data: AppData, id: string, patch: Partial
     workingData = { ...workingData, assets };
   }
   const effect = computeBalanceEffect(workingData, { ...merged, balanceEffect });
-  workingData = applyEffectDelta(workingData, effect, 1);
+  const { data: reapplied, actualDelta } = applyEffectDelta(workingData, effect, 1);
+  workingData = reapplied;
+  // Stores what was ACTUALLY applied (post-floor), not the intended effect —
+  // see applyEffectDelta's own doc comment (floor-then-reverse phantom-
+  // credit correction, 2026-08-08).
+  const appliedEffect: AppliedBalanceEffect | undefined = effect ? { ...effect, delta: actualDelta } : undefined;
 
-  const finalTransaction: Transaction = { ...merged, balanceEffect, appliedBalanceEffect: effect };
+  const finalTransaction: Transaction = { ...merged, balanceEffect, appliedBalanceEffect: appliedEffect };
   return { ...workingData, transactions: data.transactions.map((t) => (t.id === id ? finalTransaction : t)) };
 }
 
@@ -644,7 +689,9 @@ export function applyTransactionDelete(data: AppData, id: string, reverseEffect:
     return { ...data, transactions: data.transactions.filter((t) => t.id !== id) };
   }
   const reverted =
-    old.balanceEffect === undefined ? legacyApplyTransactionEffect(data, old, -1) : applyEffectDelta(data, old.appliedBalanceEffect, -1);
+    old.balanceEffect === undefined
+      ? legacyApplyTransactionEffect(data, old, -1)
+      : applyEffectDelta(data, old.appliedBalanceEffect, -1).data;
   return { ...reverted, transactions: data.transactions.filter((t) => t.id !== id) };
 }
 

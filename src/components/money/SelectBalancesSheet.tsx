@@ -28,15 +28,23 @@ export function SelectBalancesSheet({
 }: {
   visible: boolean;
   onClose: () => void;
-  /** Hand off to the add-asset flow — called after this sheet has asked to
-   * close, mirroring the existing bill→mortgage handoff in
-   * AddRecurringItemModal.tsx rather than inventing a new pattern. */
+  /** Hand off to the general Add Anything chooser (Select Balances
+   * correction, 2026-08-08 — was a Cash-preset-only AddWealthItemModal;
+   * now reuses the same chooser the global + button opens, so Everyday
+   * Account/Cash/Savings are all genuinely reachable, never a silent Cash
+   * default). Called after this sheet has asked to close, mirroring the
+   * existing bill→mortgage handoff in AddRecurringItemModal.tsx rather
+   * than inventing a new pattern. */
   onAddBalance: () => void;
 }) {
   const { data, updateAsset } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
 
-  const balances = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings');
+  // Everyday Account correction (2026-08-08) — included here so a customer
+  // can review/change its inclusion setting alongside Cash/Savings, per
+  // the calculation contract's explicit "include Everyday Account in the
+  // Select Balances experience" requirement.
+  const balances = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings' || a.type === 'everyday');
 
   function toggleIncluded(assetId: string, currentlyIncluded: boolean) {
     updateAsset(assetId, { includeInMoneyCalculations: !currentlyIncluded });
@@ -84,10 +92,11 @@ export function SelectBalancesSheet({
   return (
     <KeyboardSheet visible={visible} onClose={onClose} title="Select balances" footer={<Button label="Done" onPress={onClose} style={styles.footerButton} />}>
       <Text style={styles.intro}>
-        Choose which Cash or Savings balances Navilo includes when estimating your available money. You can change this at any time.
+        Choose which Cash, Savings or Everyday Account balances Navilo includes when estimating your available money. You can change this
+        at any time.
       </Text>
       {balances.length === 0 ? (
-        <Text style={styles.emptyText}>You don't have any Cash or Savings balances recorded yet.</Text>
+        <Text style={styles.emptyText}>You don't have any Cash, Savings or Everyday Account balances recorded yet.</Text>
       ) : (
         balances.map((asset) => {
           const included = resolveIncludeInMoneyCalculations(asset);
@@ -105,7 +114,7 @@ export function SelectBalancesSheet({
         })
       )}
       <TouchableOpacity style={styles.addButton} onPress={handleAddBalance}>
-        <Text style={[styles.toggleText, { color: colors.accent, fontSize: 13 }]}>+ Add a Cash or Savings balance</Text>
+        <Text style={[styles.toggleText, { color: colors.accent, fontSize: 13 }]}>+ Add a money balance</Text>
       </TouchableOpacity>
     </KeyboardSheet>
   );

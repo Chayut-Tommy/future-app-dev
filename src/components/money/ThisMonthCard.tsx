@@ -153,7 +153,7 @@ export function ThisMonthCard({
           </Text>
         </View>
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Paid from cash / savings</Text>
+          <Text style={styles.rowLabel}>Paid from money balances</Text>
           <Text style={styles.rowValue}>{formatMoney(displayedCash)}</Text>
         </View>
         <View style={styles.row}>

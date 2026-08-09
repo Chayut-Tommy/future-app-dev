@@ -25,19 +25,25 @@ export function computeLiquidCash(assets: Asset[]): number {
 }
 
 /**
- * Whether one cash/savings asset counts toward short-term Money
+ * Whether one cash/savings/everyday asset counts toward short-term Money
  * calculations, resolving `includeInMoneyCalculations` against its
  * type-based default when unset — never re-derive this default inline.
  * Defaults: cash = included (it's what transactions already auto-sync
- * into, so it already behaves like an everyday account); savings =
- * excluded until the user explicitly opts in, so an existing savings
+ * into, so it already behaves like an everyday account); everyday =
+ * included (Everyday Account correction, 2026-08-08 — the feature's own
+ * MVP spec: "Count this balance in available money" defaults on); savings
+ * = excluded until the user explicitly opts in, so an existing savings
  * balance is never silently pooled into "available for bills" the moment
  * this field ships (PRD ask, migration rule). Every other asset type is
- * never eligible regardless of this field.
+ * never eligible regardless of this field — this deliberately does NOT
+ * include `computeLiquidCash`'s savings-reporting concept (wealth
+ * achievements, buffer milestones, Savings Coach, emergency-fund/ready-to-
+ * invest opportunities remain untouched by this function on purpose; an
+ * everyday spending balance is not necessarily savings).
  */
 export function resolveIncludeInMoneyCalculations(asset: Pick<Asset, 'type' | 'includeInMoneyCalculations'>): boolean {
-  if (asset.type !== 'cash' && asset.type !== 'savings') return false;
-  return asset.includeInMoneyCalculations ?? asset.type === 'cash';
+  if (asset.type !== 'cash' && asset.type !== 'savings' && asset.type !== 'everyday') return false;
+  return asset.includeInMoneyCalculations ?? (asset.type === 'cash' || asset.type === 'everyday');
 }
 
 /**

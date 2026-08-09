@@ -10,7 +10,15 @@ import { Button } from '../shared/Button';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { brand } from '../../lib/brand';
 import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
+import { parseMoneyInputAllowZero } from '../../lib/calculations/money';
 import { generateId } from '../../lib/id';
+
+// The three liquid-balance types that share this form's cash/savings-style
+// branch (interest-rate-adjacent fields, "Count this balance in available
+// money" toggle) and must use the SAME strict, zero-allowing money parser
+// (Everyday Account correction, 2026-08-08) — never a looser parseFloat,
+// and never diverge from one another within this shared branch.
+const LIQUID_BALANCE_TYPES: AssetType[] = ['cash', 'savings', 'everyday'];
 
 // The "smart loan" types — the only ones with an optional asset link
 // (vehicle/property) and an auto-managed repayment bill. Membership only,
@@ -62,6 +70,7 @@ export const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: 'cash', label: 'Cash' },
   { value: 'savings', label: 'Savings' },
+  { value: 'everyday', label: 'Everyday Account' },
   { value: 'etf', label: 'ETF' },
   { value: 'shares', label: 'Shares' },
   { value: 'super', label: 'Retirement Savings' },
@@ -82,6 +91,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
 const ASSET_CARD_GROUPS: { value: AssetType; emoji: string; label: string; description: string }[] = [
   { value: 'cash', emoji: '💵', label: 'Cash', description: 'Money in your wallet' },
   { value: 'savings', emoji: '🏦', label: 'Savings', description: 'Money earning interest' },
+  { value: 'everyday', emoji: '🏧', label: 'Everyday Account', description: 'A bank account you use for everyday spending, usually through a debit card' },
   { value: 'etf', emoji: '📈', label: 'Investments', description: 'Stocks, ETFs, crypto, funds' },
   { value: 'property', emoji: '🏠', label: 'Property', description: 'Home or investment property' },
   { value: 'super', emoji: '🛡', label: 'Retirement Savings', description: 'Superannuation, 401(k), IRA, pension' },
@@ -340,6 +350,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
   const [interestRate, setInterestRate] = useState('');
+  // Only meaningful for type === 'everyday' — the free-text "Bank or
+  // provider" field (Everyday Account correction, 2026-08-08).
+  const [provider, setProvider] = useState('');
   const [liabilityInterestRate, setLiabilityInterestRate] = useState('');
   const [assetType, setAssetType] = useState<AssetType>('cash');
   // Only meaningful for cash/savings — whether this balance counts toward
@@ -420,7 +433,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // (full edit, unrelated flow) and for a brand-new liability (nothing to
   // protect yet).
   const [editingLoanDetails, setEditingLoanDetails] = useState(true);
-  const initialSnapshot = useRef({ label: '', value: '', interestRate: '' });
+  // `provider` correction (2026-08-08) — added to the SAME existing
+  // snapshot/isDirty contract used by label/value/interestRate, not a
+  // second dirty-state mechanism. Only ever non-'' during an 'everyday'
+  // session (every reset/type-switch path below clears it back to '');
+  // for liability and every non-everyday asset session it stays '' on
+  // both sides of the comparison, so the added clause is a safe no-op
+  // there, exactly like interestRate's existing comparison already is for
+  // liability sessions.
+  const initialSnapshot = useRef({ label: '', value: '', interestRate: '', provider: '' });
   // Synchronous double-submission guard (Stream C correction). A ref, not
   // state — state only takes effect on the next render, so two Save taps
   // landing in the same tick (or the second landing during the brief window
@@ -474,6 +495,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
   const isNewLoan = kind === 'liability' && SMART_LOAN_TYPES.includes(liabilityType) && !editLiability;
+  // Everyday Account correction (2026-08-08) — Cash/Savings/Everyday
+  // Account share this one balance-entry branch and must use the SAME
+  // strict, zero-allowing parser (never diverge within the shared branch).
+  // Every OTHER asset type (etf/property/etc.) and every liability keep
+  // the existing, unchanged parseFloat-based validation — this is a
+  // narrowly scoped parser swap, not a redesign of Asset/Liability
+  // storage or validation generally.
+  const usesStrictLiquidParser = kind === 'asset' && LIQUID_BALANCE_TYPES.includes(assetType);
+  const parsedLiquidValue = usesStrictLiquidParser ? parseMoneyInputAllowZero(value) : null;
   // A mortgage can be secured against a property (PRD ask: "$1M property,
   // $500k mortgage" is a very different picture than "$500k unsecured
   // debt"). New properties are only created on the add-mortgage path — the
@@ -678,7 +708,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const isDirty =
     label !== initialSnapshot.current.label ||
     value !== initialSnapshot.current.value ||
-    interestRate !== initialSnapshot.current.interestRate;
+    interestRate !== initialSnapshot.current.interestRate ||
+    provider !== initialSnapshot.current.provider;
 
   useEffect(() => {
     if (!visible) return;
@@ -706,8 +737,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setAssetType(editAsset.type);
       const rate = editAsset.interestRate ? String(Math.round(editAsset.interestRate * 10000) / 100) : '';
       setInterestRate(rate);
+      const editProvider = editAsset.provider ?? '';
+      setProvider(editProvider);
       setIncludeInMoney(resolveIncludeInMoneyCalculations(editAsset));
-      initialSnapshot.current = { label: editAsset.label, value: String(editAsset.currentValue), interestRate: rate };
+      initialSnapshot.current = { label: editAsset.label, value: String(editAsset.currentValue), interestRate: rate, provider: editProvider };
       setShowLiabilitySelector(false);
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
@@ -726,12 +759,13 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setSelectedVehicleId(editLiability.linkedVehicleAssetId ?? null);
       setNewVehicleValue('');
       setNewVehicleName('');
-      initialSnapshot.current = { label: editLiability.label, value: String(editLiability.currentBalance), interestRate: '' };
+      initialSnapshot.current = { label: editLiability.label, value: String(editLiability.currentBalance), interestRate: '', provider: '' };
       setShowLiabilitySelector(false);
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
     } else {
       setInterestRate('');
+      setProvider('');
       setAssetType(presetAssetType ?? 'cash');
       setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: presetAssetType ?? 'cash', includeInMoneyCalculations: undefined }));
       const resolvedType = presetLiabilityType ?? 'personal_loan';
@@ -745,7 +779,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       resetLiabilityFieldsBlank();
       setLabel('');
       setValue('');
-      initialSnapshot.current = { label: '', value: '', interestRate: '' };
+      initialSnapshot.current = { label: '', value: '', interestRate: '', provider: '' };
       // CORRECTION 1, "SELECT OR CREATE FOR REPAYMENT" — only for the
       // explicit intent, and only when at least one same-type liability
       // already exists; otherwise (0 existing, or intent is 'create')
@@ -809,7 +843,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const requiresNewVehicleName = isCarLoan && !loanDetailsLocked && vehicleLinkMode === 'new';
   const canSave =
     label.trim().length > 0 &&
-    !isNaN(parseFloat(value)) &&
+    (usesStrictLiquidParser ? !!parsedLiquidValue?.valid : !isNaN(parseFloat(value))) &&
     (!requiresNewPropertyName || newPropertyName.trim().length > 0) &&
     (!requiresNewVehicleName || newVehicleName.trim().length > 0) &&
     // VID-001 correction — an ambiguous linked repayment must block Save
@@ -840,6 +874,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         ? isEditing
           ? 'Update cash account'
           : 'Add cash account'
+        : assetType === 'everyday'
+        ? isEditing
+          ? 'Update everyday account'
+          : 'Add everyday account'
         : isEditing
         ? 'Edit asset'
         : 'Add asset'
@@ -945,7 +983,11 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   }
 
   function performSave() {
-    const amount = parseFloat(value);
+    // Everyday Account correction (2026-08-08) — Cash/Savings/Everyday
+    // Account go through the strict, zero-allowing parser; canSave above
+    // has already verified parsedLiquidValue.valid for this branch, so
+    // `.amount` is safe here without a redundant NaN check.
+    const amount = usesStrictLiquidParser && parsedLiquidValue?.valid ? parsedLiquidValue.amount : parseFloat(value);
     if (!canSave) return;
     // Must be checked+set synchronously before anything else in this
     // function touches state or calls a persistence action — see
@@ -956,9 +998,16 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     try {
       if (kind === 'asset') {
         const rateValue = parseFloat(interestRate);
+        // Everyday Account has no interest-rate field (per the MVP form
+        // spec) — deliberately NOT added to this gate.
         const interestRatePayload =
           (assetType === 'cash' || assetType === 'savings') && !isNaN(rateValue) && rateValue >= 0 ? rateValue / 100 : undefined;
-        const includeInMoneyPayload = assetType === 'cash' || assetType === 'savings' ? includeInMoney : undefined;
+        // Everyday Account correction — the "Count this balance in
+        // available money" toggle also applies to 'everyday', reusing
+        // LIQUID_BALANCE_TYPES so this stays in lockstep with the JSX gate
+        // and the strict-parser gate above.
+        const includeInMoneyPayload = LIQUID_BALANCE_TYPES.includes(assetType) ? includeInMoney : undefined;
+        const providerPayload = assetType === 'everyday' ? provider.trim() || undefined : undefined;
         if (editAsset) {
           updateAsset(editAsset.id, {
             type: assetType,
@@ -966,6 +1015,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             currentValue: amount,
             interestRate: interestRatePayload,
             includeInMoneyCalculations: includeInMoneyPayload,
+            provider: providerPayload,
           });
         } else {
           addAsset({
@@ -974,6 +1024,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             currentValue: amount,
             interestRate: interestRatePayload,
             includeInMoneyCalculations: includeInMoneyPayload,
+            provider: providerPayload,
           });
         }
       } else if (kind === 'liability') {
@@ -1138,6 +1189,23 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   }
 
   function handleDelete() {
+    // Everyday Account correction (2026-08-08) — the only asset/liability
+    // type in this file with a delete confirmation; every other existing
+    // type's immediate-delete behavior below is deliberately unchanged.
+    if (editAsset?.type === 'everyday') {
+      Alert.alert('Remove this Everyday Account from Navilo?', 'Your Navilo totals will update, but this will not affect your real bank account.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            deleteAsset(editAsset.id);
+            onClose();
+          },
+        },
+      ]);
+      return;
+    }
     if (editAsset) deleteAsset(editAsset.id);
     if (editLiability) deleteLiability(editLiability.id);
     onClose();
@@ -1324,6 +1392,19 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // exactly which type this is; letting the user wander to a different
   // type mid-flow would reopen the same ambiguity this correction closes.
   const showTypeChips = kind === 'asset' || resolvedIntent !== 'select_or_create_for_repayment';
+  // Correction pass (2026-08-08) — a session opened via the "Add everyday
+  // account"/"Add cash"/"Add savings" Add Anything tiles (or the
+  // equivalent Wealth shortcuts) presets exactly one of the three liquid
+  // types; showing the full ETF/Shares/Property/Car/etc. chip row there is
+  // unrelated noise the user never asked for. Narrowed to the three
+  // liquid-balance chips only, still letting the user self-correct between
+  // Cash/Savings/Everyday without leaving the form. Every OTHER preset
+  // (etf/property/super/...) and the generic, no-preset "Add asset" flow
+  // (reached via the category-card grid) are completely unaffected — same
+  // full ASSET_TYPES row as before. Reuses the existing form; no new
+  // component.
+  const isLiquidPresetJourney = kind === 'asset' && !!presetAssetType && LIQUID_BALANCE_TYPES.includes(presetAssetType);
+  const assetTypeChipOptions = isLiquidPresetJourney ? ASSET_TYPES.filter((t) => LIQUID_BALANCE_TYPES.includes(t.value)) : ASSET_TYPES;
 
   // Navigation Transitions, Option B pilot — the exact same field/section
   // JSX every standalone caller already renders, now also reused verbatim
@@ -1363,7 +1444,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       ) : null}
       {showTypeChips ? (
         <View style={styles.typeRow}>
-          {(kind === 'asset' ? ASSET_TYPES : LIABILITY_TYPES).map((t) => {
+          {(kind === 'asset' ? assetTypeChipOptions : LIABILITY_TYPES).map((t) => {
             const active = kind === 'asset' ? assetType === t.value : liabilityType === t.value;
             return (
               <TouchableOpacity
@@ -1409,6 +1490,11 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                   if (kind === 'asset') {
                     setAssetType(t.value as AssetType);
                     setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined }));
+                    // `provider` correction — only ever meaningful for
+                    // 'everyday'; switching to any other type (or back to
+                    // 'everyday' from one) must never retain a stale value
+                    // from whatever type chip was previously selected.
+                    setProvider('');
                   } else {
                     setLiabilityType(t.value as LiabilityType);
                   }
@@ -1435,15 +1521,37 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         </View>
       ) : (
         <>
-          <Text style={styles.label}>{kind === 'liability' && nameField ? nameField.field : 'Label'}</Text>
+          <Text style={styles.label}>
+            {kind === 'liability' && nameField ? nameField.field : kind === 'asset' && assetType === 'everyday' ? 'Account name' : 'Label'}
+          </Text>
           <TextInput
             style={styles.input}
-            placeholder={kind === 'asset' ? 'e.g. Vanguard ETF' : nameField?.placeholder ?? 'e.g. Home loan'}
+            placeholder={
+              kind === 'asset'
+                ? assetType === 'everyday'
+                  ? 'e.g. Main everyday account'
+                  : 'e.g. Vanguard ETF'
+                : nameField?.placeholder ?? 'e.g. Home loan'
+            }
             placeholderTextColor={colors.textMuted}
             value={label}
             onChangeText={setLabel}
           />
-          <Text style={styles.label}>{kind === 'liability' ? 'Amount you still owe today' : 'Value'}</Text>
+          {kind === 'asset' && assetType === 'everyday' ? (
+            <>
+              <Text style={styles.label}>Bank or provider (optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Commonwealth Bank"
+                placeholderTextColor={colors.textMuted}
+                value={provider}
+                onChangeText={setProvider}
+              />
+            </>
+          ) : null}
+          <Text style={styles.label}>
+            {kind === 'liability' ? 'Amount you still owe today' : kind === 'asset' && assetType === 'everyday' ? 'Current balance' : 'Value'}
+          </Text>
           <TextInput
             style={styles.input}
             placeholder="$0"
@@ -1452,6 +1560,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             value={value}
             onChangeText={setValue}
           />
+          {kind === 'asset' && assetType === 'everyday' ? (
+            <View style={styles.helperBox}>
+              <Text style={styles.helperText}>• Update this balance when it changes.</Text>
+              <Text style={[styles.helperText, { marginTop: spacing.xs }]}>
+                • To avoid double-counting, don't enter the same balance under both Cash and Everyday Account.
+              </Text>
+              <Text style={[styles.helperText, { marginTop: spacing.xs }]}>• Enter the balance only—never card or banking login details.</Text>
+            </View>
+          ) : null}
         </>
       )}
       {kind === 'asset' && (assetType === 'cash' || assetType === 'savings') ? (
@@ -1465,24 +1582,27 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             value={interestRate}
             onChangeText={setInterestRate}
           />
-          <View style={styles.moneyIncludeBox}>
-            <Text style={styles.moneyIncludeTitle}>Should {brand.name} include this balance when estimating your available money?</Text>
-            <Text style={styles.moneyIncludeCopy}>
-              Include it if this money is available for everyday bills and spending. You can change this later. This never affects your
-              recorded net wealth — only short-term estimates like Available Until Payday.
-            </Text>
-            <TouchableOpacity style={styles.moneyIncludeToggleRow} onPress={() => setIncludeInMoney((v) => !v)}>
-              <Ionicons
-                name={includeInMoney ? 'checkbox' : 'square-outline'}
-                size={20}
-                color={includeInMoney ? colors.accentStrong : colors.textMuted}
-              />
-              <Text style={styles.moneyIncludeToggleText}>
-                {includeInMoney ? 'Yes, include this balance' : 'No, keep it separate'}
-              </Text>
-            </TouchableOpacity>
-          </View>
         </>
+      ) : null}
+      {kind === 'asset' && LIQUID_BALANCE_TYPES.includes(assetType) ? (
+        <View style={styles.moneyIncludeBox}>
+          <Text style={styles.moneyIncludeTitle}>Should {brand.name} include this balance when estimating your available money?</Text>
+          <Text style={styles.moneyIncludeCopy}>
+            {assetType === 'everyday'
+              ? `${brand.name} will include it when estimating Available Until Payday.`
+              : 'Include it if this money is available for everyday bills and spending. You can change this later. This never affects your recorded net wealth — only short-term estimates like Available Until Payday.'}
+          </Text>
+          <TouchableOpacity style={styles.moneyIncludeToggleRow} onPress={() => setIncludeInMoney((v) => !v)}>
+            <Ionicons
+              name={includeInMoney ? 'checkbox' : 'square-outline'}
+              size={20}
+              color={includeInMoney ? colors.accentStrong : colors.textMuted}
+            />
+            <Text style={styles.moneyIncludeToggleText}>
+              {includeInMoney ? 'Yes, include this balance' : 'No, keep it separate'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       ) : null}
       {kind === 'liability' && !loanDetailsLocked ? (
         <>
