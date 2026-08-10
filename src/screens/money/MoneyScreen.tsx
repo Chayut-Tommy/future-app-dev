@@ -23,7 +23,7 @@ import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { AddCreditCardModal } from '../../components/credit/AddCreditCardModal';
-import { computeMonthToDateActivity } from '../../lib/calculations/monthlySummary';
+import { computeMonthToDateActivity, computeThisMonthRecordedSummary } from '../../lib/calculations/monthlySummary';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { deriveDisplayedWaterfall } from '../../lib/calculations/moneyWaterfall';
@@ -125,6 +125,10 @@ export function MoneyScreen() {
   // a recurring rate (PRD ask, Decision 2: Typical Money Flow and Spending
   // Tracker must never share a basis).
   const monthToDateActivity = useMemo(() => computeMonthToDateActivity(data, currentDate), [data, currentDate]);
+  // This Month's own exact-cent, per-source-attributed sibling result (This
+  // Month round, 2026-08-10) — computeMonthToDateActivity above is
+  // untouched and still the one Spending Tracker's bars (below) read.
+  const thisMonthSummary = useMemo(() => computeThisMonthRecordedSummary(data, currentDate), [data, currentDate]);
   const thisMonthStart = useMemo(() => new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), [currentDate]);
   // A present-liability snapshot, never treated as this month's spending —
   // deliberately not part of computeMonthToDateActivity, which stays scoped
@@ -396,12 +400,13 @@ export function MoneyScreen() {
         </TouchableOpacity>
       </View>
       <ThisMonthCard
-        activity={monthToDateActivity}
+        summary={thisMonthSummary}
         creditCardBalance={currentCreditCardBalance}
         hasCreditCards={data.creditCards.length > 0}
+        creditCardCount={data.creditCards.length}
         monthStart={thisMonthStart}
         today={currentDate}
-        onPress={() => navigation.navigate('Transactions')}
+        onViewTransactions={() => navigation.navigate('Transactions')}
         onAddTransaction={() => setTransactionModalVisible(true)}
       />
 
@@ -662,14 +667,19 @@ export function MoneyScreen() {
       </InfoSheet>
       <InfoSheet visible={thisMonthInfoVisible} onClose={() => setThisMonthInfoVisible(false)} title="About This Month">
         <Text style={styles.flowInfoText}>
-          This summary uses transactions recorded during the current calendar month. Credit-card purchases count as spending when
-          recorded. Credit-card repayments are treated separately so your spending is not counted twice.
+          Income recorded and Spending recorded use transactions saved in Navilo from the start of the current calendar month through
+          today. Future-dated transactions and Move Money transfers between your own balances are excluded.
+        </Text>
+        <Text style={styles.flowInfoText}>Net recorded is Income recorded minus Spending recorded.</Text>
+        <Text style={styles.flowInfoText}>
+          The funding breakdown uses the source recorded with each expense. An expense recorded without changing a tracked balance
+          still counts.
         </Text>
         <Text style={styles.flowInfoText}>
-          Available Until Payday is a separate estimate of your included cash and savings — this card doesn't change what that number
-          means.
+          Current credit-card balance is a snapshot of the balance recorded in Navilo right now. It is separate from month-to-date
+          spending.
         </Text>
-        <Text style={styles.flowInfoText}>Based on transactions recorded in Navilo.</Text>
+        <Text style={styles.flowInfoText}>These figures reflect only what is recorded in Navilo.</Text>
       </InfoSheet>
       <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
     </Screen>

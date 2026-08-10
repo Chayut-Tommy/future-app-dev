@@ -148,12 +148,27 @@ console.log('\n=== 2. PaymentSource call-site audit (Structural, tied to shipped
     /const otherSpend = monthExpenses\s*\n\s*\.filter\(\(t\) => t\.paymentSource === 'loan' \|\| t\.paymentSource === 'other'\)/.test(MONTHLY_SUMMARY_SRC)
   );
   assert(
-    '2d. ThisMonthCard.tsx label updated to the factual "Paid from money balances" (was "cash / savings")',
-    /Paid from money balances/.test(THIS_MONTH_CARD_SRC) && !/Paid from cash \/ savings/.test(THIS_MONTH_CARD_SRC)
+    // Correction round, 2026-08-10 (This Month flip-card round) — the old
+    // single-face card's three independently-rounded "Paid from money
+    // balances / Paid by credit card / Other funding" bucket rows no
+    // longer exist on ThisMonthCard.tsx at all: they were replaced by the
+    // back face's individually-ranked spendingSources list, sourced from
+    // computeThisMonthRecordedSummary (monthlySummary.ts), never
+    // reconstructed inside the card component. The factual "Cash" label
+    // itself now lives where the attribution actually happens.
+    '2d. The Cash bucket\'s customer-facing label ("Cash") is attributed once, in computeThisMonthRecordedSummary itself — not reconstructed or duplicated inside ThisMonthCard.tsx',
+    /addToBucket\('cash', 'cash', 'Cash', validated\.cents\);/.test(MONTHLY_SUMMARY_SRC) && !/'Paid from money balances'/.test(THIS_MONTH_CARD_SRC)
   );
   assert(
-    '2e. ThisMonthCard.tsx "Spending recorded" headline stays derived from the three source rows, never independently computed',
-    /const displayedSpend = displayedCash \+ displayedCreditCard \+ displayedOther;/.test(THIS_MONTH_CARD_SRC)
+    // The "derive, don't independently round" invariant this assertion
+    // originally guarded now lives one layer down, inside
+    // computeThisMonthRecordedSummary itself (netCents = incomeCents -
+    // spendingCents, both already exact cents) — both card faces simply
+    // READ summary.spendingCents/netCents, never re-derive them.
+    '2e. computeThisMonthRecordedSummary derives netCents from the SAME incomeCents/spendingCents the UI displays — never independently recomputed — and ThisMonthCard.tsx only ever reads summary.spendingCents/netCents, never reconstructs them',
+    /const netCents = incomeCents - spendingCents;/.test(MONTHLY_SUMMARY_SRC) &&
+      /formatCents\(summary\.spendingCents\)/.test(THIS_MONTH_CARD_SRC) &&
+      /formatCents\(summary\.netCents\)/.test(THIS_MONTH_CARD_SRC)
   );
   assert(
     "2f. safeToSpend.ts cashVariableSpendSoFar now also counts 'everyday' spend against a currently-included, currently-existing target account",

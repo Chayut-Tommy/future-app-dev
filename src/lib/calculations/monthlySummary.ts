@@ -1,6 +1,21 @@
 import { AppData } from '../../types/models';
 import { toMonthlyAmount } from './incomeEngine';
+import { moneyAmountToCents } from './money';
 import { brand } from '../brand';
+
+// Correction round, 2026-08-10 — the single local-calendar month-to-date
+// window (first local day of the current month through today, inclusive
+// both ends) that both computeMonthToDateActivity and the newer
+// computeThisMonthRecordedSummary use. Extracted so there is exactly ONE
+// date-boundary implementation in this file, never two independently
+// maintained ones (PRD ask: "Do not introduce a second date filter").
+function monthToDateWindowStart(today: Date): Date {
+  return new Date(today.getFullYear(), today.getMonth(), 1);
+}
+function isWithinMonthToDate(dateISO: string, monthStart: Date, today: Date): boolean {
+  const d = new Date(dateISO);
+  return d >= monthStart && d <= today;
+}
 
 export interface MonthlySummary {
   income: number;
@@ -96,13 +111,11 @@ export interface MonthToDateActivity {
  * tab's Spending Tracker totals exactly.
  */
 export function computeMonthToDateActivity(data: AppData, today: Date = new Date()): MonthToDateActivity {
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthStart = monthToDateWindowStart(today);
   const income = data.transactions
-    .filter((t) => t.type === 'income' && new Date(t.date) >= monthStart && new Date(t.date) <= today)
+    .filter((t) => t.type === 'income' && isWithinMonthToDate(t.date, monthStart, today))
     .reduce((sum, t) => sum + t.amount, 0);
-  const monthExpenses = data.transactions.filter(
-    (t) => t.type === 'expense' && new Date(t.date) >= monthStart && new Date(t.date) <= today
-  );
+  const monthExpenses = data.transactions.filter((t) => t.type === 'expense' && isWithinMonthToDate(t.date, monthStart, today));
   const spend = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
   const cashSpend = monthExpenses
     .filter((t) => t.paymentSource === 'cash' || t.paymentSource === undefined || t.paymentSource === 'everyday')
@@ -156,4 +169,232 @@ export function describeCashflowMessage(summary: MonthlySummary): string | null 
     }`;
   }
   return "You're breaking even this month — every extra dollar saved helps.";
+}
+
+/** One ranked, individually-identified funding source behind This Month's
+ * "Spending recorded" total — correction round, 2026-08-10. `key` is a
+ * stable identity (never a label) so multiple same-type/same-labelled
+ * accounts or cards never merge: `everyday:<assetId>`, `creditCard:<id>`,
+ * `loan:<liabilityId>`, or one of the three fixed keys 'cash' / 'other' /
+ * 'unavailable'. `percentage` is an integer, largest-remainder-allocated so
+ * a full, untruncated list's percentages always sum to exactly 100 (never
+ * computed when spendingCents is 0). */
+export interface ThisMonthSpendingSource {
+  key: string;
+  kind: 'cash' | 'everyday' | 'credit_card' | 'loan' | 'other' | 'unavailable';
+  label: string;
+  amountCents: number;
+  percentage: number;
+}
+
+/** The single exact-cent result BOTH faces of This Month must read from —
+ * never independently rounded broad buckets on the front and cents on the
+ * back (PRD ask: "the redesigned front and back consume the same new
+ * shared result"). `sum(spendingSources[].amountCents) === spendingCents`
+ * always holds exactly, because both are derived from one pass over one
+ * shared-filtered, individually-validated transaction list — see
+ * computeThisMonthRecordedSummary's own doc comment for the exact
+ * invalid-amount contract. */
+export interface ThisMonthRecordedSummary {
+  incomeCents: number;
+  spendingCents: number;
+  netCents: number;
+  spendingSources: ThisMonthSpendingSource[];
+  hasInvalidRecordedAmounts: boolean;
+}
+
+/**
+ * The exact-cent, per-source-attributed sibling to computeMonthToDateActivity
+ * above — same shared isWithinMonthToDate/monthToDateWindowStart date window,
+ * same underlying transaction set, but (a) integer cents throughout via the
+ * established strict moneyAmountToCents validator, never floating point, and
+ * (b) expense rows individually attributed by stable source identity
+ * (targetAssetId / creditCardId / liabilityId), not just the three coarse
+ * cash/credit-card/other buckets computeMonthToDateActivity itself returns.
+ * computeMonthToDateActivity's own return shape, arithmetic, and every
+ * existing consumer (Monthly Snapshot on Today, Spending Tracker, Navilo
+ * Score) are completely unmodified by this function's existence.
+ *
+ * Invalid-amount handling (PRD ask, "Strict invalid-amount handling"): each
+ * qualifying transaction is independently run through moneyAmountToCents.
+ * A transaction that fails validation (NaN/Infinity, non-positive, more
+ * than 2 decimal places of precision, unsafe-integer overflow) is excluded
+ * from every total AND every source bucket — not folded into Cash, Other
+ * funding, or Source unavailable, since those are for VALID amounts with an
+ * unresolved or explicit identity, a different failure mode entirely.
+ * `hasInvalidRecordedAmounts` is set true so the UI can show one neutral
+ * disclosure line, never technical parser language. Every other, valid
+ * transaction is completely unaffected by one invalid neighbour.
+ *
+ * Source attribution hierarchy (PRD ask, "Source attribution"):
+ *  - paymentSource 'everyday' + a targetAssetId that resolves to a real,
+ *    still-existing Everyday Account -> keyed by that asset's id.
+ *  - paymentSource 'credit_card' + a creditCardId that resolves -> keyed by
+ *    that card's id.
+ *  - paymentSource 'loan' + a liabilityId that resolves -> keyed by that
+ *    liability's id.
+ *  - paymentSource 'other' -> the fixed 'other' key ("Other funding" — an
+ *    explicit customer choice, never a data gap).
+ *  - paymentSource 'cash', OR paymentSource undefined (the documented
+ *    legacy convention already established in computeBalanceEffect's own
+ *    `const source = t.paymentSource ?? 'cash'` and in this same file's
+ *    computeMonthToDateActivity cashSpend filter) -> the fixed 'cash' key.
+ *  - Any of the three id-based cases above whose referenced id no longer
+ *    resolves (the source was deleted after the transaction was recorded)
+ *    -> the fixed 'unavailable' key ("Source unavailable" — a real, valid
+ *    amount whose original identity is gone; multiple such transactions
+ *    aggregate into this one row for the MVP, per PRD ask, with no cent
+ *    lost). Savings is deliberately not a case here — PaymentSource has no
+ *    'savings' value in this round (PRD ask: deferred scope only).
+ */
+export function computeThisMonthRecordedSummary(data: AppData, today: Date = new Date()): ThisMonthRecordedSummary {
+  const monthStart = monthToDateWindowStart(today);
+  let hasInvalidRecordedAmounts = false;
+
+  let incomeCents = 0;
+  for (const t of data.transactions) {
+    if (t.type !== 'income' || !isWithinMonthToDate(t.date, monthStart, today)) continue;
+    const validated = moneyAmountToCents(t.amount);
+    if (!validated.valid) {
+      hasInvalidRecordedAmounts = true;
+      continue;
+    }
+    incomeCents += validated.cents;
+  }
+
+  // entityId (correction round, 2026-08-10): the underlying Asset/CreditCard/
+  // Liability id for the three per-entity kinds, carried alongside the
+  // customer-facing label so duplicate-label disambiguation below can order
+  // by stable entity identity — never by which transaction happened to be
+  // seen first, and never by this month's spent amount.
+  type Bucket = { kind: ThisMonthSpendingSource['kind']; label: string; amountCents: number; entityId?: string };
+  const buckets = new Map<string, Bucket>();
+  function addToBucket(key: string, kind: ThisMonthSpendingSource['kind'], label: string, cents: number, entityId?: string) {
+    const existing = buckets.get(key);
+    if (existing) existing.amountCents += cents;
+    else buckets.set(key, { kind, label, amountCents: cents, entityId });
+  }
+
+  let spendingCents = 0;
+  for (const t of data.transactions) {
+    if (t.type !== 'expense' || !isWithinMonthToDate(t.date, monthStart, today)) continue;
+    const validated = moneyAmountToCents(t.amount);
+    if (!validated.valid) {
+      hasInvalidRecordedAmounts = true;
+      continue;
+    }
+    spendingCents += validated.cents;
+
+    if (t.paymentSource === 'everyday' && t.targetAssetId) {
+      const asset = data.assets.find((a) => a.id === t.targetAssetId && a.type === 'everyday');
+      if (asset) addToBucket(`everyday:${asset.id}`, 'everyday', asset.label, validated.cents, asset.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+    } else if (t.paymentSource === 'credit_card' && t.creditCardId) {
+      const card = data.creditCards.find((c) => c.id === t.creditCardId);
+      if (card) addToBucket(`creditCard:${card.id}`, 'credit_card', card.label, validated.cents, card.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+    } else if (t.paymentSource === 'loan' && t.liabilityId) {
+      const liability = data.liabilities.find((l) => l.id === t.liabilityId);
+      if (liability) addToBucket(`loan:${liability.id}`, 'loan', liability.label, validated.cents, liability.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+    } else if (t.paymentSource === 'other') {
+      addToBucket('other', 'other', 'Other funding', validated.cents);
+    } else if (t.paymentSource === 'cash' || t.paymentSource === undefined) {
+      addToBucket('cash', 'cash', 'Cash', validated.cents);
+    } else {
+      // Defensive only — an 'everyday'/'credit_card'/'loan' paymentSource
+      // missing its required id, which the rest of this codebase never
+      // produces (QuickAddModal always pairs them), still resolves to a
+      // real, visible row rather than silently vanishing.
+      addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+    }
+  }
+
+  const netCents = incomeCents - spendingCents;
+
+  // Duplicate customer-facing label disambiguation (correction round,
+  // 2026-08-10, PRD ask "Make identical customer-facing source names
+  // distinguishable"). Stable IDs already prevent two same-named accounts
+  // from merging in the calculation — this makes them tell apart on
+  // screen too. Ordering the "— Account N" / "— Card N" / "— Loan N"
+  // suffix is based on each entity's position in its OWN canonical array
+  // (data.assets / data.creditCards / data.liabilities) — a stable
+  // identity ordering that a transaction being added, edited, or deleted
+  // (this month's or any other month's) can never change, and that has
+  // nothing to do with this month's spent amount. Mirrors the established
+  // "Account N" convention already used by QuickAddModal.tsx's
+  // disambiguateEverydayAccountLabels and incomeDestinations.ts's
+  // resolveEligibleIncomeDestinations — reimplemented locally here (not
+  // imported) because both of those live outside this round's authorised
+  // file boundary and the QuickAddModal helper is private.
+  const DISAMBIGUATION_SUFFIX: Partial<Record<ThisMonthSpendingSource['kind'], string>> = {
+    everyday: 'Account',
+    credit_card: 'Card',
+    loan: 'Loan',
+  };
+  const canonicalIndex: Partial<Record<ThisMonthSpendingSource['kind'], Map<string, number>>> = {
+    everyday: new Map(data.assets.map((a, i) => [a.id, i])),
+    credit_card: new Map(data.creditCards.map((c, i) => [c.id, i])),
+    loan: new Map(data.liabilities.map((l, i) => [l.id, i])),
+  };
+  const labelGroups = new Map<string, { key: string; kind: ThisMonthSpendingSource['kind']; entityId: string }[]>();
+  for (const [key, b] of buckets.entries()) {
+    if (b.entityId === undefined || !DISAMBIGUATION_SUFFIX[b.kind]) continue;
+    const groupKey = `${b.kind}::${b.label}`;
+    const group = labelGroups.get(groupKey) ?? [];
+    group.push({ key, kind: b.kind, entityId: b.entityId });
+    labelGroups.set(groupKey, group);
+  }
+  for (const group of labelGroups.values()) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => {
+      const indexMap = canonicalIndex[a.kind];
+      const ai = indexMap?.get(a.entityId) ?? Number.MAX_SAFE_INTEGER;
+      const bi = indexMap?.get(b.entityId) ?? Number.MAX_SAFE_INTEGER;
+      return ai - bi || a.key.localeCompare(b.key);
+    });
+    group.forEach((entry, i) => {
+      const bucket = buckets.get(entry.key)!;
+      bucket.label = `${bucket.label} — ${DISAMBIGUATION_SUFFIX[entry.kind]} ${i + 1}`;
+    });
+  }
+
+  // Deterministic order (PRD ask): amount descending, then customer-facing
+  // (already-disambiguated) label, then the stable key as the final
+  // tie-breaker — never transaction-array order, Map insertion order, or a
+  // generated per-run index.
+  const spendingSources: ThisMonthSpendingSource[] = Array.from(buckets.entries()).map(([key, b]) => ({
+    key,
+    kind: b.kind,
+    label: b.label,
+    amountCents: b.amountCents,
+    percentage: 0,
+  }));
+  spendingSources.sort((a, b) => b.amountCents - a.amountCents || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
+
+  // Largest-remainder (Hamilton) integer percentage allocation, so a full
+  // list's displayed percentages always sum to exactly 100 — never
+  // computed at all when there's nothing to divide (PRD ask). Remainder
+  // ties are broken by the SAME amount/label/key order the rows themselves
+  // use (correction round, 2026-08-10: fraction desc, then label, then the
+  // stable source key as the final tie-breaker) — never by position in a
+  // JS array, transaction order, or a generated per-run index, so the rule
+  // reads the same regardless of how spendingSources was built.
+  if (spendingCents > 0) {
+    const rawShares = spendingSources.map((s) => (s.amountCents / spendingCents) * 100);
+    const floors = rawShares.map((r) => Math.floor(r));
+    const allocated = floors.reduce((sum, f) => sum + f, 0);
+    let remaining = 100 - allocated;
+    const remainderOrder = spendingSources
+      .map((s, i) => ({ i, label: s.label, key: s.key, frac: rawShares[i] - floors[i] }))
+      .sort((a, b) => b.frac - a.frac || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
+    for (let k = 0; k < remaining && k < remainderOrder.length; k++) {
+      floors[remainderOrder[k].i] += 1;
+    }
+    spendingSources.forEach((s, i) => {
+      s.percentage = floors[i];
+    });
+  }
+
+  return { incomeCents, spendingCents, netCents, spendingSources, hasInvalidRecordedAmounts };
 }

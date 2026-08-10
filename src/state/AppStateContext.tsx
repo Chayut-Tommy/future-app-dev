@@ -1421,6 +1421,58 @@ export function deleteLiabilityTransition(data: AppData, id: string): AppData {
   return upsertNetWorthHistory({ ...data, liabilities: data.liabilities.filter((l) => l.id !== id), recurringItems });
 }
 
+/**
+ * Moves money between two places the user already owns — buying
+ * investments with cash, or paying down a liability with cash. Both sides
+ * update atomically so net worth only changes by what actually changed
+ * (paying debt) or stays flat (an internal transfer). Never creates a
+ * Transaction — This Month's recorded-spending figures are correctly
+ * unaffected by a transfer (see computeThisMonthRecordedSummary/
+ * computeMonthToDateActivity in monthlySummary.ts, neither of which reads
+ * anything but data.transactions).
+ *
+ * Correction, 2026-08-10 — This Month round: pulled out as its own pure,
+ * exported, directly-testable function (same rationale as every other
+ * transition in this file — a production behaviour this important must be
+ * exercisable against the exact code the app runs). Also fixes a confirmed
+ * pre-existing defect: when the target liability is a credit card's
+ * mirrored liability (`creditCardId` set), the matching
+ * `CreditCard.currentBalance` is now healed to the liability's own EXACT
+ * resulting balance, not decremented from the card's own (possibly
+ * already-stale) currentBalance. Before this fix, "Pay down [Card]" only
+ * ever updated `data.liabilities` — `data.creditCards`, the record
+ * `computeCreditCardBalanceTotal` (and so This Month's credit-card
+ * snapshot, CardsScreen, every creditHealth.ts aggregate) actually reads,
+ * was never touched, so the two records could silently diverge and stay
+ * diverged indefinitely (confirmed reachable: TransferForm.tsx's
+ * transferableLiabilities filter only excludes BNPL, never credit_card).
+ * Setting the card to the liability's resulting value — not
+ * `card.currentBalance - amount` — is deliberate: it heals any PRIOR
+ * disagreement between the two records in the same step, rather than
+ * compounding it forward. A liabilityId that doesn't resolve, or a
+ * liability with no linked card, is a safe no-op for the credit-card side
+ * — never a crash, never touching an unrelated card.
+ */
+export function transferFundsTransition(data: AppData, fromAssetId: string, to: TransferTarget, amount: number): AppData {
+  let assets = data.assets.map((a) => (a.id === fromAssetId ? { ...a, currentValue: a.currentValue - amount } : a));
+  let liabilities = data.liabilities;
+  let creditCards = data.creditCards;
+  if (to.kind === 'asset') {
+    assets = assets.map((a) => (a.id === to.assetId ? { ...a, currentValue: a.currentValue + amount } : a));
+  } else {
+    const target = liabilities.find((l) => l.id === to.liabilityId);
+    if (target) {
+      const resultingBalance = Math.max(0, target.currentBalance - amount);
+      liabilities = liabilities.map((l) => (l.id === to.liabilityId ? { ...l, currentBalance: resultingBalance } : l));
+      if (target.creditCardId !== undefined) {
+        const linkedCardId = target.creditCardId;
+        creditCards = creditCards.map((c) => (c.id === linkedCardId ? { ...c, currentBalance: resultingBalance } : c));
+      }
+    }
+  }
+  return upsertNetWorthHistory({ ...data, assets, liabilities, creditCards });
+}
+
 export type ConfirmBnplRepaymentInput = {
   liabilityId: string;
   recurringItemId: string;
@@ -2360,22 +2412,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [data, persist]
   );
 
-  // Moves money between two places the user already owns — buying
-  // investments with cash, or paying down a liability with cash. Both
-  // sides update atomically so net worth only changes by what actually
-  // changed (paying debt) or stays flat (an internal transfer).
+  // Thin wrapper over the pure, exported, directly-testable
+  // transferFundsTransition — see its own doc comment above for the full
+  // contract, including the This Month round's credit-card-mirror fix.
   const transferFunds = useCallback(
     (fromAssetId: string, to: TransferTarget, amount: number) => {
-      let assets = data.assets.map((a) => (a.id === fromAssetId ? { ...a, currentValue: a.currentValue - amount } : a));
-      let liabilities = data.liabilities;
-      if (to.kind === 'asset') {
-        assets = assets.map((a) => (a.id === to.assetId ? { ...a, currentValue: a.currentValue + amount } : a));
-      } else {
-        liabilities = liabilities.map((l) =>
-          l.id === to.liabilityId ? { ...l, currentBalance: Math.max(0, l.currentBalance - amount) } : l
-        );
-      }
-      persist(upsertNetWorthHistory({ ...data, assets, liabilities }));
+      persist(transferFundsTransition(data, fromAssetId, to, amount));
     },
     [data, persist]
   );
