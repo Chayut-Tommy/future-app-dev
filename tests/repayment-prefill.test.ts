@@ -262,8 +262,14 @@ console.log('\n=== 8. Structural confirmation: the real file contains and wires 
     /\(!requiresNewVehicleName \|\| newVehicleName\.trim\(\)\.length > 0\) &&[\s\S]{0,1200}?!hasAmbiguousLinkedRepayment &&[\s\S]{0,900}?!repaymentScheduleIncomplete;/.test(WEALTH_MODAL_SRC)
   );
   assert(
-    '8i. the render blocks the repayment input fields entirely when ambiguous, showing DUPLICATE_REPAYMENT_ERROR instead — no blank-looking editable form',
-    /hasAmbiguousLinkedRepayment \? \(\s*\n[\s\S]{0,1000}?<Text style=\{styles\.helperText\}>\{DUPLICATE_REPAYMENT_ERROR\}<\/Text>/.test(WEALTH_MODAL_SRC)
+    // BNPL round (2026-08-09): the ternary condition gained a second,
+    // OR'd ambiguity signal (hasAmbiguousBnplRepayment, BNPL's own
+    // editLiability-keyed ambiguity check — see its own doc comment) —
+    // hasAmbiguousLinkedRepayment's own contribution and the
+    // DUPLICATE_REPAYMENT_ERROR render for the smart-loan case are
+    // byte-identical and unchanged.
+    '8i. the render blocks the repayment input fields entirely when ambiguous (smart-loan OR bnpl), showing DUPLICATE_REPAYMENT_ERROR for the smart-loan case — no blank-looking editable form',
+    /hasAmbiguousLinkedRepayment \|\| hasAmbiguousBnplRepayment \? \(\s*\n[\s\S]{0,1000}?<Text style=\{styles\.helperText\}>\{DUPLICATE_REPAYMENT_ERROR\}<\/Text>/.test(WEALTH_MODAL_SRC)
   );
   assert(
     '8j. the ambiguous render branch reuses the exact same DUPLICATE_REPAYMENT_ERROR constant Save\'s own failure path already uses — one message, not a second wording',

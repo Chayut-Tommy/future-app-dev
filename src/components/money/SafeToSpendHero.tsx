@@ -138,10 +138,20 @@ export function SafeToSpendHero({
       StyleSheet.create({
         card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, alignItems: 'center', ...glow(colors.accent) },
         cardWarning: { backgroundColor: colors.warningSoft },
-        labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
+        labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: spacing.sm },
         label: { ...typography.micro, fontSize: 11, color: 'rgba(255,255,255,0.8)', fontWeight: '700', letterSpacing: 0.5 },
         labelWarning: { color: colors.warning },
+        labelRowActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         infoButton: { padding: 2 },
+        // Correction round, 2026-08-10 (requirement 6) — an explicit,
+        // labelled control inside the card's own header row, not an
+        // unexplained tap target on the card itself. Icon + text so it's
+        // discoverable at a glance, not just to someone who already knows
+        // an icon-only button is there; ≥44pt effective tap target via
+        // hitSlop, matching the info button's own convention.
+        manageBalancesButton: { flexDirection: 'row', alignItems: 'center', gap: 3, padding: 2 },
+        manageBalancesText: { ...typography.micro, fontSize: 11, color: 'rgba(255,255,255,0.85)', fontWeight: '700' },
+        manageBalancesTextWarning: { color: colors.warning },
         line: { ...typography.body, fontSize: 14, color: 'rgba(255,255,255,0.9)', textAlign: 'center' },
         lineWarning: { color: colors.textSecondary, textAlign: 'center', lineHeight: 19 },
         value: { ...typography.title, fontSize: 40, color: colors.onNavy, marginVertical: 2 },
@@ -189,6 +199,30 @@ export function SafeToSpendHero({
       }),
     [colors, radius, spacing, typography, glow]
   );
+
+  // Correction round, 2026-08-10 (requirement 6) — the same "Manage
+  // balances" control rendered identically in every card state, so the
+  // user never has to remember which state they're in to find it. Opens
+  // the existing Select Balances interface directly (never a new/
+  // duplicate implementation) via the same onSelectBalances callback the
+  // pre-existing empty-state CTAs already use — this control is additive
+  // (those CTAs stay exactly as they were), not a replacement.
+  function renderManageBalancesButton(warning?: boolean) {
+    if (!onSelectBalances) return null;
+    return (
+      <TouchableOpacity
+        style={styles.manageBalancesButton}
+        onPress={onSelectBalances}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        accessibilityRole="button"
+        accessibilityLabel="Manage balances"
+        accessibilityHint="Opens the list of balances included in this estimate"
+      >
+        <Ionicons name="wallet-outline" size={14} color={warning ? colors.warning : 'rgba(255,255,255,0.85)'} />
+        <Text style={[styles.manageBalancesText, warning ? styles.manageBalancesTextWarning : null]}>Manage balances</Text>
+      </TouchableOpacity>
+    );
+  }
 
   const breakdown = (
     <InfoSheet
@@ -241,6 +275,7 @@ export function SafeToSpendHero({
         <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
           <View style={styles.labelRow}>
             <Text style={styles.label}>💰 AVAILABLE MONEY</Text>
+            <View style={styles.labelRowActions}>{renderManageBalancesButton()}</View>
           </View>
           {hasIncludedBalance ? (
             <>
@@ -283,9 +318,12 @@ export function SafeToSpendHero({
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-            </TouchableOpacity>
+            <View style={styles.labelRowActions}>
+              {renderManageBalancesButton(true)}
+              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.lineWarning}>
             Select a balance for Navilo to use in your short-term money estimate — bills, savings and goals can't be compared against
@@ -311,9 +349,12 @@ export function SafeToSpendHero({
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-            </TouchableOpacity>
+            <View style={styles.labelRowActions}>
+              {renderManageBalancesButton(true)}
+              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.lineWarning}>
             Recorded spending is currently about {formatMoney(recordedOverspendAmount)} ahead of the estimated amount for this cycle.
@@ -335,9 +376,12 @@ export function SafeToSpendHero({
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-            </TouchableOpacity>
+            <View style={styles.labelRowActions}>
+              {renderManageBalancesButton(true)}
+              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.lineWarning}>
             Your planned bills, savings and goals are currently about {formatMoney(Math.abs(safeToSpend.cycleRemainingPool))} above the
@@ -357,9 +401,12 @@ export function SafeToSpendHero({
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-            </TouchableOpacity>
+            <View style={styles.labelRowActions}>
+              {renderManageBalancesButton(true)}
+              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.lineWarning}>
             Your goals would need {formatMoney(goalAllocation.totalRequiredMonthly)}/month but only{' '}
@@ -376,9 +423,12 @@ export function SafeToSpendHero({
       <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
         <View style={styles.labelRow}>
           <Text style={styles.label}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
-          <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="information-circle-outline" size={15} color="rgba(255,255,255,0.85)" />
-          </TouchableOpacity>
+          <View style={styles.labelRowActions}>
+            {renderManageBalancesButton()}
+            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="information-circle-outline" size={15} color="rgba(255,255,255,0.85)" />
+            </TouchableOpacity>
+          </View>
         </View>
         <Text style={styles.line}>{heroCopy.amountLabel}</Text>
         <Text style={styles.value}>{formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))}</Text>

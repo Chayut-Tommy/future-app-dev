@@ -52,6 +52,7 @@ const LIABILITY_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   car_loan: 'car-outline',
   personal_loan: 'document-text-outline',
   other: 'ellipse-outline',
+  bnpl: 'bag-handle-outline',
 };
 
 type CategoryColor = 'accent' | 'navy' | 'market' | 'purple' | 'warning' | 'gold';
@@ -77,6 +78,13 @@ const LIABILITY_CATEGORIES: { key: string; label: string; icon: keyof typeof Ion
   { key: 'credit_card', label: 'Credit cards', icon: 'card', color: 'warning', types: ['credit_card'] },
   { key: 'car_loan', label: 'Car loan', icon: 'car', color: 'market', types: ['car_loan'] },
   { key: 'loans', label: 'Loans', icon: 'document-text', color: 'purple', types: ['personal_loan', 'other'] },
+  // BNPL is its own category, not folded into 'loans' — LIABILITY_CATEGORIES
+  // is a plain array (not a Record<LiabilityType, ...>), so it is NOT
+  // compiler-enforced to cover every LiabilityType; a type left out here
+  // would silently vanish from this list while still counting in
+  // totalLiabilities above. Every LiabilityType must have an explicit entry
+  // in exactly one category.
+  { key: 'bnpl', label: 'Buy Now, Pay Later', icon: 'bag-handle', color: 'gold', types: ['bnpl'] },
 ];
 
 /** Only ever a real, computable line — never a fabricated per-item trend
@@ -442,6 +450,9 @@ export function WealthScreen() {
                         <Text style={styles.rowMicro}>
                           Estimated equity: {formatMoney(equity.equity)} ({Math.round(equity.equityPct * 100)}%)
                         </Text>
+                      ) : null}
+                      {l.type === 'bnpl' && l.currentBalance === 0 ? (
+                        <Text style={[styles.rowMicro, { color: colors.success }]}>Paid off</Text>
                       ) : null}
                     </View>
                     <Text style={styles.rowValue}>{formatMoney(l.currentBalance)}</Text>

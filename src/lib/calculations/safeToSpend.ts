@@ -6,6 +6,7 @@ import { computeAdHocIncome } from './monthlySummary';
 import { recurringOccurrencesInRange } from './recurringSchedule';
 import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { resolveSavingsAllocationMonthly } from './savingsAllocation';
+import { computeBnplCostsForWindow } from './bnpl';
 
 export interface SafeToSpendResult {
   discretionaryPool: number;
@@ -23,6 +24,22 @@ export interface SafeToSpendResult {
    * or Wealth Assets Recorded factors, which use actual recorded activity
    * or balances instead. */
   savingsAllocationMonthly: number;
+  /** BNPL (Buy Now, Pay Later) — the capped total of every BNPL-linked
+   * repayment occurrence projected within the CURRENT CALENDAR MONTH
+   * (never an indefinite monthly-normalised rate, unlike
+   * `fixedExpensesMonthly` — a plan's contribution here correctly drops to
+   * $0 once paid off, and never exceeds what's actually left to pay).
+   * Deliberately NOT folded into `fixedExpensesMonthly` itself — that
+   * field, and computeFixedCosts which produces it, is shared by Navilo
+   * Score's commitments/essential-expense factors and must stay entirely
+   * unaffected by BNPL's existence (BNPL-linked recurring items are
+   * created with `isFixed: false` specifically so computeFixedCosts never
+   * sees them). This is the SAME figure Money Plan's `billsSetAside` and
+   * Typical Money Flow's bills row both read (via this exact field,
+   * literally the same number, not merely the same formula) — each adds
+   * it to `fixedExpensesMonthly` at its own display layer, so a BNPL line
+   * item can never disagree with the headline total that includes it. */
+  bnplMonthlyExpected: number;
   /** Per-goal breakdown of what's funded vs. requested, in priority order
    * (PRD ask: never silently ignore a goal, and multi-goal math must be
    * transparent). */
@@ -207,7 +224,22 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   }
 
   const fixedCosts = computeFixedCosts(data);
-  const availableForGoals = user.monthlyIncome - fixedCosts;
+
+  // BNPL, current calendar month — deliberately NOT part of computeFixedCosts
+  // (see bnplMonthlyExpected's own doc comment on SafeToSpendResult). This
+  // is the SAME window Money Plan's `dated` BNPL line items and
+  // moneyTimeline.ts's calendar-month-scoped consumers align to, computed
+  // once here and reused by value (not just by formula) wherever the
+  // "Typical Monthly Allocation"/"Typical Money Flow" reading of BNPL is
+  // needed, so a line item can never disagree with the total that includes
+  // it. `monthEnd` is the first instant of the FOLLOWING month, walked as
+  // an inclusive upper bound minus 1ms so an occurrence landing exactly on
+  // the 1st of next month is never accidentally pulled into this month.
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const bnplMonthlyExpected = computeBnplCostsForWindow(data, monthStart, new Date(monthEnd.getTime() - 1));
+
+  const availableForGoals = user.monthlyIncome - fixedCosts - bnplMonthlyExpected;
   const goalAllocation = computeGoalAllocation(data, availableForGoals);
   const goalContributionsMonthly = goalAllocation.totalAllocatedMonthly;
 
@@ -219,7 +251,7 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
 
   const discretionaryPool = Math.max(
     0,
-    user.monthlyIncome - fixedCosts - goalContributionsMonthly - savingsAllocationMonthly
+    user.monthlyIncome - fixedCosts - bnplMonthlyExpected - goalContributionsMonthly - savingsAllocationMonthly
   );
 
   // Transactions the user logs are treated as variable/discretionary spend —
@@ -291,7 +323,16 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     const dueDate = new Date(startOfDay(today).getTime() + daysUntil * 86400000);
     return dueDate.getTime() <= cycleEnd.getTime() ? sum + resolveExpectedMonthlyRepayment(card) : sum;
   }, 0);
-  const cycleBillsExpected = cycleRecurringBills + cycleCreditCardRepayments;
+  // BNPL, capped to the exact pay-cycle window (not a monthly rate) — the
+  // billOccurrences query above never picks these up (BNPL-linked items
+  // are always isFixed: false), so this is a genuinely additive term, never
+  // a double-count. Uses windowFrom/cycleEnd unchanged — the SAME inclusive
+  // boundary convention recurringOccurrencesInRange (and therefore this
+  // pay-cycle's own bill/income queries above) already use, so BNPL's
+  // "due exactly on payday" / "one day overdue" treatment matches every
+  // other bill in this same cycle exactly, with no separate boundary rule.
+  const cycleBnplExpected = computeBnplCostsForWindow(data, windowFrom, cycleEnd);
+  const cycleBillsExpected = cycleRecurringBills + cycleCreditCardRepayments + cycleBnplExpected;
 
   // Savings/goal targets are a monthly policy, not a dated event of their
   // own — this cycle's fair share is the monthly figure prorated by how
@@ -349,6 +390,7 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     fixedExpensesMonthly: fixedCosts,
     goalContributionsMonthly,
     savingsAllocationMonthly,
+    bnplMonthlyExpected,
     goalAllocation,
     todaysSpend,
     plannedDailyAllowance,

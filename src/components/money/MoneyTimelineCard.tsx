@@ -72,6 +72,7 @@ const KIND_COLOR_KEY: Record<TimelineEventKind, 'accent' | 'navy' | 'warning' | 
   credit_card: 'warning',
   savings: 'aiBlue',
   goal: 'purple',
+  bnpl: 'warning',
 };
 
 /**

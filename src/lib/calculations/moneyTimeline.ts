@@ -3,8 +3,9 @@ import { AppData } from '../../types/models';
 import { computeSafeToSpend, cycleLengthDays } from './safeToSpend';
 import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { recurringOccurrencesInRange } from './recurringSchedule';
+import { projectBnplOccurrences } from './bnpl';
 
-export type TimelineEventKind = 'income' | 'bill' | 'mortgage' | 'credit_card' | 'savings' | 'goal';
+export type TimelineEventKind = 'income' | 'bill' | 'mortgage' | 'credit_card' | 'savings' | 'goal' | 'bnpl';
 
 export interface TimelineEvent {
   id: string;
@@ -107,7 +108,19 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
     });
   }
 
-  const billItems = data.recurringItems.filter((r) => r.type === 'expense');
+  // BNPL-linked items are handled entirely separately below (capped
+  // amounts, via projectBnplOccurrences) — excluded here so the ordinary
+  // bill loop's raw `-item.amount` is never used for one, and so a BNPL
+  // occurrence is never generated twice.
+  const bnplLiabilityByItemId = new Map<string, (typeof data.liabilities)[number]>();
+  for (const liability of data.liabilities) {
+    if (liability.type !== 'bnpl') continue;
+    const activeLinks = data.recurringItems.filter((r) => r.active && r.linkedLiabilityId === liability.id && r.type === 'expense');
+    if (activeLinks.length !== 1) continue; // none or ambiguous — show nothing, never double-count
+    bnplLiabilityByItemId.set(activeLinks[0].id, liability);
+  }
+
+  const billItems = data.recurringItems.filter((r) => r.type === 'expense' && !bnplLiabilityByItemId.has(r.id));
   for (const occurrence of recurringOccurrencesInRange(billItems, horizonStart, horizonEnd)) {
     const { item, date } = occurrence;
     const daysUntil = daysBetween(today, date);
@@ -123,6 +136,29 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
       amount: -item.amount,
       recurringItemId: item.id,
     });
+  }
+
+  // BNPL — capped occurrences, per plan, over the identical
+  // [horizonStart, horizonEnd] window every other event in this file
+  // already uses (both inclusive bounds, matching projectBnplOccurrences'
+  // own contract with no adjustment needed).
+  for (const [itemId, liability] of bnplLiabilityByItemId) {
+    const item = data.recurringItems.find((r) => r.id === itemId);
+    if (!item) continue;
+    for (const occurrence of projectBnplOccurrences(item, liability, horizonStart, horizonEnd)) {
+      const daysUntil = daysBetween(today, occurrence.date);
+      if (daysUntil < -1) continue;
+      events.push({
+        id: occurrence.id,
+        date: occurrence.date,
+        daysUntil,
+        kind: 'bnpl',
+        icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'bag-handle-outline',
+        label: item.label,
+        amount: -(occurrence.amountCents / 100),
+        recurringItemId: item.id,
+      });
+    }
   }
 
   // A credit-card repayment only ever appears here when the user has told

@@ -174,8 +174,14 @@ console.log("\n=== 6. Mirror accuracy — the mirror's own expressions match the
     /!isNaN\(repaymentValue\) && repaymentValue > 0 && \(usesRepaymentDayOfMonth \? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate\);/.test(WEALTH_SRC)
   );
   assert(
-    '6c. repaymentScheduleIncomplete is touched-but-not-complete, gated to loan types only (isNewLoan) — matches the mirror\'s own "incomplete" derivation',
-    /const repaymentScheduleIncomplete = isNewLoan && repaymentScheduleTouched && !repaymentScheduleComplete;/.test(WEALTH_SRC)
+    // BNPL round (2026-08-09): repaymentScheduleIncomplete is now gated on
+    // (isNewLoan || isBnpl) — BNPL reuses the identical touched-but-not-
+    // complete gate, extended (not replaced) to also apply on a BNPL edit
+    // session, since BNPL supports add/edit/remove-schedule directly via
+    // editLiability, unlike the smart-loan types. isNewLoan's own condition
+    // for the smart-loan types is byte-identical and unchanged.
+    '6c. repaymentScheduleIncomplete is touched-but-not-complete, gated to loan types OR bnpl (isNewLoan || isBnpl) — matches the mirror\'s own "incomplete" derivation, extended for BNPL',
+    /const repaymentScheduleIncomplete = \(isNewLoan \|\| isBnpl\) && repaymentScheduleTouched && !repaymentScheduleComplete;/.test(WEALTH_SRC)
   );
 }
 

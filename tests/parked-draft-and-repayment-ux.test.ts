@@ -358,9 +358,16 @@ console.log('\n=== 5. Behavioural: untouched schedule has no visually active fre
 console.log('\n=== 6. Structural: the existing partial/complete-schedule validation math is untouched (required test 11) ===');
 {
   assert(
-    '6a. repaymentScheduleTouched/Complete/Incomplete formulas — the actual Save-gating logic — are byte-identical to before this pass (this round only added a separate, cosmetic repaymentFrequencyTouched signal)',
+    // BNPL round (2026-08-09): repaymentScheduleTouched/Complete are still
+    // byte-identical to this pass's own baseline; repaymentScheduleIncomplete
+    // was legitimately extended from `isNewLoan &&` to `(isNewLoan ||
+    // isBnpl) &&` — BNPL reuses this exact gate on its own edit sessions
+    // (add/edit/remove schedule directly via editLiability), which the
+    // smart-loan types never needed. isNewLoan's own contribution is
+    // unchanged.
+    '6a. repaymentScheduleTouched/Complete formulas are byte-identical; repaymentScheduleIncomplete is legitimately extended to (isNewLoan || isBnpl) for BNPL\'s own edit-session schedule gating',
     /const repaymentScheduleTouched = repaymentAmount\.trim\(\)\.length > 0 \|\| repaymentDayOfMonth\.trim\(\)\.length > 0 \|\| repaymentNextDueDate !== null;/.test(WEALTH_SRC) &&
-      /const repaymentScheduleIncomplete = isNewLoan && repaymentScheduleTouched && !repaymentScheduleComplete;/.test(WEALTH_SRC)
+      /const repaymentScheduleIncomplete = \(isNewLoan \|\| isBnpl\) && repaymentScheduleTouched && !repaymentScheduleComplete;/.test(WEALTH_SRC)
   );
   assert(
     '6b. the shortened inline error copy is present verbatim, still gated on the SAME repaymentScheduleIncomplete/usesRepaymentDayOfMonth branches as before (only the strings changed)',

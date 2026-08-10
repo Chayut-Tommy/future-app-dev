@@ -2,7 +2,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, use
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { useAppState } from '../../state/AppStateContext';
+import { isLatestBnplRepaymentTransaction, useAppState } from '../../state/AppStateContext';
 import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
@@ -96,6 +96,21 @@ function describeReversalTarget(data: AppData, t: Transaction): { label: string;
   return null;
 }
 
+// Correction pass, 2026-08-09 — identifies a BNPL repayment transaction by
+// tracing its linked recurring item to a liability of type 'bnpl', exactly
+// mirroring the same predicate reverseBnplRepaymentTransaction itself uses
+// internally. `recurringItemId`/`recurringOccurrenceKey` alone are NOT
+// sufficient — every confirmed recurring bill/income transaction carries
+// them too, so a bare presence check would misclassify an ordinary
+// recurring bill payment as a BNPL repayment.
+function isBnplRepaymentTransaction(data: AppData, t: Transaction): boolean {
+  if (!t.recurringItemId || !t.recurringOccurrenceKey) return false;
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  if (!item || !item.linkedLiabilityId) return false;
+  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+  return liability?.type === 'bnpl';
+}
+
 // The base chip text before any disambiguation suffix — label, optional
 // provider, and balance. Two accounts only ever produce the identical
 // string here when their name, provider (including both blank), AND
@@ -168,7 +183,7 @@ export const QuickAddModal = forwardRef<
   { visible, onClose, editTransaction, initialType, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
   ref
 ) {
-  const { data, addTransaction, updateTransaction, deleteTransaction } = useAppState();
+  const { data, addTransaction, updateTransaction, deleteTransaction, reverseBnplRepayment } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [type, setType] = useState<'income' | 'expense'>('expense');
   const [amount, setAmount] = useState('');
@@ -386,9 +401,22 @@ export const QuickAddModal = forwardRef<
   // one requires it stay non-blank; editing a legacy manual expense that
   // never had one does not retroactively force one (no migration, no
   // forced backfill).
+  // Correction round, 2026-08-10 — the same name field, gating and
+  // fallback rules now apply to a manual INCOME transaction too (previously
+  // expense-only): "Record income received" and any other manual income
+  // entry can carry a customer-typed name exactly like an expense can,
+  // reusing the identical requiresTransactionName/notePayload/render-gate
+  // logic below rather than a parallel income-specific implementation.
   const isEditingRecurringLinked = !!editTransaction?.recurringItemId;
+  // Correction pass, §1 — a BNPL repayment transaction is never editable
+  // via the generic amount/date/paid-from fields (changing its amount here
+  // would desynchronise the liability and schedule, which only the atomic
+  // confirm/reverse transitions are allowed to touch). Blocking generic
+  // editing entirely is the smallest safe MVP treatment now that a
+  // dedicated atomic reversal exists for deletion — see handleDelete.
+  const isEditingBnplRepayment = !!editTransaction && isBnplRepaymentTransaction(data, editTransaction);
   const hadExistingNote = !!editTransaction?.note;
-  const requiresTransactionName = type === 'expense' && !isEditingRecurringLinked && (!isEditing || hadExistingNote);
+  const requiresTransactionName = !isEditingRecurringLinked && (!isEditing || hadExistingNote);
   // Everyday Account expense routing — negative balances are unsupported
   // in the MVP (unlike Cash, which the engine silently floors at 0). Blocks
   // Save with clear, neutral feedback rather than silently clamping,
@@ -398,6 +426,7 @@ export const QuickAddModal = forwardRef<
   const insufficientEverydayFunds =
     paymentSource === 'everyday' && !!selectedEverydayAccount && !isNaN(amountValue) && amountValue > (everydayAvailableBalance ?? 0);
   const canSave =
+    !isEditingBnplRepayment &&
     !isNaN(amountValue) &&
     amountValue > 0 &&
     !!categoryId &&
@@ -413,6 +442,7 @@ export const QuickAddModal = forwardRef<
   }, [canSave, formStep, onCanSaveChange]);
 
   function handleSave() {
+    if (isEditingBnplRepayment) return;
     if (!canSave || !categoryId || formStep !== 'details') return;
     // Must be checked+set synchronously before anything else touches state
     // or calls a persistence action — see submittingRef's own comment.
@@ -425,14 +455,15 @@ export const QuickAddModal = forwardRef<
     // (regression-protection review, Stream B1 UI integration §3: "do not
     // silently use balanceEffect: 'update' when no balance target exists").
     const effectiveBalanceEffect: BalanceEffectMode = hasValidBalanceTarget ? balanceEffect : 'none';
-    // Round 6 correction — reuses the existing Transaction.note field as
-    // the manual transaction's own name (no new schema field). Only ever
-    // set for the manual-expense case this form actually exposes an
-    // editable name field for; a recurring-confirmed transaction's own
-    // note (its immutable confirmation-time snapshot) is never touched
-    // here, since editTransaction.note simply isn't read for that case.
-    const notePayload =
-      type === 'expense' && !isEditingRecurringLinked && transactionName.trim().length > 0 ? { note: transactionName.trim() } : {};
+    // Round 6 correction, extended in the correction round, 2026-08-10 —
+    // reuses the existing Transaction.note field as the manual
+    // transaction's own name (no new schema field), now for both expense
+    // and income. Only ever set for the manual case this form actually
+    // exposes an editable name field for; a recurring-confirmed
+    // transaction's own note (its immutable confirmation-time snapshot) is
+    // never touched here, since editTransaction.note simply isn't read for
+    // that case.
+    const notePayload = !isEditingRecurringLinked && transactionName.trim().length > 0 ? { note: transactionName.trim() } : {};
     const payload =
       type === 'expense'
         ? {
@@ -447,7 +478,7 @@ export const QuickAddModal = forwardRef<
             balanceEffect: effectiveBalanceEffect,
             ...notePayload,
           }
-        : { type, amount: amountValue, categoryId, date: isoDate };
+        : { type, amount: amountValue, categoryId, date: isoDate, ...notePayload };
 
     // The tracked-balance choice is now made explicitly, inline, before Save
     // is ever pressed — updateTransaction always reconciles correctly from
@@ -470,6 +501,58 @@ export const QuickAddModal = forwardRef<
 
   function handleDelete() {
     if (!editTransaction) return;
+    // Correction pass, §1 — a BNPL repayment transaction never goes through
+    // the generic single-target describeReversalTarget/deleteTransaction
+    // path below: that path only ever reverses the transaction's own
+    // appliedBalanceEffect (the source side), never the linked BNPL
+    // liability it also decreased, which produced the confirmed
+    // financial-integrity defect this pass exists to fix. "Delete record
+    // only" (no reversal at all) stays safe and available regardless —
+    // it never touches a balance, so it can never desynchronise anything.
+    // Only the latest confirmed repayment on its plan is safe to fully
+    // reverse (see isLatestBnplRepaymentTransaction's own contract: an
+    // earlier repayment's occurrence date/liability amount can't be
+    // reconstructed once a later repayment has already moved the schedule
+    // and balance forward), so an earlier one is offered record-only
+    // deletion with an explanation instead.
+    if (isBnplRepaymentTransaction(data, editTransaction)) {
+      const isLatest = isLatestBnplRepaymentTransaction(data, editTransaction.id);
+      if (!isLatest) {
+        Alert.alert(
+          'Delete transaction?',
+          "Only the most recent BNPL repayment can be undone. Deleting this one will remove it from Transaction History, but won't change your BNPL balance or payment source — update the BNPL plan if its recorded balance is incorrect.",
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          ]
+        );
+        return;
+      }
+      Alert.alert(
+        'Delete this repayment?',
+        'This repayment updated both your payment source and BNPL balance. Deleting it will reverse both — your payment source will go back up and your BNPL balance will go back up by the same amount.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete record only',
+            onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); },
+          },
+          {
+            text: 'Delete & reverse',
+            style: 'destructive',
+            onPress: () => {
+              const result = reverseBnplRepayment(editTransaction.id);
+              if (!result.applied) {
+                Alert.alert('Could not reverse this repayment', "This repayment can no longer be safely reversed. You can still delete the record only, or update the BNPL plan if its recorded balance is incorrect.");
+                return;
+              }
+              onClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
     // 2026-08-09 correction (revised) — every delete still shows an
     // ordinary destructive-action confirmation (a single accidental tap
     // must never silently delete a record). The only thing that changes on
@@ -717,6 +800,44 @@ export const QuickAddModal = forwardRef<
     );
   }
 
+  // Correction pass, §1 — a BNPL repayment transaction is view-only here:
+  // no amount/date/paid-from/category field is rendered at all, so there
+  // is no path through this screen that can edit its amount without also
+  // updating the linked liability and schedule (which only confirm/reverse
+  // are allowed to do). Delete remains available, routed through
+  // handleDelete's own BNPL-aware branch above.
+  if (isEditingBnplRepayment && editTransaction) {
+    const bnplLockedContent = (
+      <>
+        <Text style={styles.sourceLabel}>
+          Source: <Text style={styles.sourceLabelValue}>{editTransactionDisplayLabel ?? 'BNPL repayment'}</Text>
+        </Text>
+        <Text style={styles.amountInput}>{formatMoney(editTransaction.amount)}</Text>
+        <Text style={styles.hintText}>
+          This repayment updated both your payment source and BNPL balance. It can't be edited here — update the BNPL plan if its recorded
+          balance is incorrect.
+        </Text>
+        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+          <Text style={styles.deleteText}>Delete transaction</Text>
+        </TouchableOpacity>
+      </>
+    );
+
+    if (embedded) return bnplLockedContent;
+
+    return (
+      <KeyboardSheet
+        visible={visible}
+        onClose={onClose}
+        isDirty={false}
+        title="Edit transaction"
+        footer={<Button label="Close" variant="secondary" onPress={onClose} style={styles.footerButton} />}
+      >
+        {bnplLockedContent}
+      </KeyboardSheet>
+    );
+  }
+
   const content = (
     <>
       {/* Read-only — this transaction's own primary identity, kept visibly
@@ -731,17 +852,19 @@ export const QuickAddModal = forwardRef<
         </Text>
       ) : null}
 
-      {/* Round 6 correction — required field order for a manual expense:
-          1. Transaction name, 2. Amount, 3. Category, 4. Paid from/tracked
-          balance, 5. Date. Income naming is unchanged (not shown here);
-          a recurring-confirmed transaction keeps its existing read-only
-          Source line above instead of this editable field. */}
-      {type === 'expense' && !isEditingRecurringLinked ? (
+      {/* Round 6 correction, extended in the correction round, 2026-08-10 —
+          required field order for a manual transaction: 1. Transaction
+          name, 2. Amount, 3. Category, 4. Paid from/tracked balance (expense
+          only) or destination (income, not yet offered from this form),
+          5. Date. Now shown for BOTH expense and income — a
+          recurring-confirmed transaction of either type keeps its existing
+          read-only Source line above instead of this editable field. */}
+      {!isEditingRecurringLinked ? (
         <>
           <Text style={styles.sectionLabel}>Transaction name</Text>
           <TextInput
             style={styles.nameInput}
-            placeholder="e.g. Woolworths groceries"
+            placeholder={type === 'income' ? 'e.g. August salary' : 'e.g. Woolworths groceries'}
             placeholderTextColor={colors.textMuted}
             value={transactionName}
             onChangeText={setTransactionName}
@@ -757,7 +880,7 @@ export const QuickAddModal = forwardRef<
         keyboardType="decimal-pad"
         value={amount}
         onChangeText={setAmount}
-        autoFocus={!(type === 'expense' && !isEditingRecurringLinked)}
+        autoFocus={isEditingRecurringLinked}
       />
 
       <View style={styles.selectedCategoryRow}>

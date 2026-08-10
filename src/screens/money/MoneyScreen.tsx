@@ -213,7 +213,11 @@ export function MoneyScreen() {
   // and spending remain fully visible via Spending Tracker below.
   const periodAdjective = FLOW_PERIODS.find((p) => p.key === flowPeriod)!.label.toLowerCase();
   const typicalIncome = fromMonthlyAmount(data.user.monthlyIncome, flowPeriod);
-  const typicalBills = fromMonthlyAmount(safeToSpend.fixedExpensesMonthly, flowPeriod);
+  // Includes bnplMonthlyExpected — the current-calendar-month capped BNPL
+  // total (never an indefinite monthly-normalised rate; drops to $0 once a
+  // plan is paid off) — so this "typical" row never overstates a finite
+  // BNPL commitment beyond what's genuinely still owed.
+  const typicalBills = fromMonthlyAmount(safeToSpend.fixedExpensesMonthly + safeToSpend.bnplMonthlyExpected, flowPeriod);
   // Savings Allocation and goal contributions combined into one concise row
   // here (PRD ask) — the detailed split remains visible in Typical Monthly
   // Allocation's waterfall below.
@@ -619,7 +623,23 @@ export function MoneyScreen() {
         onClose={() => setSelectBalancesVisible(false)}
         onAddBalance={() => setAddBalanceChooserVisible(true)}
       />
-      <AddAnythingSheet visible={addBalanceChooserVisible} onClose={() => setAddBalanceChooserVisible(false)} />
+      {/* Correction round, 2026-08-10 — scoped to cash/savings/everyday
+          only (requirement 5), and returns to Select Balances on EITHER
+          outcome (Back/Cancel or a successful save) rather than dropping
+          the user back on the bare Money screen — onClose is undifferentiated
+          by design (see AddAnythingSheet's own doc comment), so re-opening
+          Select Balances unconditionally here is correct for both cases:
+          "Back returns to Select Balances" and "a created balance returns
+          to Select Balances and is visible immediately" are the same event
+          from this screen's point of view. */}
+      <AddAnythingSheet
+        visible={addBalanceChooserVisible}
+        onClose={() => {
+          setAddBalanceChooserVisible(false);
+          setSelectBalancesVisible(true);
+        }}
+        onlyBalances
+      />
       <SavingsAllocationDetailSheet
         visible={savingsAllocationDetailVisible}
         onClose={() => setSavingsAllocationDetailVisible(false)}

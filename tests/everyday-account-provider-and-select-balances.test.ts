@@ -231,8 +231,15 @@ console.log('\n=== Structural: the mirror above matches the shipped source (clos
       /initialSnapshot\.current = \{ label: editAsset\.label, value: String\(editAsset\.currentValue\), interestRate: rate, provider: editProvider \};/.test(WEALTH_SRC)
   );
   assert(
-    'S4. the editLiability branch\'s initialSnapshot write includes provider: \'\' (liability sessions never have a provider)',
-    /initialSnapshot\.current = \{ label: editLiability\.label, value: String\(editLiability\.currentBalance\), interestRate: '', provider: '' \};/.test(WEALTH_SRC)
+    // BNPL round (2026-08-09): the editLiability branch now derives
+    // editLiabilityProvider once (editLiability.provider for a bnpl
+    // session, else '' — every other liability type still gets exactly
+    // the old hardcoded '', unchanged) and uses that SAME value for both
+    // setProvider and the initialSnapshot write, mirroring S3's own
+    // editAsset/editProvider no-drift pattern exactly.
+    'S4. the editLiability branch derives editLiabilityProvider once (bnpl -> real provider, every other type -> \'\') and uses it for BOTH setProvider and the initialSnapshot write (no drift)',
+    /const editLiabilityProvider = editLiability\.type === 'bnpl' \? editLiability\.provider \?\? '' : '';\s*\n\s*setProvider\(editLiabilityProvider\);/.test(WEALTH_SRC) &&
+      /initialSnapshot\.current = \{\s*\n\s*label: editLiability\.label,\s*\n\s*value: String\(editLiability\.currentBalance\),\s*\n\s*interestRate: '',\s*\n\s*provider: editLiabilityProvider,\s*\n\s*\};/.test(WEALTH_SRC)
   );
   assert(
     'S5. the fresh/create branch resets both setProvider(\'\') and initialSnapshot\'s provider',
@@ -240,8 +247,17 @@ console.log('\n=== Structural: the mirror above matches the shipped source (clos
       /initialSnapshot\.current = \{ label: '', value: '', interestRate: '', provider: '' \};/.test(WEALTH_SRC)
   );
   assert(
+    // Correction round, 2026-08-10 — setIncludeInMoney's argument here now
+    // reads `forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations(...)`
+    // (the scoped "Add a money balance" journey's seed override — see
+    // AddAnythingSheet.tsx's own onlyBalances prop), wrapped onto its own
+    // line by prettier once the expression grew past the line-length
+    // threshold. The property this assertion actually guards — provider is
+    // still cleared on every type-chip switch, immediately after the
+    // include-in-money seed is (re)computed — is unchanged and re-verified
+    // below against the new, longer expression.
     'S6. the type-chip tap handler clears provider on every asset-type switch',
-    /setAssetType\(t\.value as AssetType\);\s*\n\s*setIncludeInMoney\(resolveIncludeInMoneyCalculations\(\{ type: t\.value as AssetType, includeInMoneyCalculations: undefined \}\)\);\s*\n(?:\s*\/\/.*\n)*\s*setProvider\(''\);/.test(
+    /setAssetType\(t\.value as AssetType\);\s*\n\s*setIncludeInMoney\(\s*\n\s*forcedIncludeInMoneyDefault \?\? resolveIncludeInMoneyCalculations\(\{ type: t\.value as AssetType, includeInMoneyCalculations: undefined \}\)\s*\n\s*\);\s*\n(?:\s*\/\/.*\n)*\s*setProvider\(''\);/.test(
       WEALTH_SRC
     )
   );
@@ -278,9 +294,20 @@ console.log('\n=== 9. Select Balances add journey — customer-facing action no 
     !/addBalanceModalVisible/.test(MONEY_SCREEN_SRC)
   );
   assert(
-    '9e. the add-flow now renders AddAnythingSheet wired to the SAME onAddBalance trigger, reusing the existing chooser/transition architecture verbatim (no new component, no new geometry)',
+    // Correction round, 2026-08-10 — requirement 5 scopes this same
+    // AddAnythingSheet instance to balances only (`onlyBalances`, filtering
+    // GROUPS down to cash/savings/everyday, never a second chooser
+    // component) and its onClose now also re-opens Select Balances, so a
+    // created (or cancelled) balance always returns the user there rather
+    // than to the bare Money screen. The property this assertion actually
+    // guards — the SAME AddAnythingSheet component, wired to the SAME
+    // onAddBalance trigger, no new geometry — is unchanged and re-verified
+    // against the new, extended onClose/onlyBalances wiring.
+    '9e. the add-flow now renders AddAnythingSheet wired to the SAME onAddBalance trigger, scoped to balances only and returning to Select Balances on close — reusing the existing chooser/transition architecture verbatim (no new component, no new geometry)',
     /onAddBalance=\{\(\) => setAddBalanceChooserVisible\(true\)\}/.test(MONEY_SCREEN_SRC) &&
-      /<AddAnythingSheet visible=\{addBalanceChooserVisible\} onClose=\{\(\) => setAddBalanceChooserVisible\(false\)\} \/>/.test(MONEY_SCREEN_SRC)
+      /<AddAnythingSheet\s*\n\s*visible=\{addBalanceChooserVisible\}\s*\n\s*onClose=\{\(\) => \{\s*\n\s*setAddBalanceChooserVisible\(false\);\s*\n\s*setSelectBalancesVisible\(true\);\s*\n\s*\}\}\s*\n\s*onlyBalances\s*\n\s*\/>/.test(
+        MONEY_SCREEN_SRC
+      )
   );
   assert(
     '9f. Everyday Account, Cash and Savings are all genuine, unfiltered tiles inside the reused chooser (AddAnythingSheet.tsx\'s own Wealth group) — nothing about this hand-off narrows or filters that tile list',
@@ -289,8 +316,17 @@ console.log('\n=== 9. Select Balances add journey — customer-facing action no 
       /\{ key: 'savings', label: 'Add savings', emoji: '🏦' \}/.test(SHEET_SRC)
   );
   assert(
-    '9g. existing dismissal sequencing (SelectBalancesSheet closes itself BEFORE handing off, exactly like the pre-existing bill->mortgage handoff) is unchanged — handleAddBalance still calls onClose() then onAddBalance() synchronously, avoiding a nested/duplicate modal',
-    /function handleAddBalance\(\) \{\s*\n\s*onClose\(\);\s*\n\s*onAddBalance\(\);\s*\n\s*\}/.test(SELECT_BALANCES_SRC)
+    // Correction round, 2026-08-10 — SelectBalancesSheet's toggles became a
+    // local draft (Cancel/Back must discard unconfirmed changes), so
+    // handleAddBalance now commits that draft first (never silently
+    // dropping in-progress toggles when the user reaches for "+ Add a
+    // money balance" mid-edit). The property this assertion actually
+    // guards — onClose() still fires BEFORE onAddBalance(), so the sheet
+    // closes itself before handing off rather than stacking a second modal
+    // — is unchanged and re-verified below alongside the new commitDraft()
+    // call.
+    '9g. dismissal sequencing (SelectBalancesSheet closes itself BEFORE handing off) is unchanged; handleAddBalance now also commits the pending draft first, so in-progress toggles are never silently discarded by this hand-off',
+    /function handleAddBalance\(\) \{\s*\n\s*commitDraft\(\);\s*\n\s*onClose\(\);\s*\n\s*onAddBalance\(\);\s*\n\s*\}/.test(SELECT_BALANCES_SRC)
   );
   assert(
     '9h. the balances LIST itself (already fixed in the prior round) still includes Everyday Account alongside Cash/Savings — untouched by this correction',

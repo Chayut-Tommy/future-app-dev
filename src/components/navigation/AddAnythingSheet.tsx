@@ -261,8 +261,43 @@ type EmbeddedDestinationState = ReturnType<typeof useEmbeddedDestinationState>;
  * "Move Money logic" exclusion) and keeps its pre-existing
  * unmounts-on-Back behaviour unchanged.
  */
-export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export function AddAnythingSheet({
+  visible,
+  onClose,
+  onlyBalances,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  /** Correction round, 2026-08-10 — scopes the chooser to only the balance
+   * types that can participate in the selected-balance/available-money
+   * engine (Cash, Savings, Everyday Account), for Select Balances' own
+   * "Add a money balance" entry point. Reuses this exact same chooser/
+   * embedded-workspace machinery (Back, Cancel-without-mutation, the real
+   * AddWealthItemModal asset-creation form) — never a duplicate,
+   * parallel implementation. Every other destination (expense, income,
+   * bill, liability, credit card, goal, etc.) is filtered out of the tile
+   * grid entirely, not merely hidden. Absent/false renders the full,
+   * unscoped chooser exactly as before. */
+  onlyBalances?: boolean;
+}) {
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
+
+  // Correction round, 2026-08-10 — the balance-only tile set for the
+  // scoped "Add a money balance" journey, derived from the SAME GROUPS
+  // array the full chooser uses (never a second, hand-maintained list),
+  // so a future addition/removal in GROUPS never needs a parallel update
+  // here. Filters out any now-empty group entirely (none currently would
+  // be, since 'Wealth' always contains cash/savings/everyday, but this
+  // stays correct if that ever changes).
+  const visibleGroups = useMemo(
+    () =>
+      onlyBalances
+        ? GROUPS.map((g) => ({ ...g, options: g.options.filter((o) => o.key === 'cash' || o.key === 'savings' || o.key === 'everyday') })).filter(
+            (g) => g.options.length > 0
+          )
+        : GROUPS,
+    [onlyBalances]
+  );
 
   // Synchronous, ref-based, cross-path first-tap-wins gate (correction
   // pass, generalised). React state (the transition reducer) is only
@@ -1086,7 +1121,7 @@ export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClo
   function computeActiveChrome(): ActiveChrome {
     switch (transition.current) {
       case 'chooser':
-        return { title: `Add to ${brand.name}`, canSave: false, primaryLabel: 'Save', showFooter: false };
+        return { title: onlyBalances ? 'Add a money balance' : `Add to ${brand.name}`, canSave: false, primaryLabel: 'Save', showFooter: false };
       case 'transfer':
         return { title: 'Move money', canSave: transferCanSave, primaryLabel: 'Transfer', showFooter: true };
       case 'asset':
@@ -1381,8 +1416,8 @@ export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClo
             importantForAccessibility={isRouteSettledFront(transition, 'chooser') ? 'auto' : 'no-hide-descendants'}
           >
             <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.body}>What would you like to update?</Text>
-              {GROUPS.map((group) => (
+              <Text style={styles.body}>{onlyBalances ? 'Which kind of balance would you like to add?' : 'What would you like to update?'}</Text>
+              {visibleGroups.map((group) => (
                 <View key={group.title}>
                   <Text style={styles.groupTitle}>{group.title}</Text>
                   <View style={styles.grid}>
@@ -1441,6 +1476,7 @@ export function AddAnythingSheet({ visible, onClose }: { visible: boolean; onClo
             embedded
             kind="asset"
             presetAssetType={assetPresetType}
+            forcedIncludeInMoneyDefault={onlyBalances}
             onDirtyChange={assetState.setIsDirty}
             onCanSaveChange={assetState.setCanSave}
             onTitleChange={assetState.setTitle}

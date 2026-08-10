@@ -1,6 +1,7 @@
 import { AppData } from '../../types/models';
 import { computeAdHocIncome } from './monthlySummary';
 import { computeSafeToSpend } from './safeToSpend';
+import { projectBnplOccurrences } from './bnpl';
 
 export interface MoneyPlanEntry {
   date: string; // ISO
@@ -58,6 +59,7 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
   const month = today.getMonth();
 
   const dated: MoneyPlanEntry[] = [];
+  const monthStart = new Date(year, month, 1);
 
   if (data.user.nextPayday) {
     const payday = new Date(data.user.nextPayday);
@@ -66,9 +68,43 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
     }
   }
 
+  // BNPL, current calendar month — same window safeToSpend.ts's own
+  // bnplMonthlyExpected uses (both derived from this same `today`), so
+  // billsSetAside below (which reads that exact figure) can never disagree
+  // with the sum of these individual line items. Handled as its own pass,
+  // BEFORE the generic per-item loop below, because a BNPL plan can have
+  // MULTIPLE occurrences due within one calendar month regardless of
+  // frequency (a weekly BNPL repayment isn't a single "next due date," the
+  // way an ordinary monthly bill is) — the generic loop's "one dated entry
+  // per monthly item, or one recurring bucket per weekly/fortnightly item"
+  // shape doesn't fit that, and raw `item.amount` would show the wrong,
+  // uncapped figure regardless. `monthWalkEnd` is 1ms before the first
+  // instant of the FOLLOWING month — an inclusive bound for the raw walk —
+  // and every returned occurrence is still re-checked against the exact
+  // year/month predicate below as a second, independent safeguard against
+  // ever pulling in a next-month occurrence.
+  const monthWalkEnd = new Date(new Date(year, month + 1, 1).getTime() - 1);
+  const bnplLinkedItemIds = new Set<string>();
+  for (const liability of data.liabilities) {
+    if (liability.type !== 'bnpl') continue;
+    const activeLinks = data.recurringItems.filter((r) => r.active && r.linkedLiabilityId === liability.id && r.type === 'expense');
+    if (activeLinks.length !== 1) continue; // none or ambiguous — show nothing, never double-count (see resolveBnplLinkedItems's doc comment in bnpl.ts)
+    const item = activeLinks[0];
+    bnplLinkedItemIds.add(item.id);
+    for (const occurrence of projectBnplOccurrences(item, liability, monthStart, monthWalkEnd)) {
+      if (occurrence.date.getFullYear() !== year || occurrence.date.getMonth() !== month) continue;
+      dated.push({
+        date: occurrence.date.toISOString(),
+        label: item.label,
+        amount: -(occurrence.amountCents / 100),
+        icon: item.icon ?? 'bag-handle-outline',
+      });
+    }
+  }
+
   const recurring: MoneyPlanRecurring[] = [];
   data.recurringItems
-    .filter((item) => item.active)
+    .filter((item) => item.active && !bnplLinkedItemIds.has(item.id))
     .forEach((item) => {
       if (item.frequency === 'weekly' || item.frequency === 'fortnightly') {
         recurring.push({
@@ -99,7 +135,6 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
   // Available Until Payday — but it's added here, not folded into
   // safeToSpend.remainingPool itself, so a one-off windfall never inflates
   // Lulu Score's read on ongoing, sustainable income (PRD ask, §5).
-  const monthStart = new Date(year, month, 1);
   const adHocIncomeThisMonth = computeAdHocIncome(data.transactions, monthStart, today);
   const available = Math.max(0, safeToSpend.remainingPool + adHocIncomeThisMonth);
 
@@ -115,7 +150,10 @@ export function computeMoneyPlan(data: AppData, today: Date = new Date()): Money
     monthLabel,
     dated,
     recurring,
-    billsSetAside: safeToSpend.fixedExpensesMonthly,
+    // Includes bnplMonthlyExpected — the exact same current-calendar-month
+    // figure the BNPL `dated` entries above were built from, so this total
+    // can never disagree with the sum of those line items.
+    billsSetAside: safeToSpend.fixedExpensesMonthly + safeToSpend.bnplMonthlyExpected,
     goalsSetAside: safeToSpend.goalContributionsMonthly,
     emergencySetAside: safeToSpend.savingsAllocationMonthly,
     available,

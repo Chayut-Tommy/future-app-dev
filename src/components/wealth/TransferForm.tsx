@@ -79,6 +79,11 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
   // has not been built — participating here at all is unsafe until that
   // work is separately approved and implemented.
   const nonCashAssets = data.assets.filter((a) => a.type !== 'cash' && a.type !== 'savings' && a.type !== 'everyday');
+  // BNPL is deliberately excluded as a Move Money destination for the MVP
+  // (approved product scope) — a narrow, explicit filter rather than the
+  // absence of one, so a future liability type doesn't silently inherit
+  // this exclusion by accident.
+  const transferableLiabilities = data.liabilities.filter((l) => l.type !== 'bnpl');
 
   const [fromId, setFromId] = useState<string | null>(cashAssets[0]?.id ?? null);
   const [toTarget, setToTarget] = useState<TransferTarget | null>(null);
@@ -207,7 +212,7 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
             </Text>
           </TouchableOpacity>
         ))}
-        {data.liabilities.map((l) => (
+        {transferableLiabilities.map((l) => (
           <TouchableOpacity
             key={l.id}
             style={[styles.chip, isSameTarget({ kind: 'liability', liabilityId: l.id }) ? styles.chipActive : null]}
@@ -221,7 +226,7 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
           </TouchableOpacity>
         ))}
       </View>
-      {nonCashAssets.length === 0 && data.liabilities.length === 0 ? (
+      {nonCashAssets.length === 0 && transferableLiabilities.length === 0 ? (
         <Text style={styles.empty}>Add an investment or a liability first to transfer to it.</Text>
       ) : null}
 

@@ -3,6 +3,7 @@ import { Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacit
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
+import type { BnplScheduleInput } from '../../state/AppStateContext';
 import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { DatePickerModal } from '../shared/DatePickerModal';
@@ -53,6 +54,7 @@ const LIABILITY_NAME_FIELD: Record<LiabilityType, { field: string; placeholder: 
   personal_loan: { field: 'Personal loan name', placeholder: 'e.g. Renovation loan' },
   credit_card: { field: 'Card name', placeholder: 'e.g. AMEX' },
   other: { field: 'Liability name', placeholder: 'e.g. Tax debt' },
+  bnpl: { field: 'Plan or purchase name', placeholder: 'e.g. New laptop' },
 };
 
 // Display name used in titles ("Add Car Loan" / "Update Car Loan") and the
@@ -65,6 +67,7 @@ export const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
   personal_loan: 'Personal Loan',
   credit_card: 'Card',
   other: 'Liability',
+  bnpl: 'Buy Now, Pay Later Plan',
 };
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
@@ -104,6 +107,7 @@ const LIABILITY_TYPES: { value: LiabilityType; label: string }[] = [
   { value: 'credit_card', label: 'Credit card' },
   { value: 'car_loan', label: 'Car loan' },
   { value: 'personal_loan', label: 'Personal loan' },
+  { value: 'bnpl', label: 'Buy Now, Pay Later' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -136,7 +140,15 @@ function formatBalance(value: number): string {
 // only for a `LiabilityTransitionResult` with `applied: false`; every
 // other failure in handleSave still falls through to the generic message.
 class LiabilityFailure extends Error {
-  constructor(public reason: 'target_not_found' | 'target_wrong_type' | 'duplicate_linked_repayment') {
+  constructor(
+    public reason:
+      | 'target_not_found'
+      | 'target_wrong_type'
+      | 'duplicate_linked_repayment'
+      | 'ambiguous_schedule'
+      | 'invalid_balance'
+      | 'incomplete_schedule'
+  ) {
     super(reason);
   }
 }
@@ -147,9 +159,19 @@ const GENERIC_SAVE_ERROR = 'Something went wrong saving this — nothing was los
 // several linked repayment records to update, so nothing is written and
 // the user is told exactly what to go check.
 const DUPLICATE_REPAYMENT_ERROR = 'Navilo found more than one repayment linked to this loan. Review the existing repayments before updating this schedule.';
+// BNPL — the safest narrow behaviour for a corrupted/legacy plan with more
+// than one active linked repayment: never guess which one, never confirm
+// or project against it, surface a recoverable state instead. Reachable
+// only from imported/legacy data — the normal add/edit form's own
+// duplicate guard (upsertLinkedRecurringItem) already prevents creating
+// this state.
+const BNPL_AMBIGUOUS_SCHEDULE_ERROR = 'Navilo found more than one repayment schedule linked to this plan. Check your repayment details before saving.';
 
 function messageForSaveFailure(err: unknown): string {
-  return err instanceof LiabilityFailure && err.reason === 'duplicate_linked_repayment' ? DUPLICATE_REPAYMENT_ERROR : GENERIC_SAVE_ERROR;
+  if (!(err instanceof LiabilityFailure)) return GENERIC_SAVE_ERROR;
+  if (err.reason === 'duplicate_linked_repayment') return DUPLICATE_REPAYMENT_ERROR;
+  if (err.reason === 'ambiguous_schedule') return BNPL_AMBIGUOUS_SCHEDULE_ERROR;
+  return GENERIC_SAVE_ERROR;
 }
 
 export type LinkedRepaymentLookup = { status: 'none' } | { status: 'one'; repayment: RecurringItem } | { status: 'ambiguous' };
@@ -227,6 +249,25 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   /** Pre-select a type when opening to add — e.g. tapping an empty "Property"
    * category on the Wealth Map lands straight on the Property type chip. */
   presetAssetType?: AssetType;
+  /** Correction round, 2026-08-10 — when true, the "Count this balance in
+   * available money" toggle seeds to true regardless of asset type
+   * (overriding Savings' own ordinarily-excluded default), for Select
+   * Balances' scoped "Add a money balance" journey specifically: a balance
+   * the user reaches this way is being added FOR that calculation, so it
+   * starts included — the user can still opt out before saving, exactly
+   * like any other value on this form. Every other AddWealthItemModal
+   * entry point omits this and keeps the existing resolveIncludeInMoney-
+   * Calculations-derived default unchanged. */
+  forcedIncludeInMoneyDefault?: boolean;
+  /** Correction round, 2026-08-10 review — restricts the initial category
+   * step (kind="asset", no presetAssetType) to Cash/Everyday/Savings only,
+   * for entry points where every other asset type would be meaningless —
+   * currently, AddIncomeModal's "Add a money balance" empty-destination
+   * route. Reuses the SAME ASSET_CARD_GROUPS list and chooseAssetCategory
+   * handler, just filtered — never a second category chooser. Has no effect
+   * when presetAssetType is set (that already skips the category step
+   * entirely) or for kind="liability". */
+  onlyLiquidCategories?: boolean;
   /** Same idea for liabilities — e.g. Debt Coach's "what kind of debt?"
    * chooser lands straight on the matching type chip. */
   presetLiabilityType?: LiabilityType;
@@ -304,6 +345,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   editAsset,
   editLiability,
   presetAssetType,
+  forcedIncludeInMoneyDefault,
+  onlyLiquidCategories,
   presetLiabilityType,
   liabilityFlowIntent,
   onSelectCreditCard,
@@ -328,6 +371,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     addMortgageWithProperty,
     addCarLoanWithVehicle,
     updateLinkedRepaymentOnly,
+    saveBnplPlan,
   } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   // Dismissal-lifecycle correction — `kind` shadows the `kindProp` prop with
@@ -516,6 +560,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // loan path via the atomic addCarLoanWithVehicle call, for the same
   // single-persist() reason.
   const isCarLoan = kind === 'liability' && liabilityType === 'car_loan';
+  // BNPL is deliberately NOT a SMART_LOAN_TYPES member (no asset link, no
+  // equity view, no "select or create for repayment" wizard) — a single-
+  // step create/edit form, closer in shape to Personal Loan/Other, but with
+  // its own optional-schedule contract (reusing the identical repayment
+  // fields/validation smart loans already use) and its own required-
+  // positive-balance-for-new-plans rule.
+  const isBnpl = kind === 'liability' && liabilityType === 'bnpl';
+  const parsedBnplBalance = isBnpl ? parseMoneyInputAllowZero(value) : null;
   const propertyAssets = data.assets.filter((a) => a.type === 'property');
   const vehicleAssets = data.assets.filter((a) => a.type === 'car');
   const usesRepaymentDayOfMonth = repaymentFrequency === 'monthly';
@@ -533,7 +585,13 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     const repaymentDayValue = parseInt(repaymentDayOfMonth, 10);
     return !isNaN(repaymentValue) && repaymentValue > 0 && (usesRepaymentDayOfMonth ? repaymentDayValue >= 1 && repaymentDayValue <= 31 : !!repaymentNextDueDate);
   })();
-  const repaymentScheduleIncomplete = isNewLoan && repaymentScheduleTouched && !repaymentScheduleComplete;
+  // BNPL reuses this same all-or-nothing contract, but — unlike smart loans
+  // — the check applies on EDIT too (a smart loan never supports removing
+  // an existing schedule via this form, so touching it while editing
+  // already can't reach an incomplete state there; BNPL's edit form is
+  // reused for adding/editing/clearing a schedule on an existing plan, so
+  // a partially-cleared schedule must still block Save).
+  const repaymentScheduleIncomplete = (isNewLoan || isBnpl) && repaymentScheduleTouched && !repaymentScheduleComplete;
   const resolvedIntent = liabilityFlowIntent ?? 'create';
   // The exact liability this session is updating (via the repayment
   // selector), if any — distinct from editLiability. Its own existing
@@ -549,6 +607,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // ForRepayment prefilled at selection time.
   const linkedRepaymentLookup = targetLiability ? findLinkedRepayment(data.recurringItems, targetLiability.id) : null;
   const hasAmbiguousLinkedRepayment = linkedRepaymentLookup?.status === 'ambiguous';
+  // BNPL edits directly via editLiability (never via the smart-loan
+  // targetLiability wizard above), so it needs its own ambiguity check keyed
+  // the same way — the safest narrow behaviour for corrupted/legacy data
+  // with more than one active linked item: suppress the schedule form,
+  // block Save, and surface a recoverable "check repayment details" state,
+  // never silently pick one or project against the full outstanding balance
+  // twice (see resolveBnplLinkedItems's doc comment in bnpl.ts).
+  const editLiabilityRepaymentLookup = isBnpl && editLiability ? findLinkedRepayment(data.recurringItems, editLiability.id) : null;
+  const hasAmbiguousBnplRepayment = editLiabilityRepaymentLookup?.status === 'ambiguous';
   // Correction pass (existing linked-schedule safety) — no atomic "detach
   // this bill, keep the liability" transition exists yet (upsertLinkedRecurringItem
   // in AppStateContext.tsx is an unconditional no-op when handed no
@@ -759,7 +826,37 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setSelectedVehicleId(editLiability.linkedVehicleAssetId ?? null);
       setNewVehicleValue('');
       setNewVehicleName('');
-      initialSnapshot.current = { label: editLiability.label, value: String(editLiability.currentBalance), interestRate: '', provider: '' };
+      // BNPL — unlike the smart-loan types, whose repayment editing only
+      // happens via the separate "select or create for repayment" wizard
+      // (targetLiability-based, not editLiability-based), BNPL's schedule
+      // is edited directly here, so it must be prefilled from whatever is
+      // currently linked (mirrors chooseExistingLiabilityForRepayment's own
+      // prefill logic exactly — same lookup, same prefill helper).
+      const editLiabilityProvider = editLiability.type === 'bnpl' ? editLiability.provider ?? '' : '';
+      setProvider(editLiabilityProvider);
+      if (editLiability.type === 'bnpl') {
+        const lookup = findLinkedRepayment(data.recurringItems, editLiability.id);
+        if (lookup.status === 'one') {
+          const prefill = prefillValuesFromRepayment(lookup.repayment);
+          setRepaymentAmount(prefill.amount);
+          setRepaymentFrequency(prefill.frequency);
+          setRepaymentDayOfMonth(prefill.dayOfMonth);
+          setRepaymentNextDueDate(prefill.nextDueDate);
+          setRepaymentFrequencyTouched(true);
+        } else {
+          setRepaymentAmount('');
+          setRepaymentFrequency('monthly');
+          setRepaymentDayOfMonth('');
+          setRepaymentNextDueDate(null);
+          setRepaymentFrequencyTouched(false);
+        }
+      }
+      initialSnapshot.current = {
+        label: editLiability.label,
+        value: String(editLiability.currentBalance),
+        interestRate: '',
+        provider: editLiabilityProvider,
+      };
       setShowLiabilitySelector(false);
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
@@ -767,7 +864,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setInterestRate('');
       setProvider('');
       setAssetType(presetAssetType ?? 'cash');
-      setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: presetAssetType ?? 'cash', includeInMoneyCalculations: undefined }));
+      setIncludeInMoney(
+        forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type: presetAssetType ?? 'cash', includeInMoneyCalculations: undefined })
+      );
       const resolvedType = presetLiabilityType ?? 'personal_loan';
       setLiabilityType(resolvedType);
       setRepaymentAmount('');
@@ -830,7 +929,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
 
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
-    setIncludeInMoney(resolveIncludeInMoneyCalculations({ type, includeInMoneyCalculations: undefined }));
+    setIncludeInMoney(forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type, includeInMoneyCalculations: undefined }));
     setFormStep('details');
   }
 
@@ -843,7 +942,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const requiresNewVehicleName = isCarLoan && !loanDetailsLocked && vehicleLinkMode === 'new';
   const canSave =
     label.trim().length > 0 &&
-    (usesStrictLiquidParser ? !!parsedLiquidValue?.valid : !isNaN(parseFloat(value))) &&
+    (usesStrictLiquidParser
+      ? !!parsedLiquidValue?.valid
+      : isBnpl
+      ? // Strict shared money parser (never parseFloat) — allows a genuine
+        // $0 balance only when EDITING an already-existing plan (a manual
+        // correction toward payoff); a brand-new plan requires a real,
+        // strictly positive outstanding balance (approved product scope §1).
+        !!parsedBnplBalance?.valid && (!!editLiability || parsedBnplBalance.amount > 0)
+      : !isNaN(parseFloat(value))) &&
     (!requiresNewPropertyName || newPropertyName.trim().length > 0) &&
     (!requiresNewVehicleName || newVehicleName.trim().length > 0) &&
     // VID-001 correction — an ambiguous linked repayment must block Save
@@ -857,6 +964,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // its linked recurring item while ambiguous, regardless of what (if
     // anything) the user types.
     !hasAmbiguousLinkedRepayment &&
+    !hasAmbiguousBnplRepayment &&
     // Correction pass (repayment-schedule contract) — a PARTIALLY entered
     // schedule (e.g. an amount with no frequency/date yet) must block Save
     // with inline validation rather than either silently discarding it
@@ -1027,6 +1135,38 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             provider: providerPayload,
           });
         }
+      } else if (kind === 'liability' && isBnpl) {
+        // BNPL — a single atomic transition, never the smart-loan
+        // target/wizard machinery above (no asset link, no equity view).
+        // canSave has already verified parsedBnplBalance.valid (and, for a
+        // new plan, .amount > 0) — safe to use directly here.
+        if (!parsedBnplBalance?.valid) return; // canSave already guarantees this; defensive only.
+        const bnplBalance = parsedBnplBalance.amount;
+        const bnplProviderPayload = provider.trim() || undefined;
+        const schedule: BnplScheduleInput | 'remove' | undefined = repaymentScheduleComplete
+          ? {
+              amount: parseFloat(repaymentAmount),
+              frequency: repaymentFrequency,
+              nextDueDate: usesRepaymentDayOfMonth ? nextOccurrenceFromDay(parseInt(repaymentDayOfMonth, 10)) : (repaymentNextDueDate as string),
+            }
+          : editLiability
+          ? 'remove'
+          : undefined;
+        const result = editLiability
+          ? saveBnplPlan({
+              mode: 'update',
+              liabilityId: editLiability.id,
+              liability: { label: label.trim(), provider: bnplProviderPayload, currentBalance: bnplBalance },
+              schedule: schedule as 'unchanged' | 'remove' | BnplScheduleInput,
+              newRecurringItemId: generateId(),
+            })
+          : saveBnplPlan({
+              mode: 'create',
+              liability: { label: label.trim(), provider: bnplProviderPayload, currentBalance: bnplBalance },
+              schedule: schedule as BnplScheduleInput | undefined,
+              ids: { liabilityId: generateId(), recurringItemId: generateId() },
+            });
+        if (!result.applied) throw new LiabilityFailure(result.reason);
       } else if (kind === 'liability') {
         const liabRateValue = parseFloat(liabilityInterestRate);
         const liabInterestRatePayload = !isNaN(liabRateValue) && liabRateValue >= 0 ? liabRateValue / 100 : undefined;
@@ -1206,6 +1346,24 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       ]);
       return;
     }
+    if (editLiability?.type === 'bnpl') {
+      Alert.alert(
+        'Remove this BNPL plan from Navilo?',
+        'Future repayment estimates will stop. This will not change your account with the provider.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => {
+              deleteLiability(editLiability.id);
+              onClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
     if (editAsset) deleteAsset(editAsset.id);
     if (editLiability) deleteLiability(editLiability.id);
     onClose();
@@ -1318,7 +1476,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
       >
         <View style={styles.categoryGrid}>
-          {ASSET_CARD_GROUPS.map((g) => (
+          {(onlyLiquidCategories ? ASSET_CARD_GROUPS.filter((g) => LIQUID_BALANCE_TYPES.includes(g.value)) : ASSET_CARD_GROUPS).map((g) => (
             <TouchableOpacity key={g.value} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseAssetCategory(g.value)}>
               <Text style={styles.categoryCardEmoji}>{g.emoji}</Text>
               <Text style={styles.categoryCardLabel}>{g.label}</Text>
@@ -1489,7 +1647,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                   }
                   if (kind === 'asset') {
                     setAssetType(t.value as AssetType);
-                    setIncludeInMoney(resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined }));
+                    setIncludeInMoney(
+                      forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined })
+                    );
                     // `provider` correction — only ever meaningful for
                     // 'everyday'; switching to any other type (or back to
                     // 'everyday' from one) must never retain a stale value
@@ -1547,6 +1707,27 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                 value={provider}
                 onChangeText={setProvider}
               />
+            </>
+          ) : null}
+          {isBnpl ? (
+            <>
+              <Text style={styles.label}>Provider (optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. Afterpay"
+                placeholderTextColor={colors.textMuted}
+                value={provider}
+                onChangeText={setProvider}
+              />
+              <View style={styles.helperBox}>
+                <Text style={styles.helperText}>Track what you still owe and what's due next.</Text>
+                <Text style={[styles.helperText, { marginTop: spacing.xs }]}>
+                  {brand.name} will estimate future repayments from the details you enter. Check your provider if the amounts or dates change.
+                </Text>
+                <Text style={[styles.helperText, { marginTop: spacing.xs }]}>
+                  Do not enter account passwords, card details or banking login information.
+                </Text>
+              </View>
             </>
           ) : null}
           <Text style={styles.label}>
@@ -1753,8 +1934,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           ) : null}
         </>
       ) : null}
-      {isNewLoan ? (
-        hasAmbiguousLinkedRepayment ? (
+      {isNewLoan || isBnpl ? (
+        hasAmbiguousLinkedRepayment || hasAmbiguousBnplRepayment ? (
           // VID-001 correction — more than one recurring item already links
           // to this liability (an already-anomalous state). Never guess
           // which one to show or let this look like an ordinary blank

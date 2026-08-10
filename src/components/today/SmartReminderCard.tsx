@@ -7,7 +7,10 @@ import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { computeTopReminder } from '../../lib/calculations/reminders';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
+import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { moneyAmountToCents } from '../../lib/calculations/money';
+import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
+import { IncomeDestinationPicker } from '../shared/IncomeDestinationPicker';
 
 // Financial-disclosure formatter (regression-protection review, B2.0B
 // recurring-money precision correction §6) — deliberately NOT the app-wide
@@ -44,11 +47,32 @@ function formatDisclosureAmount(cents: number): string {
  * (regression-protection review, B2.0B §5).
  */
 export function SmartReminderCard() {
-  const { data, confirmRecurringOccurrence } = useAppState();
+  const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography } = useTheme();
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [awaitingSource, setAwaitingSource] = useState(false);
+  // Correction pass, §2 — BNPL confirmation's Everyday Account choice needs
+  // a second step (which specific account), unlike Cash/Credit card which
+  // are single buttons. Scoped to bnpl_repayment_due only: an ordinary
+  // bill_overdue reminder keeps its existing cash/credit-card-only choice
+  // unchanged (out of this pass's authorised scope).
+  const [awaitingEverydayAccount, setAwaitingEverydayAccount] = useState(false);
+  // Correction round, 2026-08-10 — salary confirmation must never silently
+  // credit Cash: "Yes, it arrived" now opens the shared destination
+  // picker (resolveEligibleIncomeDestinations/IncomeDestinationPicker),
+  // the same one AddIncomeModal's mid-cycle reconciliation step uses,
+  // instead of committing an income transaction immediately.
+  const [awaitingIncomeDestination, setAwaitingIncomeDestination] = useState(false);
+  // Correction round, 2026-08-10 review — this destination picker's own
+  // "Add a money balance" previously navigated away to the whole Wealth
+  // tab (navigation.navigate('Wealth')), which lost the pending salary
+  // confirmation entirely and never even opened a create form directly. An
+  // overlay — the same pattern AddIncomeModal's own equivalent empty-state
+  // route already uses — stays on Today, preserves awaitingIncomeDestination
+  // untouched, and reuses the real asset-creation form scoped to Cash/
+  // Everyday/Savings via onlyLiquidCategories (never a duplicate form).
+  const [addBalanceVisible, setAddBalanceVisible] = useState(false);
   const [markPaidCardVisible, setMarkPaidCardVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -65,7 +89,17 @@ export function SmartReminderCard() {
   useEffect(() => {
     setActionError(null);
     setIsSubmitting(false);
+    setAwaitingEverydayAccount(false);
+    setAwaitingIncomeDestination(false);
+    setAddBalanceVisible(false);
   }, [reminder?.id]);
+
+  // Correction round, 2026-08-10 — the same shared eligible-destination
+  // resolver AddIncomeModal's mid-cycle step now uses; recomputed live off
+  // `data.assets` so a balance added elsewhere while this card is showing
+  // (e.g. via the destination picker's own "Add a money balance" route)
+  // appears the moment the user returns.
+  const eligibleIncomeDestinations = useMemo(() => resolveEligibleIncomeDestinations(data.assets), [data.assets]);
 
   const styles = useMemo(
     () =>
@@ -105,6 +139,9 @@ export function SmartReminderCard() {
     if (!reminder) return;
     setDismissedIds((prev) => new Set(prev).add(reminder.id));
     setAwaitingSource(false);
+    setAwaitingEverydayAccount(false);
+    setAwaitingIncomeDestination(false);
+    setAddBalanceVisible(false);
     setActionError(null);
   }
 
@@ -118,7 +155,18 @@ export function SmartReminderCard() {
   // fault to diagnose in detail (regression-protection review, B2.0B
   // correction §4).
   function recoverableErrorMessage(
-    reason: 'not_found' | 'stale' | 'invalid_date' | 'invalid_amount' | 'invalid_input' | 'invalid_source' | 'balance_target_missing'
+    reason:
+      | 'not_found'
+      | 'stale'
+      | 'invalid_date'
+      | 'invalid_amount'
+      | 'invalid_input'
+      | 'invalid_source'
+      | 'balance_target_missing'
+      | 'missing_liability'
+      | 'ambiguous_schedule'
+      | 'already_confirmed'
+      | 'insufficient_source_balance'
   ): string {
     switch (reason) {
       case 'invalid_amount':
@@ -126,14 +174,20 @@ export function SmartReminderCard() {
       case 'invalid_source':
       case 'balance_target_missing':
         return "We couldn't update that yet. Check the payment account and try again.";
+      case 'insufficient_source_balance':
+        return "This account doesn't have enough recorded balance. Choose another source or update its balance.";
+      case 'missing_liability':
+      case 'ambiguous_schedule':
+        return 'Check your BNPL plan’s repayment details in Wealth, then try again.';
       case 'invalid_date':
       case 'invalid_input':
         return "We couldn't update that yet. Please try again.";
       case 'not_found':
       case 'stale':
-        // Unreachable here — both are handled via dismiss() below before
-        // this is ever called. Included so the switch stays exhaustive
-        // over the full reason union rather than assuming a subset.
+      case 'already_confirmed':
+        // Unreachable here — handled via dismiss() below before this is
+        // ever called. Included so the switch stays exhaustive over the
+        // full reason union rather than assuming a subset.
         return "We couldn't update that yet. Please try again.";
     }
   }
@@ -181,15 +235,90 @@ export function SmartReminderCard() {
     setActionError(recoverableErrorMessage(transition.reason));
   }
 
+  // BNPL — mirrors runConfirmation's own contract exactly (same
+  // isSubmitting discipline, same dismiss-on-applied/stale/not_found
+  // shape), routed through the atomic confirmBnplRepayment transition
+  // instead, which additionally reduces the linked liability and can
+  // reject with 'insufficient_source_balance' (never a partial/silently
+  // clamped application — see confirmBnplRepaymentTransition's own doc
+  // comment).
+  function runBnplConfirmation(paymentSource: 'cash' | 'credit_card' | 'everyday', targetAssetId?: string) {
+    if (!reminder || !reminder.recurringItemId || !reminder.liabilityId) return;
+    setActionError(null);
+    setIsSubmitting(true);
+    const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
+    const { transition } = confirmBnplRepayment({
+      recurringItemId: reminder.recurringItemId,
+      liabilityId: reminder.liabilityId,
+      expectedNextDueDate: item?.nextDueDate ?? '',
+      paymentSource,
+      targetAssetId,
+    });
+
+    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found' || transition.reason === 'already_confirmed') {
+      dismiss();
+      return;
+    }
+    setIsSubmitting(false);
+    setActionError(recoverableErrorMessage(transition.reason));
+  }
+
+  // Correction round, 2026-08-10 — "Yes, it arrived" no longer commits
+  // anything itself; it only opens the shared destination picker. Nothing
+  // is mutated until the user explicitly taps a specific balance below.
   function confirmSalary() {
-    runConfirmation(undefined);
+    setAwaitingIncomeDestination(true);
+  }
+
+  // The actual income commit, once a real destination is chosen — mirrors
+  // runConfirmation's own isSubmitting/dismiss/error contract exactly, but
+  // is deliberately a separate function rather than an overload: income
+  // never uses `paymentSource` (see confirmRecurringOccurrenceTransition's
+  // own income/expense split), so this passes `targetAssetId` instead,
+  // never both.
+  function confirmSalaryToDestination(targetAssetId: string) {
+    if (!reminder || !reminder.recurringItemId) return;
+    setActionError(null);
+    setIsSubmitting(true);
+    const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
+    const { transition } = confirmRecurringOccurrence({
+      recurringItemId: reminder.recurringItemId,
+      expectedNextDueDate: item?.nextDueDate ?? '',
+      targetAssetId,
+    });
+
+    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found') {
+      dismiss();
+      return;
+    }
+    setIsSubmitting(false);
+    setActionError(recoverableErrorMessage(transition.reason));
   }
 
   function confirmBillPaid(source: 'cash' | 'credit_card') {
+    if (reminder?.kind === 'bnpl_repayment_due') {
+      runBnplConfirmation(source);
+      return;
+    }
     runConfirmation(source);
   }
 
-  const icon = reminder.kind === 'salary_check' ? 'cash-outline' : reminder.kind === 'card_due_soon' ? 'card-outline' : 'calendar-outline';
+  // Correction pass, §2 — the specific-account half of the Everyday Account
+  // choice, mirrors confirmBillPaid's own dispatch shape but is only ever
+  // reachable for bnpl_repayment_due (see awaitingEverydayAccount's own
+  // comment for why this isn't offered to ordinary bills in this pass).
+  function confirmBnplEveryday(accountId: string) {
+    runBnplConfirmation('everyday', accountId);
+  }
+
+  const icon =
+    reminder.kind === 'salary_check'
+      ? 'cash-outline'
+      : reminder.kind === 'card_due_soon'
+      ? 'card-outline'
+      : reminder.kind === 'bnpl_repayment_due'
+      ? 'bag-handle-outline'
+      : 'calendar-outline';
   const reminderCard = reminder.creditCardId ? data.creditCards.find((c) => c.id === reminder.creditCardId) ?? null : null;
 
   return (
@@ -202,7 +331,7 @@ export function SmartReminderCard() {
           <Text style={styles.title}>{reminder.title}</Text>
           <Text style={styles.body}>{reminder.body}</Text>
 
-          {reminder.kind === 'salary_check' ? (
+          {reminder.kind === 'salary_check' && !awaitingIncomeDestination ? (
             <>
               {/* Coaching-not-shaming transparency: what pressing the button
                   actually does, before the user presses it — never implies
@@ -212,10 +341,13 @@ export function SmartReminderCard() {
                   no numberOfLines, so it wraps cleanly on narrow screens.
                   Suppressed (never a rounded/fabricated figure) when the
                   amount doesn't pass moneyAmountToCents — see
-                  disclosedAmount above. */}
+                  disclosedAmount above. Correction round, 2026-08-10 — no
+                  longer names Cash specifically: the next step always asks
+                  which balance, and this copy must never imply that choice
+                  is already decided. */}
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as income and add it to your Cash balance in Navilo. This updates Navilo only—it does not move money in your bank.`}
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as income in Navilo — you'll choose which balance it's added to next. This updates Navilo only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <View style={styles.actionRow}>
@@ -233,7 +365,21 @@ export function SmartReminderCard() {
             </>
           ) : null}
 
-          {reminder.kind === 'bill_overdue' && !awaitingSource ? (
+          {reminder.kind === 'salary_check' && awaitingIncomeDestination ? (
+            <>
+              <IncomeDestinationPicker
+                destinations={eligibleIncomeDestinations}
+                onSelect={confirmSalaryToDestination}
+                onBack={() => setAwaitingIncomeDestination(false)}
+                disabled={isSubmitting}
+                dense
+                onAddBalance={() => setAddBalanceVisible(true)}
+              />
+              <AddWealthItemModal visible={addBalanceVisible} kind="asset" onClose={() => setAddBalanceVisible(false)} onlyLiquidCategories />
+            </>
+          ) : null}
+
+          {(reminder.kind === 'bill_overdue' || reminder.kind === 'bnpl_repayment_due') && !awaitingSource ? (
             <View style={styles.actionRow}>
               <TouchableOpacity style={styles.actionButton} onPress={() => setAwaitingSource(true)}>
                 <Text style={styles.actionText}>Yes, I paid it</Text>
@@ -244,16 +390,21 @@ export function SmartReminderCard() {
             </View>
           ) : null}
 
-          {reminder.kind === 'bill_overdue' && awaitingSource ? (
+          {(reminder.kind === 'bill_overdue' || reminder.kind === 'bnpl_repayment_due') && awaitingSource && !awaitingEverydayAccount ? (
             <>
               {/* Same transparency treatment as the income branch above —
                   shown before the payment-source choice, since that choice
                   is what determines whether Cash or the credit card is
                   updated (PRD ask, post-device-testing correction). Same
-                  moneyAmountToCents guard as the income branch. */}
+                  moneyAmountToCents guard as the income branch. BNPL gets
+                  its own wording — a second balance (what's still owed on
+                  the plan) changes too, which the ordinary-bill copy never
+                  mentions. */}
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your Cash or credit-card balance in Navilo based on your choice. This updates Navilo only—it does not move money in your bank.`}
+                  {reminder.kind === 'bnpl_repayment_due'
+                    ? `Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Navilo only—it does not move money in your bank.`
+                    : `Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your Cash or credit-card balance in Navilo based on your choice. This updates Navilo only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <View style={styles.actionRow}>
@@ -264,6 +415,21 @@ export function SmartReminderCard() {
                 >
                   <Text style={styles.actionText}>From cash</Text>
                 </TouchableOpacity>
+                {/* Correction pass, §2 — Everyday Accounts were previously
+                    entirely unreachable from BNPL confirmation (report only
+                    described a cash/credit-card choice); this reuses the
+                    same routed-spending source contract the transaction
+                    engine already supports. Scoped to bnpl_repayment_due
+                    only — see awaitingEverydayAccount's own comment. */}
+                {reminder.kind === 'bnpl_repayment_due' && data.assets.some((a) => a.type === 'everyday') ? (
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
+                    onPress={() => setAwaitingEverydayAccount(true)}
+                    disabled={isSubmitting}
+                  >
+                    <Text style={[styles.actionText, styles.actionTextSecondary]}>From everyday account</Text>
+                  </TouchableOpacity>
+                ) : null}
                 {data.creditCards.length > 0 ? (
                   <TouchableOpacity
                     style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
@@ -273,6 +439,39 @@ export function SmartReminderCard() {
                     <Text style={[styles.actionText, styles.actionTextSecondary]}>From credit card</Text>
                   </TouchableOpacity>
                 ) : null}
+              </View>
+            </>
+          ) : null}
+
+          {reminder.kind === 'bnpl_repayment_due' && awaitingSource && awaitingEverydayAccount ? (
+            <>
+              {disclosedAmount.valid ? (
+                <Text style={styles.body}>
+                  {`Choose which account this ${formatDisclosureAmount(disclosedAmount.cents)} repayment comes from. Only that account's balance will change.`}
+                </Text>
+              ) : null}
+              <View style={styles.actionRow}>
+                {data.assets
+                  .filter((a) => a.type === 'everyday')
+                  .map((a) => (
+                    <TouchableOpacity
+                      key={a.id}
+                      style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
+                      onPress={() => confirmBnplEveryday(a.id)}
+                      disabled={isSubmitting}
+                    >
+                      <Text style={styles.actionText}>
+                        {a.label} (${a.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonSecondary]}
+                  onPress={() => setAwaitingEverydayAccount(false)}
+                  disabled={isSubmitting}
+                >
+                  <Text style={[styles.actionText, styles.actionTextSecondary]}>Back</Text>
+                </TouchableOpacity>
               </View>
             </>
           ) : null}

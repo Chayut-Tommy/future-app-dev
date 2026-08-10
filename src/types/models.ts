@@ -23,7 +23,7 @@ export type LifeGoalType =
 // resolveIncludeInMoneyCalculations, per the explicit product decision that
 // an everyday spending balance is not necessarily savings.
 export type AssetType = 'cash' | 'savings' | 'everyday' | 'etf' | 'shares' | 'super' | 'crypto' | 'property' | 'business' | 'car' | 'furniture' | 'collectibles' | 'other';
-export type LiabilityType = 'mortgage' | 'credit_card' | 'car_loan' | 'personal_loan' | 'other';
+export type LiabilityType = 'mortgage' | 'credit_card' | 'car_loan' | 'personal_loan' | 'other' | 'bnpl';
 export type PayFrequency = 'weekly' | 'fortnightly' | 'monthly' | 'irregular';
 export type ThemePreference = 'light' | 'dark' | 'system';
 export type MoneyGoal = 'save_more' | 'buy_home' | 'build_investments' | 'pay_debt' | 'understand_spending' | 'build_wealth';
@@ -185,6 +185,20 @@ export interface Transaction {
    * paymentSource/creditCardId/liabilityId instead — fully backward
    * compatible. */
   targetAssetId?: string;
+  /** Set only by a confirmed BNPL repayment (`confirmBnplRepaymentTransition`
+   * in AppStateContext.tsx) — a durable, ledger-based identity for exactly
+   * which scheduled occurrence this transaction pays off, independent of
+   * the linked RecurringItem's own mutable `nextDueDate` cursor. Format:
+   * `${recurringItemId}:${occurrenceDueDateISO}`. Existing recurring
+   * confirmation (bills/income) already guards against re-confirming the
+   * same occurrence via `nextDueDate !== expectedNextDueDate` staleness
+   * alone — that guard is unchanged and untouched. BNPL's engine-level
+   * duplicate-confirmation protection additionally checks this field
+   * directly against the transaction ledger before committing, so a retry
+   * that somehow reaches the transition with a schedule cursor that still
+   * looks "not yet confirmed" (e.g. after a restart that lost only part of
+   * a write) is still caught. Absent on every other transaction. */
+  recurringOccurrenceKey?: string;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
@@ -262,6 +276,12 @@ export interface Liability {
    * instead of treating the loan as plain unsecured debt. Only meaningful
    * for type === 'car_loan'; references an Asset with type === 'car'. */
   linkedVehicleAssetId?: string;
+  /** Only meaningful for `type === 'bnpl'` — the free-text provider name
+   * entered on the Buy Now, Pay Later form (e.g. "Afterpay"). Optional,
+   * unvalidated, purely descriptive — mirrors `Asset.provider`'s existing
+   * precedent for Everyday Accounts. Never collect account passwords, card
+   * details, or banking login information here or anywhere else. */
+  provider?: string;
 }
 
 export interface CreditCard {

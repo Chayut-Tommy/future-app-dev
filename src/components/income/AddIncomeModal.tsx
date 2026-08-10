@@ -7,11 +7,14 @@ import { useSavingsAllocationPrompt } from '../../state/SavingsAllocationPromptC
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { DatePickerModal } from '../shared/DatePickerModal';
+import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { PayFrequency, RecurringItem } from '../../types/models';
 import { toMonthlyAmount } from '../../lib/calculations/incomeEngine';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { precedingOccurrence, isPrecedingOccurrenceEligibleForPrompt } from '../../lib/calculations/recurringSchedule';
+import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
+import { IncomeDestinationPicker } from '../shared/IncomeDestinationPicker';
 import { generateId } from '../../lib/id';
 import { categoryEmoji } from '../../lib/categoryEmoji';
 import { brand } from '../../lib/brand';
@@ -138,6 +141,19 @@ export const AddIncomeModal = forwardRef<
   const [midCycleDate, setMidCycleDate] = useState<string | null>(null);
   const [midCycleRecurringItemId, setMidCycleRecurringItemId] = useState<string | null>(null);
   const [awaitingDestination, setAwaitingDestination] = useState(false);
+  // Correction round, 2026-08-10 review — a genuine standalone
+  // AddWealthItemModal overlay, never itself embedded, reusing the real
+  // asset-creation form/persistence unconditionally. Previously this opened
+  // AddWealthItemModal with no category restriction, so the FULL asset
+  // chooser (including investment/property/retirement/etc., none of which
+  // can ever receive income) was reachable from an income-destination
+  // prompt — a real defect. onlyLiquidCategories restricts the category
+  // step to the same Cash/Everyday/Savings set as the scoped
+  // "Add a money balance" AddAnythingSheet journey (requirement 5), without
+  // importing AddAnythingSheet itself — AddAnythingSheet already imports
+  // AddIncomeModal (to embed the income-source destination), so importing
+  // it back here would create a circular module dependency.
+  const [addBalanceVisible, setAddBalanceVisible] = useState(false);
   // Synchronous submission guard (B2.4: "so repeated taps cannot create
   // duplicate transactions or balance effects") — every one of the four
   // option handlers checks and sets this before doing anything else, the
@@ -226,20 +242,16 @@ export const AddIncomeModal = forwardRef<
     onTitleChange?.(formStep === 'category' ? 'Add income source' : formStep === 'midCycle' ? 'One more thing' : isEditing ? 'Edit income source' : 'Add income source');
   }, [formStep, isEditing, onTitleChange]);
 
-  // B2.4 — existing Cash/Savings assets a backfilled "add to balance"
-  // occurrence could credit. `id: undefined` represents Cash specifically —
-  // it maps directly to targetAssetId being omitted, which
-  // computeBalanceEffect already resolves to the default Cash-asset lookup
-  // (ensureCashAsset auto-creates it on demand, exactly as every other
-  // income transaction already relies on), so Cash is always offered even
-  // on a brand-new profile with no assets yet. Savings-type assets are
-  // listed by their real id/label; no other asset type is offered as a
-  // destination (B2.4: "eligible Cash, Savings or other supported
-  // destination account" — scoped to these two for this pass).
-  const eligibleDestinations = useMemo(
-    () => [{ id: undefined as string | undefined, label: 'Cash' }, ...data.assets.filter((a) => a.type === 'savings').map((a) => ({ id: a.id, label: a.label }))],
-    [data.assets]
-  );
+  // Correction round, 2026-08-10 — the shared eligible-income-destination
+  // selector (incomeDestinations.ts), the same one SmartReminderCard's
+  // salary-due confirmation now uses. Replaces the previous Cash(implicit)+
+  // Savings-only list: every existing Cash, Everyday and Savings asset is
+  // offered individually by its real id, with balances shown and same-name
+  // accounts disambiguated. No phantom "Cash" entry — an empty result
+  // (brand-new profile, zero eligible balances) is a real, handled state
+  // (see the empty-state branch in the destination sub-step below), never
+  // silently backed by an auto-created Cash asset.
+  const eligibleDestinations = useMemo(() => resolveEligibleIncomeDestinations(data.assets), [data.assets]);
 
   // Strict money-input contract (regression-protection review, B2.0B
   // recurring-money precision correction §2/§3) — replaces the old
@@ -402,7 +414,7 @@ export const AddIncomeModal = forwardRef<
     else onClose();
   }
 
-  function chooseMidCycleAddToBalance(targetAssetId: string | undefined) {
+  function chooseMidCycleAddToBalance(targetAssetId: string) {
     if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
     setMidCycleSubmitting(true);
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'add_to_balance', targetAssetId };
@@ -481,18 +493,6 @@ export const AddIncomeModal = forwardRef<
         },
         midCycleOptionDisabled: { opacity: 0.5 },
         midCycleOptionText: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
-        destinationLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: spacing.xs, marginBottom: spacing.sm },
-        destinationRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: colors.accentSoft,
-          borderRadius: radius.control,
-          paddingVertical: 12,
-          paddingHorizontal: spacing.md,
-          marginBottom: spacing.sm,
-        },
-        destinationRowText: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
         dateButton: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -549,28 +549,15 @@ export const AddIncomeModal = forwardRef<
             </TouchableOpacity>
           </>
         ) : (
-          <>
-            <Text style={styles.destinationLabel}>Add it to which balance?</Text>
-            {eligibleDestinations.map((dest) => (
-              <TouchableOpacity
-                key={dest.id ?? 'cash'}
-                style={styles.destinationRow}
-                onPress={() => chooseMidCycleAddToBalance(dest.id)}
-                disabled={midCycleSubmitting}
-              >
-                <Text style={styles.destinationRowText}>{dest.label}</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.accentStrong} />
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={[styles.midCycleOption, midCycleSubmitting ? styles.midCycleOptionDisabled : null]}
-              onPress={() => setAwaitingDestination(false)}
-              disabled={midCycleSubmitting}
-            >
-              <Text style={styles.midCycleOptionText}>Back</Text>
-            </TouchableOpacity>
-          </>
+          <IncomeDestinationPicker
+            destinations={eligibleDestinations}
+            onSelect={chooseMidCycleAddToBalance}
+            onBack={() => setAwaitingDestination(false)}
+            disabled={midCycleSubmitting}
+            onAddBalance={() => setAddBalanceVisible(true)}
+          />
         )}
+        <AddWealthItemModal visible={addBalanceVisible} kind="asset" onClose={() => setAddBalanceVisible(false)} onlyLiquidCategories />
       </>
     );
 

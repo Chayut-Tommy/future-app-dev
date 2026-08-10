@@ -170,8 +170,19 @@ console.log('\n=== 2. PaymentSource call-site audit (Structural, tied to shipped
     /function runConfirmation\(paymentSource\?: 'cash' \| 'credit_card'\)/.test(SMART_REMINDER_SRC)
   );
   assert(
-    "2i. AddIncomeModal.tsx's mid-cycle backfill target picker offers only Cash (implicit) and Savings accounts — never offers an Everyday Account as an income target, so targetAssetId on an income transaction cannot currently point at an 'everyday' asset from any UI path",
-    /a\.type === 'savings'/.test(ADD_INCOME_SRC) && !/a\.type === 'everyday'/.test(ADD_INCOME_SRC)
+    // Correction round, 2026-08-10 — deliberately reversed. The prior
+    // assertion locked in a real, reported gap (setup reconciliation could
+    // not offer an Everyday Account as an income destination at all). The
+    // fix reuses the shared resolveEligibleIncomeDestinations resolver
+    // (incomeDestinations.ts) — the same one SmartReminderCard's salary
+    // confirmation now also uses — rather than AddIncomeModal maintaining
+    // its own narrower Cash/Savings-only list. This is a strengthened
+    // assertion, not a weakened one: it now requires the shared resolver be
+    // reused (never a parallel, AddIncomeModal-local reimplementation of
+    // the same eligibility rule).
+    "2i. AddIncomeModal.tsx's mid-cycle destination step reuses the shared resolveEligibleIncomeDestinations resolver (Cash, Savings AND Everyday Account all genuinely offered as income destinations, by real id — never a local, narrower reimplementation)",
+    /import \{ resolveEligibleIncomeDestinations \} from '\.\.\/\.\.\/lib\/calculations\/incomeDestinations';/.test(ADD_INCOME_SRC) &&
+      /resolveEligibleIncomeDestinations\(data\.assets\)/.test(ADD_INCOME_SRC)
   );
   assert(
     "2j. achievements.ts never references paymentSource or 'everyday' — achievement unlocks read only asset totals/types, unaffected by payment-source routing",

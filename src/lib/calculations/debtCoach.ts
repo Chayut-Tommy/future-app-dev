@@ -42,6 +42,7 @@ const DEBT_ICON: Record<DebtKind, keyof typeof Ionicons.glyphMap> = {
   personal_loan: 'document-text',
   credit_card: 'card',
   other: 'ellipse',
+  bnpl: 'bag-handle',
 };
 
 const DEBT_LABEL: Record<DebtKind, string> = {
@@ -50,6 +51,7 @@ const DEBT_LABEL: Record<DebtKind, string> = {
   personal_loan: 'Personal loan',
   credit_card: 'Credit card',
   other: 'Other debt',
+  bnpl: 'Buy Now, Pay Later',
 };
 
 /** Months to pay off a fixed-payment loan — real amortisation math, not a
@@ -85,12 +87,25 @@ export function computeDebtCoachSummary(data: AppData): DebtCoachSummary {
     // raw per-payment amount, understating debt-to-income and repayment
     // totals here versus every other screen that already normalises (PRD
     // bug report, §D7: figures must reconcile across every screen).
+    // Correction pass, §5 — a BNPL plan is finite (unlike a mortgage/loan's
+    // ongoing repayment), so its raw scheduled rate can overstate what's
+    // actually left: outstanding $50 with a stored $100/week schedule
+    // would otherwise show as a $433/month repayment here, implying a
+    // recurring monthly commitment bigger than the entire amount owing.
+    // Capped at the outstanding balance itself — never displays a BNPL
+    // monthly figure greater than what's genuinely still owed. This is the
+    // only change in this function: debtToIncomeRatio/payoffAcceleration
+    // below are untouched generic math that simply consumes this now-
+    // correct number, and no coaching recommendation, risk category, or
+    // Score input is added.
     const monthlyRepayment = linkedCard
       ? resolveExpectedMonthlyRepayment(linkedCard) > 0
         ? resolveExpectedMonthlyRepayment(linkedCard)
         : undefined
       : linkedRecurringItem
-      ? toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency)
+      ? l.type === 'bnpl'
+        ? Math.min(toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency), l.currentBalance)
+        : toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency)
       : undefined;
     debts.push({
       id: l.id,

@@ -22,6 +22,8 @@ import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calcula
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
 import { moneyAmountToCents } from '../lib/calculations/money';
+import { resolveBnplLinkedItems, toBalanceCentsAllowingZero } from '../lib/calculations/bnpl';
+import { resolveIncomeDestinationAsset } from '../lib/calculations/incomeDestinations';
 import {
   initialPersistenceState,
   issueWrite,
@@ -545,6 +547,13 @@ export function confirmRecurringOccurrenceTransition(
     recurringItemId: string;
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
+    /** Income only — correction round, 2026-08-10. The specific Cash/
+     * Everyday/Savings asset this confirmed income is credited to, chosen
+     * explicitly by the user via the shared IncomeDestinationPicker (never
+     * a caller-side default). `paymentSource` remains the expense-only
+     * concept it always was; this is deliberately a separate field, not an
+     * overload, so the two never get confused. */
+    targetAssetId?: string;
     transactionId: string;
     date: string;
   }
@@ -587,6 +596,15 @@ export function confirmRecurringOccurrenceTransition(
     if (!creditCardId) return { applied: false, reason: 'balance_target_missing' };
   }
 
+  // Correction round, 2026-08-10 — income must always name an explicit,
+  // real, currently-eligible destination asset; never silently defaults to
+  // Cash. Reuses the exact same eligible-destination validator the mid-
+  // cycle backfill transition below uses, so "which balances can income be
+  // credited to" can never disagree between the two entry points.
+  if (item.type === 'income' && (!input.targetAssetId || !resolveIncomeDestinationAsset(data, input.targetAssetId))) {
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+
   const advance = advanceRecurringItemSchedule(item);
   if (!isValidCanonicalDate(advance.nextDueDate)) return { applied: false, reason: 'invalid_date' };
   // Forward-only — an advancement that lands on or before the current
@@ -621,6 +639,7 @@ export function confirmRecurringOccurrenceTransition(
     note: item.label,
     paymentSource: input.paymentSource,
     creditCardId,
+    targetAssetId: item.type === 'income' ? input.targetAssetId : undefined,
     recurringItemId: item.id,
     balanceEffect: 'update',
   };
@@ -702,9 +721,15 @@ export function applyTransactionDelete(data: AppData, id: string, reverseEffect:
  * both go through the ordinary, completely unmodified addRecurringItem
  * path instead — see AddIncomeModal.tsx, which never calls
  * createRecurringIncomeWithMidCycleOccurrence for those two answers. */
+// Correction round, 2026-08-10 — targetAssetId is now REQUIRED for
+// 'add_to_balance' (was optional, with `undefined` meaning an implicit,
+// silently-conjured Cash asset). The shared IncomeDestinationPicker always
+// supplies a real, existing eligible asset id; there is no longer a UI
+// path that omits one, and this type change makes that contract explicit
+// rather than merely conventional (avoid silently defaulting to Cash).
 export type MidCycleIncomeOccurrenceChoice =
   | { kind: 'already_included' }
-  | { kind: 'add_to_balance'; targetAssetId?: string };
+  | { kind: 'add_to_balance'; targetAssetId: string };
 
 /** B2.4 correction — duplicate identity for a mid-cycle backfilled income
  * occurrence is the exact (recurringItemId, calendar day) pair, never
@@ -724,6 +749,28 @@ export function hasRecurringItemOccurrenceRecorded(data: AppData, recurringItemI
     const d = new Date(t.date);
     return d.getFullYear() === target.getFullYear() && d.getMonth() === target.getMonth() && d.getDate() === target.getDate();
   });
+}
+
+/** Correction, 2026-08-10 review — applies every changed
+ * includeInMoneyCalculations entry from one Select Balances Save against a
+ * SINGLE AppData snapshot, in one pass, so a Save that both includes
+ * Account A and excludes Account B commits both instead of the second
+ * write silently discarding the first (which is what happened when the
+ * caller looped plain updateAsset() calls, each closing over the same
+ * pre-loop `data`). Pure and exported so it has real, direct test coverage
+ * — the same convention every other multi-field financial transition in
+ * this file (confirmRecurringOccurrenceTransition, createCarLoanWith-
+ * VehicleTransition, etc.) already follows, not a special case invented
+ * for this one. Touches only the listed ids' includeInMoneyCalculations
+ * field — currentValue, label, type and every other Asset field are
+ * untouched, and assets not present in `updates` are returned unchanged. */
+export function applyAssetsIncludeInMoneyUpdate(data: AppData, updates: { id: string; included: boolean }[]): AppData {
+  if (updates.length === 0) return data;
+  const updateMap = new Map(updates.map((u) => [u.id, u.included]));
+  return {
+    ...data,
+    assets: data.assets.map((a) => (updateMap.has(a.id) ? { ...a, includeInMoneyCalculations: updateMap.get(a.id) } : a)),
+  };
 }
 
 /** B2.4 — creates a new recurring income source together with exactly one
@@ -769,8 +816,9 @@ export function hasRecurringItemOccurrenceRecorded(data: AppData, recurringItemI
  * models.ts): appliedBalanceEffect ends up undefined, so any later edit or
  * delete of this transaction reverses nothing, ever — no new field was
  * needed for that case. "add_to_balance" passes balanceEffect: 'update' and
- * an optional targetAssetId, crediting exactly the one asset the user
- * selected (or the default Cash asset when omitted), once. */
+ * the required targetAssetId, crediting exactly the one asset the user
+ * explicitly selected via the shared IncomeDestinationPicker, once — never
+ * an implicit/default Cash asset (correction round, 2026-08-10). */
 export function createRecurringIncomeWithMidCycleOccurrence(
   data: AppData,
   itemInput: Omit<RecurringItem, 'id'>,
@@ -786,6 +834,18 @@ export function createRecurringIncomeWithMidCycleOccurrence(
   // review, B2.4 duplicate-identity correction — "preserve the one-
   // transition/one-persistence-write behaviour").
   if (hasRecurringItemOccurrenceRecorded(data, recurringItemId, precedingOccurrenceDate)) {
+    return data;
+  }
+
+  // Correction round, 2026-08-10 — the same shared validator
+  // confirmRecurringOccurrenceTransition uses for the reminder-confirmation
+  // path: an 'add_to_balance' choice must always name a real, currently-
+  // eligible destination asset. The UI only ever offers ids from
+  // resolveEligibleIncomeDestinations, so this should be unreachable in
+  // practice; it exists so the transition itself never silently applies an
+  // invalid/stale destination, mirroring the existing duplicate-guard no-op
+  // convention immediately above rather than throwing.
+  if (choice.kind === 'add_to_balance' && !resolveIncomeDestinationAsset(data, choice.targetAssetId)) {
     return data;
   }
 
@@ -1132,6 +1192,525 @@ export function updateLinkedRepaymentOnlyTransition(
   return { applied: true, data: { ...data, recurringItems: upserted.recurringItems } };
 }
 
+// ============================================================================
+// BNPL (Buy Now, Pay Later) — atomic create/edit and repayment transitions.
+// Both follow the exact pure-function, snapshot-in/snapshot-out convention
+// every transition above already uses: validate fully before mutating
+// anything, construct the entire resulting AppData in one shot, and let the
+// calling useCallback commit it via exactly one persist() call. Neither
+// function is a smart-loan variant (BNPL is deliberately NOT in
+// SMART_LOAN_TYPES — no asset link, no equity view, no target-picker
+// wizard) — this is closer in shape to updateLinkedRepaymentOnlyTransition
+// plus the create-path of linkBillToLiabilityTransition, but with two
+// capabilities neither of those support: a genuine "remove the schedule,
+// keep the plan" transition, and BNPL-specific validation (a required
+// positive balance for a brand-new plan, and defense-in-depth re-validation
+// of an all-or-nothing schedule even though the UI is expected to enforce
+// that first).
+// ============================================================================
+
+const VALID_PAY_FREQUENCIES: PayFrequency[] = ['weekly', 'fortnightly', 'monthly', 'irregular'];
+
+function isValidBnplSchedule(schedule: { amount: number; frequency: PayFrequency; nextDueDate: string }): boolean {
+  if (!moneyAmountToCents(schedule.amount).valid) return false;
+  if (!VALID_PAY_FREQUENCIES.includes(schedule.frequency)) return false;
+  return isValidCanonicalDate(schedule.nextDueDate);
+}
+
+export interface BnplScheduleInput {
+  amount: number;
+  frequency: PayFrequency;
+  nextDueDate: string;
+}
+
+export type SaveBnplPlanInput =
+  | {
+      mode: 'create';
+      liability: { label: string; provider?: string; currentBalance: number };
+      /** `undefined` = balance-only plan. A defined value must be a
+       * COMPLETE schedule — there is no partial/optional-field variant at
+       * this boundary; the caller's own form is responsible for only ever
+       * constructing this object once every field is genuinely filled in
+       * (mirroring AddWealthItemModal's existing "optional-schedule
+       * contract" for smart loans), and this function re-validates it
+       * regardless (see isValidBnplSchedule) before mutating anything. */
+      schedule: BnplScheduleInput | undefined;
+      ids: { liabilityId: string; recurringItemId: string };
+    }
+  | {
+      mode: 'update';
+      liabilityId: string;
+      liability: { label: string; provider?: string; currentBalance: number };
+      /** `'unchanged'` — the recurringItems array reference is returned
+       * unchanged (same structural guarantee updateLinkedRepaymentOnlyTransition
+       * already gives for its own undefined-payload case), even though the
+       * liability's own fields may still change. `'remove'` — deactivates
+       * the existing single linked item (never deletes it — its id remains
+       * available for a later re-add, and any historical transaction that
+       * references it by recurringItemId stays intact), leaving a valid
+       * balance-only plan. A `BnplScheduleInput` — creates the first linked
+       * item if none exists yet, or updates the existing one in place
+       * (reactivating it if it had previously been removed). */
+      schedule: 'unchanged' | 'remove' | BnplScheduleInput;
+      newRecurringItemId: string;
+    };
+
+export type SaveBnplPlanResult =
+  | { applied: true; data: AppData }
+  | {
+      applied: false;
+      reason: 'target_not_found' | 'target_wrong_type' | 'ambiguous_schedule' | 'invalid_balance' | 'incomplete_schedule';
+    };
+
+/**
+ * The single atomic create-or-edit transition for a BNPL plan and its
+ * optional linked repayment schedule — one coherent state change, one
+ * persistence operation (via the caller's single persist() call), never two
+ * sequential writes for "create the liability" then "create its schedule."
+ * Validates every rule before constructing any part of the result; every
+ * rejected path returns without touching `data`.
+ */
+export function saveBnplPlanTransition(data: AppData, input: SaveBnplPlanInput): SaveBnplPlanResult {
+  if (input.mode === 'create') {
+    // Required outstanding balance greater than $0 for new plans — a
+    // brand-new BNPL plan with nothing owed is not a valid state (balance-
+    // only entry means "no schedule yet," never "no balance yet").
+    if (!moneyAmountToCents(input.liability.currentBalance).valid) return { applied: false, reason: 'invalid_balance' };
+    if (input.schedule !== undefined && !isValidBnplSchedule(input.schedule)) return { applied: false, reason: 'incomplete_schedule' };
+
+    const liabilityId = input.ids.liabilityId;
+    const newLiability: Liability = {
+      id: liabilityId,
+      type: 'bnpl',
+      label: input.liability.label,
+      provider: input.liability.provider,
+      currentBalance: input.liability.currentBalance,
+      createdAt: new Date().toISOString(),
+    };
+
+    let recurringItems = data.recurringItems;
+    if (input.schedule) {
+      const scheduleAnchorDay = resolveScheduleAnchorDay(null, { frequency: input.schedule.frequency, nextDueDate: input.schedule.nextDueDate });
+      const newItem: RecurringItem = {
+        id: input.ids.recurringItemId,
+        type: 'expense',
+        label: `${input.liability.label} repayment`,
+        amount: input.schedule.amount,
+        frequency: input.schedule.frequency,
+        nextDueDate: input.schedule.nextDueDate,
+        // Deliberately NOT isFixed — computeFixedCosts (and every consumer
+        // that reads it: Navilo Score's commitments/essential-expense
+        // factors, computeSummaryForMonth's achievements/emergency-fund/
+        // wealth-projection chain, GoalDetailSheet's feasibility check)
+        // treats isFixed items as an ONGOING, INDEFINITE monthly
+        // commitment — exactly what a finite, capped, payoff-bound BNPL
+        // plan is not. Keeping this false means computeFixedCosts and
+        // every one of those consumers stay byte-for-byte unaffected by
+        // BNPL's mere existence, with zero code change to any of them —
+        // the explicit "Navilo Score/achievements/life-stage/coaching
+        // unchanged" requirement is satisfied structurally, not by
+        // carving BNPL back out of a shared function after the fact.
+        // Money-tab surfaces that DO need BNPL's cost (Available Until
+        // Payday, Money Plan, Typical Money Flow, What Happens Next) read
+        // it through the dedicated, capped bnpl.ts helpers instead — see
+        // safeToSpend.ts/moneyPlan.ts/moneyTimeline.ts/MoneyScreen.tsx.
+        isFixed: false,
+        active: true,
+        linkedLiabilityId: liabilityId,
+        scheduleAnchorDay,
+      };
+      recurringItems = [...recurringItems, newItem];
+    }
+
+    return {
+      applied: true,
+      data: upsertNetWorthHistory({ ...data, liabilities: [...data.liabilities, newLiability], recurringItems }),
+    };
+  }
+
+  // mode === 'update'
+  const existing = data.liabilities.find((l) => l.id === input.liabilityId);
+  if (!existing) return { applied: false, reason: 'target_not_found' };
+  if (existing.type !== 'bnpl') return { applied: false, reason: 'target_wrong_type' };
+  // Editing balance downward to exactly $0 is allowed here (a manual
+  // correction) — only a genuinely negative/invalid/fractional-cent value
+  // is rejected, via the same zero-allowing strict conversion the
+  // projection engine itself uses for a live outstanding balance.
+  if (toBalanceCentsAllowingZero(input.liability.currentBalance) === undefined) return { applied: false, reason: 'invalid_balance' };
+
+  const resolution = resolveBnplLinkedItems(data, input.liabilityId);
+  if (resolution.status === 'ambiguous') return { applied: false, reason: 'ambiguous_schedule' };
+
+  if (typeof input.schedule === 'object' && !isValidBnplSchedule(input.schedule)) {
+    return { applied: false, reason: 'incomplete_schedule' };
+  }
+
+  const liabilities = data.liabilities.map((l) =>
+    l.id === input.liabilityId
+      ? { ...l, label: input.liability.label, provider: input.liability.provider, currentBalance: input.liability.currentBalance }
+      : l
+  );
+
+  let recurringItems = data.recurringItems;
+  if (input.schedule === 'remove') {
+    if (resolution.status === 'single') {
+      recurringItems = data.recurringItems.map((r) => (r.id === resolution.item.id ? { ...r, active: false } : r));
+    }
+    // status === 'none': already balance-only, nothing to remove — safe no-op.
+  } else if (typeof input.schedule === 'object') {
+    const scheduleAnchorDay = resolveScheduleAnchorDay(
+      resolution.status === 'single' ? resolution.item : null,
+      { frequency: input.schedule.frequency, nextDueDate: input.schedule.nextDueDate }
+    );
+    if (resolution.status === 'single') {
+      recurringItems = data.recurringItems.map((r) =>
+        r.id === resolution.item.id
+          ? {
+              ...r,
+              label: `${input.liability.label} repayment`,
+              amount: (input.schedule as BnplScheduleInput).amount,
+              frequency: (input.schedule as BnplScheduleInput).frequency,
+              nextDueDate: (input.schedule as BnplScheduleInput).nextDueDate,
+              scheduleAnchorDay,
+              active: true,
+            }
+          : r
+      );
+    } else {
+      const newItem: RecurringItem = {
+        id: input.newRecurringItemId,
+        type: 'expense',
+        label: `${input.liability.label} repayment`,
+        amount: (input.schedule as BnplScheduleInput).amount,
+        frequency: (input.schedule as BnplScheduleInput).frequency,
+        nextDueDate: (input.schedule as BnplScheduleInput).nextDueDate,
+        isFixed: false,
+        active: true,
+        linkedLiabilityId: input.liabilityId,
+        scheduleAnchorDay,
+      };
+      recurringItems = [...data.recurringItems, newItem];
+    }
+  }
+  // input.schedule === 'unchanged': recurringItems stays the SAME reference
+  // as data.recurringItems — a structural guarantee, not merely "the form
+  // fields were disabled" (same reasoning updateLinkedRepaymentOnlyTransition's
+  // own doc comment gives for its own undefined-payload case).
+
+  return { applied: true, data: upsertNetWorthHistory({ ...data, liabilities, recurringItems }) };
+}
+
+// BNPL scope, 2026-08-09: deleting a BNPL plan must deactivate every ACTIVE
+// recurring item linked to it — plural, never assuming a single item
+// (corrupted/legacy data may have more than one; see
+// resolveBnplLinkedItems's own doc comment). Scoped strictly to
+// `type === 'bnpl'`: every other liability type's existing (unchanged,
+// pre-existing, out-of-scope-to-fix-generally) orphaning behaviour is
+// untouched — deleting a mortgage/car/personal loan still never touches
+// recurringItems, exactly as before this round. Pulled out as its own pure,
+// exported, directly-testable function — same rationale as every other
+// transition in this file: a production behaviour this important must be
+// exercisable against the exact code the app runs, not only through the
+// useCallback wrapper.
+export function deleteLiabilityTransition(data: AppData, id: string): AppData {
+  const target = data.liabilities.find((l) => l.id === id);
+  const recurringItems =
+    target?.type === 'bnpl'
+      ? data.recurringItems.map((r) => (r.linkedLiabilityId === id && r.active ? { ...r, active: false } : r))
+      : data.recurringItems;
+  return upsertNetWorthHistory({ ...data, liabilities: data.liabilities.filter((l) => l.id !== id), recurringItems });
+}
+
+export type ConfirmBnplRepaymentInput = {
+  liabilityId: string;
+  recurringItemId: string;
+  expectedNextDueDate: string;
+  // Correction pass, 2026-08-09 — 'everyday' added, reusing the exact same
+  // routed-spending source contract QuickAddModal's own expense flow
+  // already uses (paymentSource + targetAssetId identifying one specific
+  // account, never a default lookup — see computeBalanceEffect's existing
+  // 'everyday' branch, unmodified and reused directly below).
+  paymentSource: 'cash' | 'everyday' | 'credit_card';
+  creditCardId?: string;
+  targetAssetId?: string;
+  transactionId: string;
+  date: string;
+};
+
+export type ConfirmBnplRepaymentResult =
+  | { applied: true; data: AppData; effectivePaymentCents: number; isPaidOff: boolean }
+  | {
+      applied: false;
+      reason:
+        | 'not_found'
+        | 'missing_liability'
+        | 'ambiguous_schedule'
+        | 'stale'
+        | 'already_confirmed'
+        | 'invalid_date'
+        | 'invalid_amount'
+        | 'invalid_source'
+        | 'balance_target_missing'
+        | 'insufficient_source_balance';
+    };
+
+/**
+ * The atomic BNPL repayment confirmation — mirrors
+ * confirmRecurringOccurrenceTransition's own structure exactly (validate
+ * fully before mutating; construct the whole result from one snapshot;
+ * nothing above the "success path only from here" line ever mutates), with
+ * two capabilities that function does not need: a coordinated SECOND
+ * balance effect (the linked liability decreases, not just the funding
+ * source), and an explicit insufficient-source-balance rejection (ordinary
+ * recurring confirmation has never needed this, because nothing it funds
+ * can be "not enough" in a way that should block confirmation outright —
+ * applyEffectDelta's own floor was always considered an acceptable outcome
+ * there; for BNPL it is not, per this round's explicit requirement).
+ *
+ * `effectivePaymentCents = min(scheduledOccurrenceCents, outstandingCents)`
+ * is computed exactly once and reused, unmodified, for every one of: the
+ * funding-source effect, the transaction amount, the liability reduction,
+ * and the final-payoff determination — never re-derived independently for
+ * any of the four.
+ *
+ * Engine-level duplicate protection: a stable `recurringOccurrenceKey`
+ * (`${recurringItemId}:${item.nextDueDate}`) is checked directly against
+ * `data.transactions` BEFORE any mutation — independent of whether the
+ * schedule's own `nextDueDate` cursor still looks "not yet confirmed" (the
+ * `stale` check below is the first, cheaper guard; this is the second,
+ * ledger-based one that also catches a cursor that was somehow left
+ * inconsistent with the transaction history, e.g. by a partial write that
+ * predates this round's atomic single-persist guarantee).
+ */
+export function confirmBnplRepaymentTransition(data: AppData, input: ConfirmBnplRepaymentInput): ConfirmBnplRepaymentResult {
+  const item = data.recurringItems.find((r) => r.id === input.recurringItemId);
+  if (!item) return { applied: false, reason: 'not_found' };
+
+  const liability = data.liabilities.find((l) => l.id === input.liabilityId);
+  if (!liability || liability.type !== 'bnpl' || item.linkedLiabilityId !== liability.id) {
+    return { applied: false, reason: 'missing_liability' };
+  }
+
+  const resolution = resolveBnplLinkedItems(data, liability.id);
+  if (resolution.status === 'ambiguous') return { applied: false, reason: 'ambiguous_schedule' };
+  if (resolution.status === 'none' || resolution.item.id !== item.id) return { applied: false, reason: 'missing_liability' };
+
+  if (!isValidCanonicalDate(item.nextDueDate) || !isValidCanonicalDate(input.expectedNextDueDate)) {
+    return { applied: false, reason: 'invalid_date' };
+  }
+  if (item.nextDueDate !== input.expectedNextDueDate) return { applied: false, reason: 'stale' };
+  if (!isValidISOTimestamp(input.date)) return { applied: false, reason: 'invalid_date' };
+
+  const occurrenceKey = `${item.id}:${item.nextDueDate}`;
+  if (data.transactions.some((t) => t.recurringOccurrenceKey === occurrenceKey)) {
+    return { applied: false, reason: 'already_confirmed' };
+  }
+
+  const scheduledCents = moneyAmountToCents(item.amount);
+  if (!scheduledCents.valid) return { applied: false, reason: 'invalid_amount' };
+  const outstandingCents = toBalanceCentsAllowingZero(liability.currentBalance);
+  if (outstandingCents === undefined || outstandingCents <= 0) return { applied: false, reason: 'invalid_amount' };
+
+  const effectivePaymentCents = Math.min(scheduledCents.cents, outstandingCents);
+
+  let creditCardId: string | undefined;
+  let targetAssetId: string | undefined;
+  if (input.paymentSource === 'cash') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return { applied: false, reason: 'balance_target_missing' };
+    const cashCents = toBalanceCentsAllowingZero(cashAsset.currentValue);
+    if (cashCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (cashCents < effectivePaymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+  } else if (input.paymentSource === 'everyday') {
+    // Same routed-spending contract computeBalanceEffect's own 'everyday'
+    // branch requires: targetAssetId identifies ONE specific account,
+    // never a default lookup — a missing id or a non-existent/non-everyday
+    // account is balance_target_missing, exactly like credit_card without
+    // creditCardId.
+    if (!input.targetAssetId) return { applied: false, reason: 'invalid_source' };
+    const account = data.assets.find((a) => a.id === input.targetAssetId && a.type === 'everyday');
+    if (!account) return { applied: false, reason: 'balance_target_missing' };
+    const accountCents = toBalanceCentsAllowingZero(account.currentValue);
+    if (accountCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (accountCents < effectivePaymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+    targetAssetId = account.id;
+  } else if (input.paymentSource === 'credit_card') {
+    if (!input.creditCardId) return { applied: false, reason: 'invalid_source' };
+    const card = data.creditCards.find((c) => c.id === input.creditCardId);
+    if (!card) return { applied: false, reason: 'balance_target_missing' };
+    creditCardId = card.id;
+    // No floor concern for a credit card — applyEffectDelta never floors a
+    // credit_card target (it may legitimately go negative, "in credit"),
+    // so there is no insufficient-balance case to pre-check here.
+  } else {
+    return { applied: false, reason: 'invalid_source' };
+  }
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const transactionInput: Omit<Transaction, 'id'> = {
+    type: 'expense',
+    amount: effectivePaymentCents / 100,
+    categoryId: 'cat-other-expense',
+    date: input.date,
+    note: item.label,
+    paymentSource: input.paymentSource,
+    creditCardId,
+    targetAssetId,
+    recurringItemId: item.id,
+    balanceEffect: 'update',
+    recurringOccurrenceKey: occurrenceKey,
+  };
+
+  const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
+  const appended = withTransaction.transactions.find((t) => t.id === input.transactionId);
+  if (!appended || appended.appliedBalanceEffect === undefined) {
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+
+  // The SECOND, liability-side effect — applied directly via the same
+  // applyEffectDelta primitive every other balance mutation in this file
+  // uses, never a re-implementation of its floor/actualDelta logic. Signed
+  // negative (the liability's stored value decreases), the opposite
+  // convention from computeBalanceEffect's existing 'loan' branch (a
+  // loan-funded PURCHASE increases what's owed — an unrelated feature,
+  // never reused here; see this round's implementation report for why).
+  // effectivePaymentCents was already capped to outstandingCents above, so
+  // this floor is mathematically guaranteed not to bind — actualDelta
+  // always equals exactly -(effectivePaymentCents / 100).
+  const { data: withLiabilityReduced } = applyEffectDelta(
+    withTransaction,
+    { targetKind: 'liability', targetId: liability.id, delta: -(effectivePaymentCents / 100) },
+    1
+  );
+
+  const advance = advanceRecurringItemSchedule(item);
+  const scheduleAnchorDay = resolveScheduleAnchorDay(item, advance);
+  const isPaidOff = outstandingCents - effectivePaymentCents === 0;
+  const updatedItem: RecurringItem = { ...item, nextDueDate: advance.nextDueDate, scheduleAnchorDay, active: !isPaidOff };
+
+  const finalData: AppData = upsertNetWorthHistory({
+    ...withLiabilityReduced,
+    recurringItems: withLiabilityReduced.recurringItems.map((r) => (r.id === item.id ? updatedItem : r)),
+  });
+
+  return { applied: true, data: finalData, effectivePaymentCents, isPaidOff };
+}
+
+export type ReverseBnplRepaymentResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'not_found' | 'not_a_bnpl_repayment' | 'missing_liability' | 'not_latest' };
+
+/**
+ * Correction pass, 2026-08-09 — root cause: `applyTransactionUpdate`/
+ * `applyTransactionDelete` only ever reverse a transaction's OWN stored
+ * `appliedBalanceEffect`, a SINGLE target (see their own doc comments —
+ * unmodified, and correct for every transaction type that only ever
+ * touches one balance). A BNPL repayment transaction is the one exception
+ * in this codebase: confirmBnplRepaymentTransition deliberately applies a
+ * SECOND effect (the linked liability decreasing) that is never recorded
+ * on the transaction's own `appliedBalanceEffect` — see that function's
+ * own doc comment for why (the generic `AppliedBalanceEffect` model is
+ * single-target; widening it was judged out of this feature's authorised
+ * scope). Routing a BNPL repayment through the generic delete/update path
+ * would therefore reverse the source side only, silently leaving the
+ * liability under-stated — the exact defect this function exists to
+ * close, by providing a SEPARATE, BNPL-aware, fully atomic reversal that
+ * QuickAddModal.tsx calls instead of deleteTransaction for this one
+ * transaction shape (see its own handleDelete for the routing decision).
+ *
+ * Only ever reverses the LATEST confirmed repayment for its plan — never
+ * silently rewinds the schedule through later repayments that may already
+ * exist (an earlier repayment's own principal is already "inside" every
+ * later repayment's own effectivePaymentCents computation, via the live
+ * outstanding balance each one read at ITS OWN confirmation time; undoing
+ * an earlier one without also undoing every later one would leave the
+ * liability at a value inconsistent with what those later confirmations
+ * actually computed against). "Latest" is derived from the stable
+ * `recurringOccurrenceKey` embedded due-date, comparing every transaction
+ * that shares this one's `recurringItemId` — never from transaction
+ * insertion order or `date` (the confirmation date), which need not match
+ * occurrence order.
+ *
+ * Reuses `applyEffectDelta` for BOTH the source-side reversal (identical
+ * to the generic path's own single-target reversal) and the liability
+ * increase — no new balance-mutation logic. Restores `nextDueDate` to the
+ * exact due-date the deleted occurrence's own key encodes (its
+ * `scheduleAnchorDay` was never touched by confirmation in the first
+ * place — `resolveScheduleAnchorDay`'s own "internal automatic
+ * advancement" rule always threads the item's existing anchor through
+ * unchanged — so nothing needs restoring there). Removing the transaction
+ * makes a second call against the resulting data fail at `not_found`,
+ * which is the whole duplicate-reversal guard — no separate bookkeeping.
+ */
+/**
+ * The exact due-date a transaction's `recurringOccurrenceKey` encodes —
+ * sliced by the transaction's own `recurringItemId` prefix length rather
+ * than split on ':' (an ISO timestamp's own time portion contains colons).
+ * `undefined` for any transaction that isn't a BNPL repayment (no key, or
+ * no recurringItemId to derive the prefix length from).
+ */
+function bnplOccurrenceDueDate(t: Transaction): string | undefined {
+  if (!t.recurringOccurrenceKey || !t.recurringItemId) return undefined;
+  return t.recurringOccurrenceKey.slice(t.recurringItemId.length + 1);
+}
+
+/**
+ * True only when `transactionId` is the chronologically LATEST confirmed
+ * BNPL repayment for its plan (compares every sibling transaction sharing
+ * the same `recurringItemId` by their own encoded occurrence due-date,
+ * never by array/insertion order or by `date` — see
+ * reverseBnplRepaymentTransaction's own doc comment for why). Exported so
+ * the UI (QuickAddModal's delete confirmation) can decide which dialog
+ * variant to show BEFORE calling the reversal — reusing this exact
+ * derivation rather than a second, potentially-drifting reimplementation.
+ * `false` for anything that isn't a BNPL repayment transaction at all.
+ */
+export function isLatestBnplRepaymentTransaction(data: AppData, transactionId: string): boolean {
+  const t = data.transactions.find((x) => x.id === transactionId);
+  if (!t) return false;
+  const dueDate = bnplOccurrenceDueDate(t);
+  if (!dueDate || !isValidCanonicalDate(dueDate)) return false;
+  const siblingDueDates = data.transactions
+    .filter((x) => x.recurringItemId === t.recurringItemId && !!x.recurringOccurrenceKey)
+    .map((x) => bnplOccurrenceDueDate(x))
+    .filter((d): d is string => !!d);
+  const latest = siblingDueDates.reduce((max, key) => (new Date(key).getTime() > new Date(max).getTime() ? key : max), dueDate);
+  return new Date(latest).getTime() === new Date(dueDate).getTime();
+}
+
+export function reverseBnplRepaymentTransaction(data: AppData, transactionId: string): ReverseBnplRepaymentResult {
+  const t = data.transactions.find((x) => x.id === transactionId);
+  if (!t) return { applied: false, reason: 'not_found' };
+  if (!t.recurringOccurrenceKey || !t.recurringItemId) return { applied: false, reason: 'not_a_bnpl_repayment' };
+
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  if (!item || !item.linkedLiabilityId) return { applied: false, reason: 'missing_liability' };
+  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+  if (!liability || liability.type !== 'bnpl') return { applied: false, reason: 'missing_liability' };
+
+  const restoredDueDate = bnplOccurrenceDueDate(t);
+  if (!restoredDueDate || !isValidCanonicalDate(restoredDueDate)) return { applied: false, reason: 'not_a_bnpl_repayment' };
+
+  if (!isLatestBnplRepaymentTransaction(data, transactionId)) return { applied: false, reason: 'not_latest' };
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const { data: withSourceReversed } = applyEffectDelta(data, t.appliedBalanceEffect, -1);
+  const { data: withLiabilityRestored } = applyEffectDelta(
+    withSourceReversed,
+    { targetKind: 'liability', targetId: liability.id, delta: t.amount },
+    1
+  );
+  const restoredItem: RecurringItem = { ...item, nextDueDate: restoredDueDate, active: true };
+
+  const finalData: AppData = upsertNetWorthHistory({
+    ...withLiabilityRestored,
+    recurringItems: withLiabilityRestored.recurringItems.map((r) => (r.id === item.id ? restoredItem : r)),
+    transactions: withLiabilityRestored.transactions.filter((x) => x.id !== transactionId),
+  });
+
+  return { applied: true, data: finalData };
+}
+
 interface AppStateContextValue {
   data: AppData;
   isLoading: boolean;
@@ -1181,6 +1760,7 @@ interface AppStateContextValue {
     recurringItemId: string;
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
+    targetAssetId?: string;
   }) => ConfirmationCommitResult;
   /** B2.4 mid-cycle recurring-income initialisation — creates a brand-new
    * monthly income source together with exactly one backfilled transaction
@@ -1211,6 +1791,13 @@ interface AppStateContextValue {
   deleteGoal: (id: string) => void;
   addAsset: (a: Omit<Asset, 'id'>) => void;
   updateAsset: (id: string, patch: Partial<Omit<Asset, 'id'>>) => void;
+  /** Applies every included/excluded toggle from one Select Balances Save in
+   * a single persisted transition, reading dataRef.current (not the closed-
+   * over `data`) so it composes correctly with any other change already
+   * committed this tick. Exists because looping plain updateAsset() calls —
+   * each closing over the same pre-loop `data` — silently drops all but the
+   * last change in a multi-account save (correction, 2026-08-10 review). */
+  updateAssetsIncludeInMoney: (updates: { id: string; included: boolean }[]) => void;
   deleteAsset: (id: string) => void;
   /** `id` may be pre-supplied so a caller can immediately reference the new
    * liability's id in the same action (e.g. linking an auto-created
@@ -1279,6 +1866,23 @@ interface AppStateContextValue {
     recurringItem: Omit<RecurringItem, 'id'> | undefined,
     newRecurringItemId: string
   ) => LiabilityTransitionResult;
+  /** Atomic create-or-edit for a BNPL plan and its optional linked
+   * repayment schedule — see saveBnplPlanTransition's own doc comment for
+   * the full contract. Reads dataRef.current, same rationale as
+   * updateLiability/linkBillToLiability above. */
+  saveBnplPlan: (input: SaveBnplPlanInput) => SaveBnplPlanResult;
+  /** Atomic BNPL repayment confirmation — see confirmBnplRepaymentTransition's
+   * own doc comment. transactionId/date are generated exactly once here,
+   * never inside the pure transition, mirroring confirmRecurringOccurrence's
+   * own established contract. */
+  confirmBnplRepayment: (
+    input: Omit<ConfirmBnplRepaymentInput, 'transactionId' | 'date'>
+  ) => { transition: ConfirmBnplRepaymentResult; persistence: Promise<void> };
+  /** Correction pass — atomic reversal of the latest confirmed BNPL
+   * repayment transaction. See reverseBnplRepaymentTransaction's own doc
+   * comment for the full contract. Reads dataRef.current, same rationale
+   * as confirmBnplRepayment above; one persist() call. */
+  reverseBnplRepayment: (transactionId: string) => ReverseBnplRepaymentResult;
   addCreditCard: (c: Omit<CreditCard, 'id'>) => void;
   updateCreditCard: (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => void;
   deleteCreditCard: (id: string) => void;
@@ -1479,7 +2083,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // call every other confirmed path already used, not a second pipeline.
   // Pre-resolved when the transition didn't apply — nothing was written.
   const confirmRecurringOccurrence = useCallback(
-    (input: { recurringItemId: string; expectedNextDueDate: string; paymentSource?: PaymentSource }): ConfirmationCommitResult => {
+    (input: {
+      recurringItemId: string;
+      expectedNextDueDate: string;
+      paymentSource?: PaymentSource;
+      targetAssetId?: string;
+    }): ConfirmationCommitResult => {
       const transactionId = generateId();
       const date = new Date().toISOString();
       const transition = confirmRecurringOccurrenceTransition(dataRef.current, { ...input, transactionId, date });
@@ -1490,20 +2099,31 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [persist]
   );
 
-  // B2.4 — mirrors the other creation actions (addRecurringItem etc.): a
-  // brand-new item's id has never existed before this call, so there is no
-  // "staleness" concept to guard against the way confirmRecurringOccurrence
-  // guards against re-confirming an existing item. The synchronous
-  // submission guard against a rapid double-tap creating two recurring
-  // items/transactions lives in AddIncomeModal.tsx (isSubmitting), the same
-  // presentation-level pattern SmartReminderCard already uses.
+  // Correction, 2026-08-10 review: a brand-new recurring item's id has never
+  // existed before this call, so there is no external "staleness" concept to
+  // guard against the way confirmRecurringOccurrence guards against
+  // re-confirming an already-advanced item. But the internal duplicate guard
+  // (hasRecurringItemOccurrenceRecorded, inside
+  // createRecurringIncomeWithMidCycleOccurrence) can only see a prior call's
+  // effect if it's given that prior call's actual committed result. Reading
+  // the closed-over `data` — as this previously did — hands every
+  // synchronous call in the same render the SAME pre-mutation snapshot, so a
+  // genuine double-tap (both taps dispatched before React re-renders, which
+  // also stales the presentation-level `midCycleSubmitting` guard in
+  // AddIncomeModal.tsx the same way) would let the duplicate guard see no
+  // prior occurrence twice and double-apply. Reading dataRef.current instead
+  // — the exact pattern confirmRecurringOccurrence already uses below —
+  // fixes this: commitData (inside persist) writes dataRef.current
+  // synchronously before returning, so a second synchronous call always sees
+  // the first call's already-recorded occurrence and is correctly rejected
+  // as a no-op by the existing, unmodified duplicate-identity guard.
   const addRecurringIncomeWithMidCycleOccurrence = useCallback(
     (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string) => {
       const transactionId = generateId();
-      const next = createRecurringIncomeWithMidCycleOccurrence(data, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
+      const next = createRecurringIncomeWithMidCycleOccurrence(dataRef.current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
       persist(next);
     },
-    [data, persist]
+    [persist]
   );
 
   const addGoal = useCallback(
@@ -1539,6 +2159,19 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       persist(upsertNetWorthHistory({ ...data, assets: data.assets.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
     },
     [data, persist]
+  );
+
+  // Thin wrapper over the pure, exported applyAssetsIncludeInMoneyUpdate —
+  // reads dataRef.current (not the closed-over `data`), same established
+  // pattern confirmRecurringOccurrence uses, so a call fired immediately
+  // after another one in the same handler never derives its result from a
+  // stale render closure.
+  const updateAssetsIncludeInMoney = useCallback(
+    (updates: { id: string; included: boolean }[]) => {
+      if (updates.length === 0) return;
+      persist(upsertNetWorthHistory(applyAssetsIncludeInMoneyUpdate(dataRef.current, updates)));
+    },
+    [persist]
   );
 
   const deleteAsset = useCallback(
@@ -1582,7 +2215,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const deleteLiability = useCallback(
     (id: string) => {
-      persist(upsertNetWorthHistory({ ...data, liabilities: data.liabilities.filter((l) => l.id !== id) }));
+      persist(deleteLiabilityTransition(data, id));
     },
     [data, persist]
   );
@@ -1646,6 +2279,42 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const updateLinkedRepaymentOnly = useCallback(
     (liabilityId: string, recurringItem: Omit<RecurringItem, 'id'> | undefined, newRecurringItemId: string): LiabilityTransitionResult => {
       const result = updateLinkedRepaymentOnlyTransition(dataRef.current, liabilityId, recurringItem, newRecurringItemId);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  const saveBnplPlan = useCallback(
+    (input: SaveBnplPlanInput): SaveBnplPlanResult => {
+      const result = saveBnplPlanTransition(dataRef.current, input);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  // Mirrors confirmRecurringOccurrence's own contract exactly: reads
+  // dataRef.current (not the closed-over `data`), generates transactionId/
+  // date exactly once here, and only calls persist() when the transition
+  // actually applied — a rejected result never touches storage.
+  const confirmBnplRepayment = useCallback(
+    (input: Omit<ConfirmBnplRepaymentInput, 'transactionId' | 'date'>): { transition: ConfirmBnplRepaymentResult; persistence: Promise<void> } => {
+      const transactionId = generateId();
+      const date = new Date().toISOString();
+      const transition = confirmBnplRepaymentTransition(dataRef.current, { ...input, transactionId, date });
+      if (!transition.applied) return { transition, persistence: Promise.resolve() };
+      const persistence = persist(transition.data);
+      return { transition, persistence };
+    },
+    [persist]
+  );
+
+  // Correction pass — mirrors confirmBnplRepayment's own contract: reads
+  // dataRef.current, one persist() call, only on the success path.
+  const reverseBnplRepayment = useCallback(
+    (transactionId: string): ReverseBnplRepaymentResult => {
+      const result = reverseBnplRepaymentTransaction(dataRef.current, transactionId);
       if (result.applied) persist(result.data);
       return result;
     },
@@ -1810,6 +2479,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       deleteGoal,
       addAsset,
       updateAsset,
+      updateAssetsIncludeInMoney,
       deleteAsset,
       addLiability,
       updateLiability,
@@ -1818,6 +2488,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addMortgageWithProperty,
       addCarLoanWithVehicle,
       updateLinkedRepaymentOnly,
+      saveBnplPlan,
+      confirmBnplRepayment,
+      reverseBnplRepayment,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,
@@ -1849,6 +2522,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       deleteGoal,
       addAsset,
       updateAsset,
+      updateAssetsIncludeInMoney,
       deleteAsset,
       addLiability,
       updateLiability,
@@ -1857,6 +2531,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addMortgageWithProperty,
       addCarLoanWithVehicle,
       updateLinkedRepaymentOnly,
+      saveBnplPlan,
+      confirmBnplRepayment,
+      reverseBnplRepayment,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,

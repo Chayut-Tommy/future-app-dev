@@ -1,9 +1,10 @@
 import { AppData, RecurringItem } from '../../types/models';
 import { computeCreditCardInterestEstimateForCard, daysUntilDue } from './creditHealth';
 import { advanceOneOccurrence } from './recurringSchedule';
+import { resolveBnplLinkedItems } from './bnpl';
 import { brand } from '../brand';
 
-export type SmartReminderKind = 'salary_check' | 'bill_overdue' | 'bill_due_soon' | 'card_due_soon';
+export type SmartReminderKind = 'salary_check' | 'bill_overdue' | 'bill_due_soon' | 'card_due_soon' | 'bnpl_repayment_due';
 
 export interface SmartReminder {
   id: string;
@@ -13,6 +14,26 @@ export interface SmartReminder {
   recurringItemId?: string;
   amount?: number;
   creditCardId?: string;
+  /** Present only for kind === 'bnpl_repayment_due' — the linked BNPL
+   * liability confirmBnplRepayment needs alongside recurringItemId. */
+  liabilityId?: string;
+}
+
+/** Every recurring-item id currently linked (as the single active schedule)
+ * to a BNPL liability — used to EXCLUDE those items from the ordinary bill
+ * reminder checks below (which would otherwise show the wrong, uncapped
+ * amount and, if confirmed, run the ordinary confirmation transition that
+ * never reduces a liability) and to power the dedicated BNPL reminder
+ * checks that replace them, using the capped amount and the atomic BNPL
+ * confirmation transition instead. */
+function bnplLinkedItemIds(data: AppData): Set<string> {
+  const ids = new Set<string>();
+  for (const liability of data.liabilities) {
+    if (liability.type !== 'bnpl') continue;
+    const resolution = resolveBnplLinkedItems(data, liability.id);
+    if (resolution.status === 'single') ids.add(resolution.item.id);
+  }
+  return ids;
 }
 
 function startOfDay(d: Date): Date {
@@ -56,8 +77,10 @@ export function advanceRecurringItemSchedule(
  * coming in the next few days.
  */
 export function computeTopReminder(data: AppData, today: Date = new Date()): SmartReminder | null {
+  const bnplItemIds = bnplLinkedItemIds(data);
+
   const overdueBill = data.recurringItems
-    .filter((r) => r.active && r.type === 'expense')
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id))
     .find((r) => daysBetween(new Date(r.nextDueDate), today) > 0);
   if (overdueBill) {
     return {
@@ -67,6 +90,28 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       body: `It was due ${shortDate(overdueBill.nextDueDate)}.`,
       recurringItemId: overdueBill.id,
       amount: overdueBill.amount,
+    };
+  }
+
+  // BNPL — overdue, using the capped occurrence amount (min of the
+  // scheduled amount and the live outstanding balance; the first
+  // unconfirmed occurrence needs no chronological-consumption walk, since
+  // nothing has consumed the balance ahead of it). Checked at the same
+  // priority tier as the ordinary overdue-bill check above.
+  const overdueBnplItem = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense' && bnplItemIds.has(r.id))
+    .find((r) => daysBetween(new Date(r.nextDueDate), today) > 0);
+  if (overdueBnplItem) {
+    const liability = data.liabilities.find((l) => l.id === overdueBnplItem.linkedLiabilityId)!;
+    const cappedAmount = Math.min(overdueBnplItem.amount, liability.currentBalance);
+    return {
+      id: `bnpl-overdue-${overdueBnplItem.id}-${overdueBnplItem.nextDueDate}`,
+      kind: 'bnpl_repayment_due',
+      title: `Did you pay your ${overdueBnplItem.label}?`,
+      body: `It was due ${shortDate(overdueBnplItem.nextDueDate)}.`,
+      recurringItemId: overdueBnplItem.id,
+      liabilityId: liability.id,
+      amount: cappedAmount,
     };
   }
 
@@ -110,7 +155,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
   // confirm-time — this function never fabricates or caches a stale
   // amount/date of its own.
   const dueTodayBill = data.recurringItems
-    .filter((r) => r.active && r.type === 'expense')
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id))
     .find((r) => daysBetween(new Date(r.nextDueDate), today) === 0);
   if (dueTodayBill) {
     return {
@@ -123,8 +168,25 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
     };
   }
 
+  const dueTodayBnplItem = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense' && bnplItemIds.has(r.id))
+    .find((r) => daysBetween(new Date(r.nextDueDate), today) === 0);
+  if (dueTodayBnplItem) {
+    const liability = data.liabilities.find((l) => l.id === dueTodayBnplItem.linkedLiabilityId)!;
+    const cappedAmount = Math.min(dueTodayBnplItem.amount, liability.currentBalance);
+    return {
+      id: `bnpl-overdue-${dueTodayBnplItem.id}-${dueTodayBnplItem.nextDueDate}`,
+      kind: 'bnpl_repayment_due',
+      title: `Did you pay your ${dueTodayBnplItem.label}?`,
+      body: "It's due today.",
+      recurringItemId: dueTodayBnplItem.id,
+      liabilityId: liability.id,
+      amount: cappedAmount,
+    };
+  }
+
   const dueSoon = data.recurringItems
-    .filter((r) => r.active && r.type === 'expense')
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id))
     .find((r) => daysBetween(today, new Date(r.nextDueDate)) === 1);
   if (dueSoon) {
     return {
