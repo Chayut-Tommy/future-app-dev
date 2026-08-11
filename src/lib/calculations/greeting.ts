@@ -27,8 +27,26 @@ export function buildBriefing(
   thisMonth: MonthlySummary,
   lastMonth: MonthlySummary | null
 ): string {
+  // Pass 1 closure correction, 2026-08-11: this line must never present a
+  // finite placeholder sum as if it were a normal, authoritative amount
+  // when the calculation is unavailable — matching the same rule
+  // SafeToSpendHero.tsx applies, and correctly distinguishing a balance
+  // problem from a non-balance one (never blaming balances for a corrupted
+  // bill/transaction). No caller currently wires this function up
+  // (confirmed by repository search), but it is exported and must not
+  // carry this defect forward if it's ever used.
+  if (safeToSpend.availability === 'unavailable_balance_data') {
+    return 'Available amount unavailable. Review your recorded balances.';
+  }
+  if (safeToSpend.availability === 'unavailable_other_data') {
+    return 'Available amount unavailable. Review your recorded money details.';
+  }
+
   const dayWord = safeToSpend.daysRemaining === 1 ? 'day' : 'days';
-  const base = `You have ${formatMoney(safeToSpend.cycleRemainingPool)} available until payday in ${safeToSpend.daysRemaining} ${dayWord}.`;
+  const base =
+    safeToSpend.daysRemaining > 0
+      ? `You have ${formatMoney(safeToSpend.cycleRemainingPool)} available until payday in ${safeToSpend.daysRemaining} ${dayWord}.`
+      : `You have ${formatMoney(safeToSpend.cycleRemainingPool)} available until payday.`;
 
   if (!lastMonth || lastMonth.income === 0) {
     return base;

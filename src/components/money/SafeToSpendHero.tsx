@@ -3,7 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
+import { SafeToSpendResult, selectSafeToSpendHeroState } from '../../lib/calculations/safeToSpend';
 import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 
@@ -47,6 +47,7 @@ export function SafeToSpendHero({
   onCreateGoal,
   onAddPayday,
   onSelectBalances,
+  onReviewInWealth,
   heroCopy,
 }: {
   safeToSpend: SafeToSpendResult;
@@ -57,6 +58,16 @@ export function SafeToSpendHero({
    * for the "no recurring income, no included balance" empty state (PRD
    * ask, §Adaptive hero State 4). */
   onSelectBalances?: () => void;
+  /** Navigates to the Wealth tab, where the corrupted asset is visible and
+   * actually editable (Pass 1 final closure, 2026-08-11). Deliberately
+   * NOT the same as onSelectBalances: SelectBalancesSheet only toggles
+   * whether a balance is included, it cannot edit or remove a corrupted
+   * currentValue — proven via source inspection, not assumed. This is the
+   * smallest existing navigation path to a surface that can actually
+   * repair the value (WealthScreen's own asset row -> editAsset ->
+   * AddWealthItemModal -> updateAsset), reusing plain tab navigation only,
+   * not the broader Pass 2 cross-tab section-focus architecture. */
+  onReviewInWealth?: () => void;
   /** Persona-appropriate labels (Employee/Freelancer/Retiree/Investor/
    * Business owner) wrapping this exact same calculation — never changes
    * a number, only which words describe it (PRD ask, §3/§12). */
@@ -65,71 +76,29 @@ export function SafeToSpendHero({
   const { colors, radius, spacing, typography, glow } = useTheme();
   const [breakdownVisible, setBreakdownVisible] = useState(false);
 
-  // Available Until Payday's negative-cycle states are genuinely different
-  // situations that must not share one "you overspent" message (PRD ask,
-  // §Financial state review — a missing/no-balance state is a data-
-  // completeness issue, a real recorded-spending overrun is genuine
-  // overspending, and forward-looking commitments simply exceeding what's
-  // currently held is neither of those — it's the ordinary reality of a
-  // cycle whose income hasn't arrived yet, not a warning sign). Precedence,
-  // highest first: missing balance -> recorded overspend -> commitments
-  // exceed cash -> normal. Missing balance is checked first because the
-  // other two comparisons are unreliable without knowing what cash is even
-  // being compared against — PRD bug report: with $0 recorded spending and
-  // no included balance, the hero was reading "Recorded spending is
-  // currently higher than planned," which recorded spending had nothing to
-  // do with.
-  const hasNegativeCycle = safeToSpend.hasKnownPayday && safeToSpend.dailyAllowance < 0;
-  // A missing balance is a data-completeness problem, not a financial one —
-  // distinguished from "a balance is selected but its value happens to be
-  // low or $0" by whether any account is actually included at all
-  // (includedMoneyBalanceAccounts.length), never by the numeric total alone
-  // (PRD bug report: a selected $0 transaction account was misread as "no
-  // balance selected," pointing the user at a CTA that couldn't fix
-  // anything, since a balance was already selected).
-  const missingBalance = hasNegativeCycle && safeToSpend.includedMoneyBalanceAccounts.length === 0;
-  // Genuine recorded overspend: reconstruct what cycleRemainingPool would
-  // have been without this cycle's recorded variable spending, by adding it
-  // back — spending already reduced includedMoneyBalance dollar-for-dollar,
-  // so this is the actual pre-spend position, not an approximation (PRD ask:
-  // prove the condition rather than assume it; deliberately not
-  // cycleDiscretionaryPool, which is a separate expected-income-rate budget
-  // for Lulu Score's Spending Control factor and can diverge arbitrarily
-  // from the balance-based cycleRemainingPool this hero actually shows).
-  // Uses cashVariableSpendSoFar, not spendSoFarThisCycle — the latter
-  // includes credit-card/loan/other-funded spending, which never actually
-  // reduced includedMoneyBalance, and adding it back would over-credit the
-  // reconstruction (PRD bug report: a commitments-only shortfall with some
-  // credit-card spending recorded was misclassified as a recorded-spending
-  // overrun, since none of that spending ever touched the cash balance this
-  // hero is measuring). Only genuine overspend when the cycle would
-  // otherwise have been non-negative — i.e. recorded spending is
-  // demonstrably the entire cause, not one factor alongside bills/savings/
-  // goals already exceeding cash on their own. This guarantees $0
-  // cash-impacting spend can never trigger this state (pre-spend then
-  // equals post-spend, so a negative post-spend implies a negative pre-spend
-  // too), and a shortfall caused purely by commitments — or entirely by
-  // non-cash spending — is never blamed on cash spending that didn't happen.
-  const cycleRemainingPoolBeforeSpending = safeToSpend.cycleRemainingPool + safeToSpend.cashVariableSpendSoFar;
-  const hasRecordedOverspend =
-    hasNegativeCycle &&
-    !missingBalance &&
-    safeToSpend.cashVariableSpendSoFar > 0 &&
-    cycleRemainingPoolBeforeSpending >= 0;
+  // Available Until Payday's card states are genuinely different situations
+  // that must not share one message (PRD ask, §Financial state review — a
+  // missing/no-balance state is a data-completeness issue, a real
+  // recorded-spending overrun is genuine overspending, forward-looking
+  // commitments simply exceeding what's currently held is neither of those,
+  // and invalid recorded data is a data-integrity issue distinct from all
+  // of them). selectSafeToSpendHeroState is the single source of truth for
+  // this precedence order (Pass 1 closure correction, 2026-08-11) — a real,
+  // independently-tested pure function, not logic re-derived here.
+  const heroState = selectSafeToSpendHeroState(safeToSpend);
   // The portion attributable to spending, not the entire negative balance —
-  // since the pre-spend position was non-negative, the shortfall itself is
-  // exactly what spending is responsible for.
+  // since the pre-spend position was non-negative (a precondition of
+  // selectSafeToSpendHeroState returning 'recorded_overspend'), the
+  // shortfall itself is exactly what spending is responsible for.
   const recordedOverspendAmount = -safeToSpend.cycleRemainingPool;
-  // Everything else that keeps the cycle negative: bills, Savings
-  // Allocation and/or goal contributions due before payday simply exceed
-  // the balance currently included — not spending, not missing data.
-  const commitmentsExceedCash = hasNegativeCycle && !missingBalance && !hasRecordedOverspend;
 
   const { goalAllocation } = safeToSpend;
   const hasGoalReservation = safeToSpend.goalContributionsMonthly > 0;
-  const goalsUnderfunded = goalAllocation.allocations.length > 0 && !goalAllocation.isFullyFunded;
   const overToday = safeToSpend.todaysSpend - safeToSpend.plannedDailyAllowance;
-  const showTodayReaction = safeToSpend.hasKnownPayday && safeToSpend.todaysSpend > 0 && overToday > 1;
+  // daysRemaining > 0 required too: with zero applicable days left,
+  // plannedDailyAllowance is exactly 0 (Pass 1 closure correction), so this
+  // reaction must not present that as a real "$0/day" daily adjustment.
+  const showTodayReaction = safeToSpend.hasKnownPayday && safeToSpend.daysRemaining > 0 && safeToSpend.todaysSpend > 0 && overToday > 1;
   const fundedGoals = goalAllocation.allocations.filter((a) => a.isFullyFunded);
   const topFundedGoal = fundedGoals[0];
 
@@ -247,7 +216,7 @@ export function SafeToSpendHero({
         value={safeToSpend.cycleSavingsReserved > 0 ? `-${formatMoney(safeToSpend.cycleSavingsReserved)}` : 'Not set'}
       />
       <BreakdownRow label="Estimated remainder" value={formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))} isTotal />
-      {safeToSpend.hasKnownPayday ? (
+      {safeToSpend.hasKnownPayday && safeToSpend.daysRemaining > 0 ? (
         <View style={styles.dailyEstimateBlock}>
           <Text style={styles.dailyEstimateLabel}>Estimated daily amount</Text>
           <Text style={styles.dailyEstimateValue}>{formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day</Text>
@@ -263,12 +232,64 @@ export function SafeToSpendHero({
     </InfoSheet>
   );
 
+  // Invalid recorded BALANCE data (Pass 1 closure correction, 2026-08-11):
+  // at least one participating balance is NaN/Infinity/-Infinity — never
+  // the same as "no balance selected" or a legitimate $0. Checked before
+  // every other state, including "no known payday," since corrupted data
+  // makes any comparison against it meaningless regardless of payday
+  // status. Smallest possible neutral-error variant of the existing
+  // warning card — no new card type, no breakdown sheet (it would only
+  // recompute the same unreliable numbers), no daily-guide-style content.
+  // Uses onReviewInWealth, NOT renderManageBalancesButton (Pass 1 final
+  // closure, 2026-08-11) — SelectBalancesSheet (opened by
+  // renderManageBalancesButton) only toggles whether a balance is
+  // included; it has no field to edit or remove a corrupted currentValue,
+  // proven via source inspection. "Review in Wealth" is the smallest
+  // existing navigation path to a surface that can actually repair it.
+  if (heroState === 'unavailable_balance_data') {
+    return (
+      <View style={[styles.card, styles.cardWarning]}>
+        <View style={styles.labelRow}>
+          <Text style={[styles.label, styles.labelWarning]}>💰 AVAILABLE UNTIL PAYDAY</Text>
+        </View>
+        <Text style={styles.lineWarning}>Available amount unavailable</Text>
+        <Text style={styles.lineWarning}>Review your recorded balances.</Text>
+        {onReviewInWealth ? (
+          <TouchableOpacity style={styles.warningCtaButton} onPress={onReviewInWealth}>
+            <Text style={styles.warningCtaText}>Review in Wealth</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
+
+  // Invalid recorded data from a source OTHER than a balance (a bill,
+  // transaction, or other financial-calculation input) — Pass 1 closure
+  // correction, 2026-08-11. Deliberately does NOT render
+  // renderManageBalancesButton: Manage Balances only controls balance
+  // inclusion, and the actual corrupted record here is not a balance, so
+  // offering that action would point the user at the wrong place to fix
+  // it. No accurate existing repair destination is currently identifiable
+  // from this card alone (SafeToSpendResult does not expose which specific
+  // bill/transaction is invalid) — neutral wording only, no action.
+  if (heroState === 'unavailable_other_data') {
+    return (
+      <View style={[styles.card, styles.cardWarning]}>
+        <View style={styles.labelRow}>
+          <Text style={[styles.label, styles.labelWarning]}>💰 AVAILABLE UNTIL PAYDAY</Text>
+        </View>
+        <Text style={styles.lineWarning}>Available amount unavailable</Text>
+        <Text style={styles.lineWarning}>Review your recorded money details.</Text>
+      </View>
+    );
+  }
+
   // No known payday: never invent one, and never derive an artificial
   // planning horizon (e.g. "days of runway" from a spend rate) to stand in
   // for it (PRD ask, §Adaptive hero). Two honest states instead: show the
   // balances the user has actually included (State 2), or ask them to pick
   // one if none are included yet (State 4).
-  if (!safeToSpend.hasKnownPayday) {
+  if (heroState === 'no_known_payday') {
     const hasIncludedBalance = safeToSpend.includedMoneyBalance > 0;
     return (
       <>
@@ -312,7 +333,7 @@ export function SafeToSpendHero({
   // a financial warning. Bills/savings/goals can't be meaningfully compared
   // against "available cash" until the user has told Navilo which balance
   // that is (PRD ask).
-  if (missingBalance) {
+  if (heroState === 'missing_balance') {
     return (
       <>
         <View style={[styles.card, styles.cardWarning]}>
@@ -343,7 +364,7 @@ export function SafeToSpendHero({
   // State C — a genuine recorded-spending overrun: what's actually been
   // logged this cycle exceeds the cycle's own budget, independent of the
   // included balance.
-  if (hasRecordedOverspend) {
+  if (heroState === 'recorded_overspend') {
     return (
       <>
         <View style={[styles.card, styles.cardWarning]}>
@@ -370,7 +391,7 @@ export function SafeToSpendHero({
   // overspending and not a missing-input problem — it's the ordinary
   // reality of a cycle whose income hasn't arrived yet (PRD ask: must not
   // imply money has moved or that the user did anything wrong).
-  if (commitmentsExceedCash) {
+  if (heroState === 'commitments_exceed_cash') {
     return (
       <>
         <View style={[styles.card, styles.cardWarning]}>
@@ -395,7 +416,7 @@ export function SafeToSpendHero({
 
   // Goals exist and need more than what's actually available — explain
   // rather than pretend they're on track (PRD ask).
-  if (goalsUnderfunded) {
+  if (heroState === 'goals_underfunded') {
     return (
       <>
         <View style={[styles.card, styles.cardWarning]}>
@@ -432,10 +453,12 @@ export function SafeToSpendHero({
         </View>
         <Text style={styles.line}>{heroCopy.amountLabel}</Text>
         <Text style={styles.value}>{formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))}</Text>
-        <Text style={styles.line}>
-          ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day
-          {safeToSpend.daysRemaining === 1 ? '' : 's'}
-        </Text>
+        {safeToSpend.daysRemaining > 0 ? (
+          <Text style={styles.line}>
+            ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day
+            {safeToSpend.daysRemaining === 1 ? '' : 's'}
+          </Text>
+        ) : null}
         {!hasGoalReservation ? (
           !hasActiveGoals ? (
             <TouchableOpacity style={styles.ctaButton} onPress={onCreateGoal}>

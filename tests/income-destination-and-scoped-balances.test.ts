@@ -878,8 +878,17 @@ console.log('\n=== Section 11: SafeToSpendHero.tsx — Manage balances control (
     'renderManageBalancesButton is defined once and reused everywhere (never six separate hand-written buttons)',
     (SAFE_TO_SPEND_HERO_SRC.match(/function renderManageBalancesButton\(warning\?: boolean\)/g) || []).length === 1
   );
+  // Pass 1 final closure correction, 2026-08-11: the unavailable_balance_data
+  // branch (formerly invalid_data) no longer calls renderManageBalancesButton
+  // at all — SelectBalancesSheet only toggles inclusion, it cannot repair a
+  // corrupted currentValue, so that branch now renders a distinct
+  // "Review in Wealth" action (onReviewInWealth) instead. Was 7 call sites
+  // during the prior closure pass (6 original + the since-retired
+  // invalid_data addition); back down to 6 now that unavailable_balance_data
+  // has its own, different action. unavailable_other_data never called it
+  // either, in any version.
   const callSiteCount = (SAFE_TO_SPEND_HERO_SRC.match(/\{renderManageBalancesButton\(/g) || []).length;
-  assert('renderManageBalancesButton is called from all 6 card-state render branches', callSiteCount === 6);
+  assert('renderManageBalancesButton is called from exactly 6 card-state render branches (unavailable_balance_data now uses onReviewInWealth instead)', callSiteCount === 6);
   assert(
     'The control opens the EXISTING onSelectBalances callback (Select Balances) — never a new/second balance-management surface',
     /onPress=\{onSelectBalances\}/.test(SAFE_TO_SPEND_HERO_SRC) && /accessibilityLabel="Manage balances"/.test(SAFE_TO_SPEND_HERO_SRC)

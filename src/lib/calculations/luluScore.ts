@@ -263,7 +263,31 @@ function buildResilienceCategory(data: AppData): ScoreCategory {
   const upcomingBillsBeforePayday = data.recurringItems
     .filter((r) => r.active && r.type === 'expense' && user.nextPayday && new Date(r.nextDueDate) <= new Date(user.nextPayday))
     .reduce((sum, r) => sum + r.amount, 0);
-  const hasPaydaySafetyData = !!user.nextPayday && data.recurringItems.some((r) => r.active && r.type === 'expense');
+  // availability check added (Pass 1 closure correction, 2026-08-11): this
+  // factor reads safeToSpend.cycleRemainingPool/includedMoneyBalance
+  // directly below — when the AUP calculation itself is unavailable
+  // (corrupted balance or other input), those two fields are only a
+  // floored placeholder, so this factor must fall back to the SAME
+  // existing 'not_enough_info'/0.5-fraction path it already uses for "we
+  // don't have payday data yet," rather than scoring a normal-looking
+  // result from an untrustworthy number. Reuses the existing mechanism —
+  // no new scoring semantics, no weight change.
+  // Pass 1 final closure correction, 2026-08-11: also requires
+  // moneyBalanceStatus === 'valid', not just availability === 'available'.
+  // availability alone does not distinguish a genuine $0/no-balance-
+  // selected state (moneyBalanceStatus='no_eligible_balance', which is
+  // still availability='available' — a legitimate, calculable state for
+  // computeSafeToSpend itself) from having enough DATA to assess payday
+  // safety specifically. No eligible balance means nothing was ever
+  // recorded to compare against upcoming bills — that is insufficient
+  // information for this factor, not a confirmed $0 the customer should be
+  // scored against, so it must fall back to the same existing
+  // not_enough_info path used for "no payday data yet."
+  const hasPaydaySafetyData =
+    !!user.nextPayday &&
+    data.recurringItems.some((r) => r.active && r.type === 'expense') &&
+    safeToSpend.availability === 'available' &&
+    safeToSpend.moneyBalanceStatus === 'valid';
   const notOverspent = safeToSpend.cycleRemainingPool >= 0;
   // Short-term "can you cover upcoming bills" question — must read the same
   // user-confirmed Money balance Available Until Payday uses, not the total

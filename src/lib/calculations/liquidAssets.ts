@@ -54,14 +54,44 @@ export function resolveIncludeInMoneyCalculations(asset: Pick<Asset, 'type' | 'i
  * available for everyday spending, distinct from `computeLiquidCash`'s
  * total-wealth reading. Never use `computeLiquidCash` for a Money-tab
  * calculation, and never use this function for a wealth-reporting one.
+ *
+ * A `NaN`/`Infinity`/`-Infinity` `currentValue` is excluded from this sum
+ * (never propagated into it) — see `computeMoneyBalanceStatus` below, the
+ * companion function that flags when this has happened so a caller never
+ * presents the resulting (necessarily incomplete) total as a normal,
+ * authoritative figure.
  */
 export function computeMoneyAvailableBalances(assets: Asset[]): number {
-  return assets.filter(resolveIncludeInMoneyCalculations).reduce((sum, a) => sum + a.currentValue, 0);
+  return assets
+    .filter(resolveIncludeInMoneyCalculations)
+    .filter((a) => Number.isFinite(a.currentValue))
+    .reduce((sum, a) => sum + a.currentValue, 0);
 }
 
 /** Per-account breakdown backing `computeMoneyAvailableBalances`, for
  * surfaces that need to show the user which accounts make up the total
- * (PRD ask: "allow the user to see which accounts make up the amount"). */
+ * (PRD ask: "allow the user to see which accounts make up the amount").
+ * Excludes the same non-finite entries `computeMoneyAvailableBalances`
+ * excludes, so a breakdown row never shows `$NaN`. */
 export function listMoneyAvailableAccounts(assets: Asset[]): { id: string; label: string; value: number }[] {
-  return assets.filter(resolveIncludeInMoneyCalculations).map((a) => ({ id: a.id, label: a.label, value: a.currentValue }));
+  return assets
+    .filter(resolveIncludeInMoneyCalculations)
+    .filter((a) => Number.isFinite(a.currentValue))
+    .map((a) => ({ id: a.id, label: a.label, value: a.currentValue }));
+}
+
+/** Distinguishes the three ways "how much money is available" can fail to
+ * be a normal, trustworthy figure — collapsed into one `0` by
+ * `computeMoneyAvailableBalances` alone until now, which made a legitimate
+ * $0 balance, "no balance opted in at all," and "a recorded balance is
+ * corrupted" indistinguishable to any caller. Order matters: no eligible
+ * assets is checked before invalid-data, so an empty list is always
+ * `'no_eligible_balance'`, never `'invalid_data'`. */
+export type MoneyBalanceStatus = 'valid' | 'invalid_data' | 'no_eligible_balance';
+
+export function computeMoneyBalanceStatus(assets: Asset[]): MoneyBalanceStatus {
+  const eligible = assets.filter(resolveIncludeInMoneyCalculations);
+  if (eligible.length === 0) return 'no_eligible_balance';
+  if (eligible.some((a) => !Number.isFinite(a.currentValue))) return 'invalid_data';
+  return 'valid';
 }

@@ -124,10 +124,24 @@ export function MoneyScreen() {
   const extendTimelineHorizon = useCallback(() => {
     setTimelineHorizonDays((days) => Math.min(180, days + 30));
   }, []);
-  const attentionItems = useMemo(
-    () => computeAttentionItems(timelineEvents, safeToSpend.cycleRemainingPool),
-    [timelineEvents, safeToSpend.cycleRemainingPool]
-  );
+  // Pass 1 final closure correction, 2026-08-11: computeAttentionItems
+  // itself lives in moneyTimeline.ts, a Pass 0 file preserved byte-for-byte
+  // this pass — the fix is applied here, at the call site, instead. Only a
+  // genuinely trustworthy pool is passed through; when the calculation is
+  // unavailable (an invalid participating balance or other invalid
+  // financial input) or there's no eligible balance at all, 0 is passed
+  // instead of the real (possibly negative, always at least partly
+  // placeholder) cycleRemainingPool — computeAttentionItems' only rule is
+  // `remainingPool < 0`, so this guarantees it can never fire a false
+  // "Recorded spending is currently ahead of the estimated plan" warning
+  // from data that was excluded, corrupted, or never recorded. A real bug
+  // this closes: an invalid balance mixed with a valid one previously could
+  // leave cycleRemainingPool genuinely negative (bills exceeding only the
+  // valid-only sum) while moneyBalanceStatus was already invalid_data —
+  // this call site could not previously tell the two situations apart.
+  const attentionPool =
+    safeToSpend.availability === 'available' && safeToSpend.moneyBalanceStatus === 'valid' ? safeToSpend.cycleRemainingPool : 0;
+  const attentionItems = useMemo(() => computeAttentionItems(timelineEvents, attentionPool), [timelineEvents, attentionPool]);
   const insights = useMemo(() => computeSpendingInsights(data), [data]);
   const hasTransactions = data.transactions.length > 0;
   const hasDebt = computeHasAnyDebt(data);
@@ -456,6 +470,7 @@ export function MoneyScreen() {
           setIncomeModalVisible(true);
         }}
         onSelectBalances={() => setSelectBalancesVisible(true)}
+        onReviewInWealth={() => navigation.navigate('Wealth')}
         heroCopy={heroCopy}
       />
 

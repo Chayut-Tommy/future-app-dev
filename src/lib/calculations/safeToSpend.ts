@@ -1,7 +1,13 @@
 import { AppData, PayFrequency } from '../../types/models';
 import { computeGoalAllocation, GoalAllocationResult } from './goalAllocation';
 import { toMonthlyAmount } from './incomeEngine';
-import { computeMoneyAvailableBalances, listMoneyAvailableAccounts, resolveIncludeInMoneyCalculations } from './liquidAssets';
+import {
+  computeMoneyAvailableBalances,
+  computeMoneyBalanceStatus,
+  listMoneyAvailableAccounts,
+  MoneyBalanceStatus,
+  resolveIncludeInMoneyCalculations,
+} from './liquidAssets';
 import { computeAdHocIncome } from './monthlySummary';
 import { recurringOccurrencesInRange } from './recurringSchedule';
 import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
@@ -166,7 +172,39 @@ export interface SafeToSpendResult {
    * Never adds `cycleIncomeExpected` or subtracts spend-so-far on top of
    * `includedMoneyBalance`; both are already inside it. */
   cycleRemainingPool: number;
+  /** A statement about balance eligibility and balance-data validity ONLY
+   * — never set or overwritten because of a bill, transaction, income, or
+   * any other non-balance input (Pass 1 closure correction, 2026-08-11;
+   * a prior version of this file incorrectly forced this to 'invalid_data'
+   * whenever ANY headline field went non-finite, misattributing non-balance
+   * corruption to balances). `'valid'` covers a legitimate balance
+   * including exactly $0 or negative. `'no_eligible_balance'` means no
+   * cash/everyday/savings asset is currently opted in — a real, normal
+   * state, not an error. `'invalid_data'` means at least one opted-in
+   * asset's `currentValue` is `NaN`/`Infinity`/`-Infinity` (only reachable
+   * via corrupted or legacy data — no current add/edit form can write
+   * this). See `availability` below for the overall "can this AUP
+   * calculation be trusted" signal every consumer must actually gate on —
+   * this field alone is not sufficient for that, since other inputs can
+   * also make the calculation untrustworthy without this ever changing. */
+  moneyBalanceStatus: MoneyBalanceStatus;
+  /** The overall Safe-to-Spend calculation-availability signal every
+   * consumer of `cycleRemainingPool`/`dailyAllowance`/`plannedDailyAllowance`
+   * must check before treating those fields as an authoritative amount
+   * (Pass 1 closure correction, 2026-08-11). `'available'` — the
+   * calculation succeeded (covers a legitimate `moneyBalanceStatus` of
+   * either `'valid'` or `'no_eligible_balance'`, and every other input
+   * used to compute the three fields above is finite).
+   * `'unavailable_balance_data'` — `moneyBalanceStatus === 'invalid_data'`;
+   * a participating balance is corrupted. `'unavailable_other_data'` —
+   * balances are fine, but some other input (a bill, transaction, goal
+   * reservation, etc.) produced a non-finite value. The three numeric
+   * fields above remain finite in every case (never leak NaN/Infinity) —
+   * this field is what tells a caller whether to trust them. */
+  availability: SafeToSpendAvailability;
 }
+
+export type SafeToSpendAvailability = 'available' | 'unavailable_balance_data' | 'unavailable_other_data';
 
 // One pay cycle's length in days, used to derive a cycle start when we only
 // know the next payday. Irregular income falls back to a rolling 30-day
@@ -190,6 +228,74 @@ export function cycleLengthDays(frequency: PayFrequency): number {
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/**
+ * Whole calendar days from `from`'s local calendar date to `to`'s local
+ * calendar date — a financial-calendar-date difference, not an elapsed-time
+ * one (Pass 1 date contract, 2026-08-11). Deliberately does NOT divide a
+ * millisecond difference between two local-midnight instants by 86,400,000:
+ * that arithmetic silently breaks across a Melbourne daylight-saving
+ * transition, where a local "day" is 23 or 25 real hours, not 24 — proven
+ * by a real fixture crossing the 2026-04-05 AEDT->AEST transition, which
+ * returned 8 instead of the correct 7. Instead, each date's own local
+ * Y/M/D is read via the platform's ordinary local-time getters (works
+ * under any device timezone, no hard-coded offset) and rebuilt as a
+ * DST-free UTC calendar serial before differencing, so the transition
+ * itself never enters the arithmetic.
+ */
+function calendarDaysBetween(from: Date, to: Date): number {
+  const fromSerial = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+  const toSerial = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.round((toSerial - fromSerial) / 86400000);
+}
+
+/**
+ * Which of SafeToSpendHero.tsx's card states a given result should render —
+ * extracted as a pure, real-importable function (Pass 1 closure correction,
+ * 2026-08-11) so the exact precedence order (invalid data first, then no
+ * known payday, then the three negative-cycle sub-states, then underfunded
+ * goals, then normal) is proven by a real test against the SAME logic the
+ * shipped component uses, not a hand-mirrored copy. SafeToSpendHero.tsx
+ * calls this directly rather than recomputing its own boolean chain.
+ */
+export type SafeToSpendHeroState =
+  | 'unavailable_balance_data'
+  | 'unavailable_other_data'
+  | 'no_known_payday'
+  | 'missing_balance'
+  | 'recorded_overspend'
+  | 'commitments_exceed_cash'
+  | 'goals_underfunded'
+  | 'normal';
+
+export function selectSafeToSpendHeroState(safeToSpend: SafeToSpendResult): SafeToSpendHeroState {
+  // Two distinct unavailable states (Pass 1 closure correction,
+  // 2026-08-11) — 'unavailable_balance_data' is the only one that should
+  // ever surface a Manage Balances action; 'unavailable_other_data' means
+  // the corrupted input is a bill/transaction/other non-balance value, so
+  // pointing the user at balance management would be actively wrong.
+  if (safeToSpend.availability === 'unavailable_balance_data') return 'unavailable_balance_data';
+  if (safeToSpend.availability === 'unavailable_other_data') return 'unavailable_other_data';
+  if (!safeToSpend.hasKnownPayday) return 'no_known_payday';
+
+  // Uses cycleRemainingPool directly, not dailyAllowance — dailyAllowance
+  // is deliberately 0 whenever daysRemaining is 0 (today equals payday),
+  // so it can't be used as the negative-cycle signal without silently
+  // hiding a genuinely negative pool on that exact day.
+  const hasNegativeCycle = safeToSpend.cycleRemainingPool < 0;
+  const missingBalance = hasNegativeCycle && safeToSpend.includedMoneyBalanceAccounts.length === 0;
+  const cycleRemainingPoolBeforeSpending = safeToSpend.cycleRemainingPool + safeToSpend.cashVariableSpendSoFar;
+  const hasRecordedOverspend =
+    hasNegativeCycle && !missingBalance && safeToSpend.cashVariableSpendSoFar > 0 && cycleRemainingPoolBeforeSpending >= 0;
+  const commitmentsExceedCash = hasNegativeCycle && !missingBalance && !hasRecordedOverspend;
+  const goalsUnderfunded = safeToSpend.goalAllocation.allocations.length > 0 && !safeToSpend.goalAllocation.isFullyFunded;
+
+  if (missingBalance) return 'missing_balance';
+  if (hasRecordedOverspend) return 'recorded_overspend';
+  if (commitmentsExceedCash) return 'commitments_exceed_cash';
+  if (goalsUnderfunded) return 'goals_underfunded';
+  return 'normal';
 }
 
 export function computeFixedCosts(data: AppData): number {
@@ -286,10 +392,10 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
 
   const remainingPool = discretionaryPool - variableSpendSoFar;
 
-  const daysRemaining = Math.max(
-    1,
-    Math.ceil((cycleEnd.getTime() - today.getTime()) / 86400000)
-  );
+  // Financial-calendar-date count: today through the day before payday
+  // (Pass 1 date contract) — 0 when today is payday itself, never negative
+  // if payday has already passed without the user updating it yet.
+  const daysRemaining = Math.max(0, calendarDaysBetween(today, cycleEnd));
 
   // Real dated cash-flow window for "Available Until Payday" (PRD bug
   // report: it was showing full monthly-equivalent income and bills
@@ -367,7 +473,14 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   const includedMoneyBalanceAccounts = listMoneyAvailableAccounts(data.assets);
   const cycleRemainingPool = includedMoneyBalance - cycleBillsExpected - cycleSavingsReserved - cycleGoalsReserved;
 
-  const dailyAllowance = cycleRemainingPool / daysRemaining;
+  // A per-day rate across zero (or fewer) applicable days is not a
+  // meaningful figure — Pass 1 closure correction, 2026-08-11: the prior
+  // version floored the divisor at 1, which manufactured a one-day
+  // denominator and silently presented the FULL remaining pool as if it
+  // were a single day's allowance whenever today equals payday. Safely
+  // represented as exactly 0 instead, per the existing result shape — no
+  // new field, no null. Does not authorise a daily-guide feature.
+  const dailyAllowance = daysRemaining > 0 ? cycleRemainingPool / daysRemaining : 0;
 
   // Today's spend, isolated, so Safe to Spend can react to it directly
   // rather than only moving the number tomorrow (PRD ask: "Lulu should
@@ -376,11 +489,56 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   const todaysSpend = data.transactions
     .filter((t) => t.type === 'expense' && startOfDay(new Date(t.date)).getTime() === startOfDay(today).getTime())
     .reduce((sum, t) => sum + t.amount, 0);
-  const plannedDailyAllowance = (cycleRemainingPool + todaysSpend) / daysRemaining;
+  const plannedDailyAllowance = daysRemaining > 0 ? (cycleRemainingPool + todaysSpend) / daysRemaining : 0;
 
   const hasKnownPayday = !!user.nextPayday;
 
-  return {
+  // Invalid-data guard (Pass 1 closure correction, 2026-08-11):
+  // moneyBalanceStatus is computed ONCE from data.assets and NEVER
+  // reassigned below — it must stay a statement about balances only. A
+  // participating balance can be invalid (moneyBalanceStatus='invalid_data')
+  // while the three headline fields below remain finite (the invalid entry
+  // is already excluded from includedMoneyBalance's sum by
+  // computeMoneyAvailableBalances) — that case is attributed to
+  // 'unavailable_balance_data' on its own, without needing the finite
+  // check at all. Separately, a non-balance input (a bill, transaction,
+  // goal reservation, etc.) can make one of the three fields genuinely
+  // non-finite without moneyBalanceStatus ever indicating a balance
+  // problem — proven reachable via a real NaN recurring-bill-amount
+  // fixture and a real NaN same-day-transaction fixture (see
+  // tests/safe-to-spend-closure-corrections.test.ts). That case is
+  // attributed to 'unavailable_other_data', distinct from balance blame.
+  const moneyBalanceStatus = computeMoneyBalanceStatus(data.assets);
+
+  // Pass 1 final closure correction, 2026-08-11 — a goal's targetAmount/
+  // currentAmount is genuinely part of the accepted AUP formula
+  // (cycleGoalsReserved), unlike credit-card currentBalance (never read by
+  // this file at all) or income (deliberately excluded, see
+  // cycleIncomeExpected's own doc comment). Proven via real fixtures that
+  // an invalid-but-PRESENT value here is silently coerced rather than
+  // rejected: requiredMonthlyForGoal's `!goal.targetAmount` check treats
+  // NaN identically to "no target set" (both falsy) and returns 0;
+  // computeGoalAllocation's own candidate filter (`targetAmount >
+  // currentAmount`) silently drops the goal entirely when currentAmount is
+  // NaN, since any comparison with NaN is false. Both paths zero out the
+  // goal's real funding requirement without ever producing a non-finite
+  // number the existing headline-field check would catch — cycleRemainingPool
+  // ends up silently INFLATED (a genuine goal's reserved share vanishes)
+  // rather than flagged. `targetAmount == null` (no target set yet) is
+  // deliberately NOT flagged here — that is a legitimate, common state,
+  // not corrupted data.
+  const hasInvalidGoalData = data.goals.some(
+    (g) => g.status === 'active' && ((g.targetAmount != null && !Number.isFinite(g.targetAmount)) || !Number.isFinite(g.currentAmount))
+  );
+
+  let availability: SafeToSpendAvailability = 'available';
+  if (moneyBalanceStatus === 'invalid_data') {
+    availability = 'unavailable_balance_data';
+  } else if (!Number.isFinite(cycleRemainingPool) || !Number.isFinite(dailyAllowance) || !Number.isFinite(plannedDailyAllowance) || hasInvalidGoalData) {
+    availability = 'unavailable_other_data';
+  }
+
+  const result = {
     discretionaryPool,
     remainingPool,
     daysRemaining,
@@ -406,5 +564,30 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     cycleGoalsReserved,
     cycleDiscretionaryPool,
     cycleRemainingPool,
+    moneyBalanceStatus,
+    availability,
   };
+
+  // General finite backstop (Pass 1 final closure, 2026-08-11) — widened
+  // from the three headline fields to EVERY numeric field on the result,
+  // not just the ones a known defect has already been traced to. Any
+  // top-level number that is non-finite (a future, currently-unproven
+  // contamination path) is floored to 0 and availability is escalated to
+  // unavailable_other_data (never downgraded from unavailable_balance_data,
+  // which already correctly attributes the problem to a balance). This
+  // never fires for any case proven in this pass's own test suite — it is
+  // a structural safety net, not a substitute for the specific fixes above.
+  let anyOtherFieldNonFinite = false;
+  for (const key of Object.keys(result) as (keyof typeof result)[]) {
+    const value = result[key];
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      anyOtherFieldNonFinite = true;
+      (result as any)[key] = 0;
+    }
+  }
+  if (anyOtherFieldNonFinite && result.availability !== 'unavailable_balance_data') {
+    result.availability = 'unavailable_other_data';
+  }
+
+  return result;
 }
