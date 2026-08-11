@@ -279,6 +279,9 @@ export function selectSafeToSpendHeroState(safeToSpend: SafeToSpendResult): Safe
   if (safeToSpend.availability === 'unavailable_other_data') return 'unavailable_other_data';
   if (!safeToSpend.hasKnownPayday) return 'no_known_payday';
 
+  // A derived pool is not authoritative without a participating balance.
+  if (safeToSpend.moneyBalanceStatus === 'no_eligible_balance') return 'missing_balance';
+
   // Uses cycleRemainingPool directly, not dailyAllowance — dailyAllowance
   // is deliberately 0 whenever daysRemaining is 0 (today equals payday),
   // so it can't be used as the negative-cycle signal without silently

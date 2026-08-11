@@ -193,6 +193,15 @@ console.log('\n=== Section 5: structural finite backstop — SUPERSEDED, now fix
       computeMoneyBalanceStatus([{ id: 'cash1', type: 'cash', label: 'Cash', currentValue: 1000 }]) === 'valid'
   );
   assert('every numeric field stays finite in this case', [billResult.cycleRemainingPool, billResult.dailyAllowance, billResult.plannedDailyAllowance].every(Number.isFinite));
+  // Pass 2A-0 regression guard: the new unconditional no_eligible_balance
+  // check in selectSafeToSpendHeroState only fires when
+  // moneyBalanceStatus==='no_eligible_balance' — billResult's balance is
+  // real and valid (only the bill is corrupted), so this state must remain
+  // exactly 'unavailable_other_data', unaffected by the Pass 2A-0 edit.
+  assert(
+    'Pass 2A-0: selectSafeToSpendHeroState(billResult) still returns unavailable_other_data unchanged (moneyBalanceStatus is valid here, not no_eligible_balance, so the new guard never fires)',
+    selectSafeToSpendHeroState(billResult) === 'unavailable_other_data'
+  );
 
   const txnResult = reach((d) => {
     d.transactions = [{ id: 't1', type: 'expense', category: 'other', amount: NaN, date: today.toISOString(), paymentSource: 'cash' } as any];
@@ -208,6 +217,14 @@ console.log('\n=== Section 5: structural finite backstop — SUPERSEDED, now fix
   assert(
     'a genuinely invalid participating balance is still correctly attributed to unavailable_balance_data, not unavailable_other_data',
     balanceResult.moneyBalanceStatus === 'invalid_data' && balanceResult.availability === 'unavailable_balance_data'
+  );
+  // Pass 2A-0 regression guard: moneyBalanceStatus is 'invalid_data' here,
+  // not 'no_eligible_balance' — the new guard's condition is false, so
+  // precedence stays exactly as before (unavailable_balance_data is still
+  // checked first, via the availability branch above the new guard).
+  assert(
+    'Pass 2A-0: selectSafeToSpendHeroState(balanceResult) still returns unavailable_balance_data unchanged',
+    selectSafeToSpendHeroState(balanceResult) === 'unavailable_balance_data'
   );
 
   const cardResult = reach((d) => {
@@ -272,12 +289,61 @@ console.log('\n=== Section 6: zero-day and missing-data field table (real functi
 
   const r3 = report((d) => { d.user.nextPayday = null; });
   assert('missing payday: hasKnownPayday=false, daysRemaining falls back to the 7-day rolling window, all fields finite', !r3.hasKnownPayday && r3.daysRemaining === 7 && Number.isFinite(r3.dailyAllowance));
+  // Pass 2A-0 regression guard: the new no_eligible_balance guard is placed
+  // AFTER the existing !hasKnownPayday check in selectSafeToSpendHeroState,
+  // specifically so it never interferes with no_known_payday's own,
+  // already-correct handling of its own no-balance-selected sub-case.
+  assert('Pass 2A-0: no known payday still resolves to no_known_payday, precedence unchanged', selectSafeToSpendHeroState(r3) === 'no_known_payday');
 
   const r4 = report((d) => { d.assets = [{ id: 'a', type: 'cash', label: 'Cash', currentValue: NaN }]; });
   assert('invalid balance data: daysRemaining still correctly 3 (date logic unaffected by balance validity), cycleRemainingPool/dailyAllowance/plannedDailyAllowance all floored to 0, status=invalid_data', r4.daysRemaining === 3 && r4.cycleRemainingPool === 0 && r4.dailyAllowance === 0 && r4.plannedDailyAllowance === 0 && r4.moneyBalanceStatus === 'invalid_data');
 
   const r5 = report((d) => { d.assets = []; });
   assert('no eligible balance: cycleRemainingPool=0, status=no_eligible_balance (distinct from invalid_data and from a legitimate $0)', r5.cycleRemainingPool === 0 && r5.moneyBalanceStatus === 'no_eligible_balance');
+  // Pass 2A-0 CENTRAL FIX PROOF: r5 has a known payday, moneyBalanceStatus
+  // 'no_eligible_balance', and a cycleRemainingPool that happens to be
+  // exactly 0 (no bills/savings/goals due). Before this pass,
+  // selectSafeToSpendHeroState fell through to 'normal' here (hasNegativeCycle
+  // was false, so the balance-eligibility problem was silently presented as
+  // a genuine $0 result). It must now resolve to 'missing_balance'.
+  assert(
+    'Pass 2A-0 FIX: known payday + no eligible balance + exactly-zero cycle -> missing_balance (previously fell through to normal, silently presenting the placeholder $0 pool as a genuine result)',
+    selectSafeToSpendHeroState(r5) === 'missing_balance'
+  );
+
+  const r5negative = report((d) => {
+    d.assets = [];
+    d.recurringItems = [{ id: 'b1', type: 'expense', label: 'Rent', amount: 500, frequency: 'weekly', nextDueDate: today.toISOString(), isFixed: true, active: true }];
+  });
+  assert('no eligible balance + a bill due this cycle -> cycleRemainingPool is genuinely negative', r5negative.cycleRemainingPool < 0 && r5negative.moneyBalanceStatus === 'no_eligible_balance');
+  assert(
+    'Pass 2A-0: known payday + no eligible balance + negative cycle -> missing_balance (already correct pre-fix via the existing hasNegativeCycle-gated check, confirmed still correct post-fix)',
+    selectSafeToSpendHeroState(r5negative) === 'missing_balance'
+  );
+
+  // Pass 2A-0: a genuinely positive cycleRemainingPool combined with
+  // no_eligible_balance is mathematically unreachable via computeSafeToSpend's
+  // real arithmetic — includedMoneyBalance is exactly 0 in this state, and
+  // cycleRemainingPool = includedMoneyBalance - cycleBillsExpected -
+  // cycleSavingsReserved - cycleGoalsReserved, where every subtracted term is
+  // non-negative by construction, so the result can only ever be <= 0. This
+  // is therefore a direct, isolated test of selectSafeToSpendHeroState's own
+  // unconditional precedence (built by overriding one field on a real,
+  // computed r5 result), not a claim that computeSafeToSpend itself can
+  // produce this combination — labelled per this repo's real-vs-mirrored
+  // evidence convention (tests/README.md).
+  const r5positiveOverride = { ...r5, cycleRemainingPool: 250 };
+  assert(
+    'Pass 2A-0: no_eligible_balance forces missing_balance regardless of cycleRemainingPool sign, even a hypothetical positive value (selector-only proof; this exact combination cannot arise from real computeSafeToSpend arithmetic — see comment above) — never normal',
+    selectSafeToSpendHeroState(r5positiveOverride) === 'missing_balance'
+  );
+
+  const r5genuineZero = report((d) => { d.assets = [{ id: 'a', type: 'cash', label: 'Cash', currentValue: 0 }]; });
+  assert('a genuinely eligible cash balance recorded as $0 is moneyBalanceStatus=valid, not no_eligible_balance', r5genuineZero.moneyBalanceStatus === 'valid' && r5genuineZero.cycleRemainingPool === 0);
+  assert(
+    'Pass 2A-0 regression guard: a genuine, valid recorded $0 balance still resolves to normal, unaffected by the new guard (moneyBalanceStatus is valid here, not no_eligible_balance)',
+    selectSafeToSpendHeroState(r5genuineZero) === 'normal'
+  );
 
   const r6 = report((d) => {
     d.assets = [{ id: 'a', type: 'cash', label: 'Cash', currentValue: 50 }];
@@ -288,6 +354,10 @@ console.log('\n=== Section 6: zero-day and missing-data field table (real functi
 
 console.log('\n=== Section 6b: hero state selection at the zero-day boundary stays correct for a negative pool ===');
 {
+  // moneyBalanceStatus here is 'valid' (a real $50 cash asset is present),
+  // not 'no_eligible_balance' — the Pass 2A-0 guard's condition is false, so
+  // this fixture also doubles as the required "known payday + valid negative
+  // cycle -> existing commitments_exceed_cash behaviour unchanged" proof.
   const d = baseData();
   d.user.nextPayday = new Date(2026, 7, 11).toISOString(); // today == payday
   d.assets = [{ id: 'a', type: 'cash', label: 'Cash', currentValue: 50 }];
@@ -295,8 +365,9 @@ console.log('\n=== Section 6b: hero state selection at the zero-day boundary sta
   const r = computeSafeToSpend(d, today);
   assert('today==payday with a genuinely negative pool: daysRemaining=0 and dailyAllowance=0 (suppressed)', r.daysRemaining === 0 && r.dailyAllowance === 0);
   assert('cycleRemainingPool is still negative (the real figure)', r.cycleRemainingPool < 0);
+  assert('moneyBalanceStatus is valid, not no_eligible_balance, here — confirms the Pass 2A-0 guard is inapplicable to this fixture', r.moneyBalanceStatus === 'valid');
   assert(
-    'selectSafeToSpendHeroState still correctly reports a negative-cycle state here (commitments_exceed_cash) — proves the hasNegativeCycle signal now derives from cycleRemainingPool, not the suppressed dailyAllowance, so the warning is never silently hidden on the exact payday boundary',
+    'Pass 2A-0 regression guard: selectSafeToSpendHeroState still correctly reports a negative-cycle state here (commitments_exceed_cash), unchanged — proves the hasNegativeCycle signal now derives from cycleRemainingPool, not the suppressed dailyAllowance, so the warning is never silently hidden on the exact payday boundary',
     selectSafeToSpendHeroState(r) === 'commitments_exceed_cash'
   );
 }
@@ -419,6 +490,15 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
     'unavailable_balance_data and unavailable_other_data are the FIRST two branches checked (before no_known_payday, before every negative-cycle state) — precedence proven by source order, matching selectSafeToSpendHeroState\'s own real-tested precedence above',
     SAFE_TO_SPEND_HERO_SRC.indexOf("heroState === 'unavailable_balance_data'") < SAFE_TO_SPEND_HERO_SRC.indexOf("heroState === 'unavailable_other_data'") &&
       SAFE_TO_SPEND_HERO_SRC.indexOf("heroState === 'unavailable_other_data'") < SAFE_TO_SPEND_HERO_SRC.indexOf("heroState === 'no_known_payday'")
+  );
+  assert(
+    'Pass 2A-0: the missing_balance branch never renders a formatMoney(...) call or exposes cycleRemainingPool as a numeric amount — the no_eligible_balance/missing-information state must never present an authoritative dollar figure',
+    (() => {
+      const start = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'missing_balance')");
+      const end = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'recorded_overspend')");
+      const block = SAFE_TO_SPEND_HERO_SRC.slice(start, end);
+      return start !== -1 && end !== -1 && !block.includes('formatMoney(') && !block.includes('cycleRemainingPool');
+    })()
   );
 
   // Honest scope limitation, stated per this repo's own tests/README.md
