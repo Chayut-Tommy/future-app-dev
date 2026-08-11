@@ -28,7 +28,6 @@ import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
-import { AskLuluSheet } from '../../components/navigation/AskLuluSheet';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
 import { findOpportunities, OpportunityAction } from '../../lib/calculations/opportunities';
 import { useFinancialState } from '../../lib/calculations/financialState';
@@ -61,7 +60,6 @@ export function TodayScreen() {
   const [wealthModalPresetType, setWealthModalPresetType] = useState<AssetType | undefined>(undefined);
   const [contributeGoalId, setContributeGoalId] = useState<string | null>(null);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
-  const [askLuluVisible, setAskLuluVisible] = useState(false);
 
   // Round 6 correction — the single live local-date value this screen's
   // month heading and relative-day labels derive from; see
@@ -475,7 +473,6 @@ export function TodayScreen() {
       />
       <GoalDetailSheet goal={contributeGoal} onClose={() => setContributeGoalId(null)} onCreateAnother={() => setGoalModalVisible(true)} />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
-      <AskLuluSheet visible={askLuluVisible} onClose={() => setAskLuluVisible(false)} />
     </Screen>
   );
 }

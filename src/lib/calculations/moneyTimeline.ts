@@ -32,6 +32,10 @@ export interface TimelineEvent {
    * stable id, mirroring goalId (regression-protection review, Stream A
    * §4). */
   creditCardId?: string;
+  /** Present for bnpl events — the underlying BNPL Liability's own stable
+   * id, mirroring goalId/creditCardId, so tapping a bnpl event opens the
+   * same liability editor WealthScreen already opens for a BNPL tile. */
+  bnplLiabilityId?: string;
 }
 
 function startOfDay(d: Date): Date {
@@ -157,6 +161,7 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
         label: item.label,
         amount: -(occurrence.amountCents / 100),
         recurringItemId: item.id,
+        bnplLiabilityId: liability.id,
       });
     }
   }

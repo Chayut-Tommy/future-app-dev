@@ -80,6 +80,9 @@ export function MoneyScreen() {
   // Opened by tapping a credit_card event — same pattern, reusing the
   // existing card editor.
   const [viewCreditCardId, setViewCreditCardId] = useState<string | null>(null);
+  // Opened by tapping a bnpl event — same pattern, reusing the same
+  // liability editor WealthScreen already opens for a BNPL tile.
+  const [viewBnplLiabilityId, setViewBnplLiabilityId] = useState<string | null>(null);
   const [flowPeriod, setFlowPeriod] = useState<FlowPeriod>('monthly');
   const [flowInfoVisible, setFlowInfoVisible] = useState(false);
   // Correction round, 2026-08-10 — which of Typical Money Flow's four
@@ -151,6 +154,7 @@ export function MoneyScreen() {
   // (regression-protection review, Stream A §3).
   const viewGoal = viewGoalId ? data.goals.find((g) => g.id === viewGoalId) ?? null : null;
   const viewCreditCard = viewCreditCardId ? data.creditCards.find((c) => c.id === viewCreditCardId) ?? null : null;
+  const viewBnplLiability = viewBnplLiabilityId ? data.liabilities.find((l) => l.id === viewBnplLiabilityId) ?? null : null;
   const categoryMap = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories]);
   const recentTransactions = useMemo(
     () => [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3),
@@ -167,7 +171,7 @@ export function MoneyScreen() {
     setEditBill(null);
   }
 
-  function handleTimelineEventPress(event: { kind: string; id: string; date: Date; recurringItemId?: string; goalId?: string; creditCardId?: string }) {
+  function handleTimelineEventPress(event: { kind: string; id: string; date: Date; recurringItemId?: string; goalId?: string; creditCardId?: string; bnplLiabilityId?: string }) {
     // A Savings Allocation row is a display of the one shared user-level
     // setting on a given cycle date, not an independently editable
     // transaction (PRD ask) — handled before the recurringItemId guard
@@ -187,6 +191,13 @@ export function MoneyScreen() {
     }
     if (event.kind === 'credit_card') {
       if (event.creditCardId) setViewCreditCardId(event.creditCardId);
+      return;
+    }
+    // BNPL events resolve through their own stable liability id, same as
+    // goal/credit_card above — opens the same liability editor WealthScreen
+    // already opens for a BNPL tile, rather than a new flow.
+    if (event.kind === 'bnpl') {
+      if (event.bnplLiabilityId) setViewBnplLiabilityId(event.bnplLiabilityId);
       return;
     }
     // Matched by recurringItemId, not the event id — the timeline now
@@ -746,6 +757,12 @@ export function MoneyScreen() {
       <EditSavingsAllocationModal visible={editSavingsAllocationVisible} onClose={() => setEditSavingsAllocationVisible(false)} />
       <GoalDetailSheet goal={viewGoal} onClose={() => setViewGoalId(null)} />
       <AddCreditCardModal visible={!!viewCreditCard} editCard={viewCreditCard} onClose={() => setViewCreditCardId(null)} />
+      <AddWealthItemModal
+        visible={!!viewBnplLiability}
+        kind="liability"
+        editLiability={viewBnplLiability}
+        onClose={() => setViewBnplLiabilityId(null)}
+      />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <InfoSheet visible={flowInfoVisible} onClose={() => setFlowInfoVisible(false)} title="About Typical Money Flow">
