@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
@@ -8,7 +9,12 @@ import { computeMoneyPlan } from '../../lib/calculations/moneyPlan';
 import { deriveDisplayedWaterfall } from '../../lib/calculations/moneyWaterfall';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { DebtCoachSheet } from '../debt/DebtCoachSheet';
+import { MoneyFlowCategoryDetailSheet } from './MoneyFlowCategoryDetailSheet';
+import { computeMoneyFlowCategoryBreakdown, MoneyFlowCategory } from '../../lib/calculations/moneyFlowBreakdown';
+import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
 import { brand } from '../../lib/brand';
+
+const CATEGORY_LABELS: Record<MoneyFlowCategory, string> = { income: 'Income', bills: 'Bills', savings: 'Savings', goals: 'Goals' };
 
 function formatMoney(value: number): string {
   const sign = value < 0 ? '-' : '';
@@ -34,13 +40,40 @@ function formatMoney(value: number): string {
  * not `plan.discretionaryPool` — that field floors at 0 for callers that
  * need a non-negative allowance (e.g. the hero's cycle math), which would
  * hide a genuine shortfall behind a misleading $0 here (PRD ask).
+ *
+ * Correction pass, 2026-08-10 — this card is only ever rendered as a child
+ * of MoneyScreen (`{data.user.monthlyIncome > 0 ? <MoneyPlanCard /> : null}`),
+ * which already owns AddIncomeModal/AddRecurringItemModal/AddGoalModal/
+ * EditSavingsAllocationModal for its own equivalent CTAs. An earlier draft
+ * of this round mounted a second, independent instance of each of those
+ * four forms here — the smallest-shared-callback architecture below
+ * removes that duplication: the four zero-state CTAs below call up to
+ * parent-owned callbacks instead of managing local visibility state and a
+ * second copy of each form.
  */
-export function MoneyPlanCard() {
+export function MoneyPlanCard({
+  onAddIncome,
+  onAddBill,
+  onAddGoal,
+  onManageSavingsAllocation,
+}: {
+  onAddIncome: () => void;
+  onAddBill: () => void;
+  onAddGoal: () => void;
+  onManageSavingsAllocation: () => void;
+}) {
   const { data } = useAppState();
+  const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
   const [investVisible, setInvestVisible] = useState(false);
   const [savingsVisible, setSavingsVisible] = useState(false);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
+  // Correction round, 2026-08-10 — Typical Monthly Allocation's own
+  // instance of the shared MoneyFlowCategoryDetailSheet, always at
+  // 'monthly' — never inherits Typical Money Flow's Weekly/Fortnightly
+  // toggle, since the two are entirely separate state.
+  const [flowDetailCategory, setFlowDetailCategory] = useState<MoneyFlowCategory | null>(null);
+  const currentDate = useCurrentLocalDate();
 
   const plan = useMemo(() => computeMoneyPlan(data), [data]);
   const hasDebt = data.liabilities.length > 0;
@@ -68,6 +101,65 @@ export function MoneyPlanCard() {
     { key: 'savings', label: 'Savings', value: displayedSavings, icon: 'trending-up' as const, iconColor: colors.aiBlue, iconBg: colors.aiBlueSoft, sign: -1 },
     { key: 'goals', label: 'Goals', value: displayedGoals, icon: 'flag' as const, iconColor: colors.purple, iconBg: colors.purpleSoft, sign: -1 },
   ];
+
+  // Correction round, 2026-08-10 — the same shared, itemised breakdown
+  // Typical Money Flow uses, always parameterised 'monthly' here. Never
+  // recomputes fixedExpensesMonthly/bnplMonthlyExpected/etc independently —
+  // computeMoneyFlowCategoryBreakdown itself reuses computeSafeToSpend's
+  // own totals.
+  const flowDetailBreakdown = useMemo(
+    () => (flowDetailCategory ? computeMoneyFlowCategoryBreakdown(data, flowDetailCategory, 'monthly', currentDate) : null),
+    [flowDetailCategory, data, currentDate]
+  );
+
+  function flowDetailEmptyState(): { text: string; ctaLabel: string | null; onCta: (() => void) | null } {
+    if (!flowDetailCategory || !flowDetailBreakdown) return { text: '', ctaLabel: null, onCta: null };
+    const state = flowDetailBreakdown.configurationState;
+    switch (flowDetailCategory) {
+      case 'income':
+        return state === 'not_configured'
+          ? { text: 'No regular income is set up yet.', ctaLabel: 'Add income', onCta: onAddIncome }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'Your income sources are currently inactive.'
+                  : "Your income is currently $0 once rounded — it's still set up.",
+              ctaLabel: 'Manage income',
+              onCta: onAddIncome,
+            };
+      case 'bills':
+        return state === 'not_configured'
+          ? { text: 'No regular bills are set up yet.', ctaLabel: 'Add bill', onCta: onAddBill }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'Your bills are currently inactive.'
+                  : "Your bills are currently $0 once rounded — they're still set up.",
+              ctaLabel: 'Manage bills',
+              onCta: onAddBill,
+            };
+      case 'savings':
+        return state === 'not_configured'
+          ? { text: 'No savings allocation is set up yet.', ctaLabel: 'Set up savings allocation', onCta: onManageSavingsAllocation }
+          : {
+              text: "Your savings allocation is currently $0 because there's no regular income to calculate it from.",
+              ctaLabel: 'Manage savings allocation',
+              onCta: onManageSavingsAllocation,
+            };
+      case 'goals':
+        return state === 'not_configured'
+          ? { text: 'No goals are set up yet.', ctaLabel: 'Add goal', onCta: onAddGoal }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'You have goals set up, but none are currently active.'
+                  : 'You have goals set up, but nothing is currently allocated to them each month.',
+              ctaLabel: 'View goals',
+              onCta: () => navigation.navigate('Goals'),
+            };
+    }
+  }
+  const flowDetailEmpty = flowDetailEmptyState();
 
   const styles = useMemo(
     () =>
@@ -119,7 +211,14 @@ export function MoneyPlanCard() {
         <>
           {steps.map((step, idx) => (
             <React.Fragment key={step.key}>
-              <View style={styles.stepRow}>
+              <TouchableOpacity
+                style={styles.stepRow}
+                activeOpacity={0.7}
+                onPress={() => setFlowDetailCategory(step.key as MoneyFlowCategory)}
+                accessibilityRole="button"
+                accessibilityLabel={`${step.label}, ${formatMoney(Math.abs(step.value))}`}
+                accessibilityHint="Opens a breakdown of what makes up this amount"
+              >
                 <View style={[styles.stepIcon, { backgroundColor: step.iconBg }]}>
                   <Ionicons name={step.icon} size={15} color={step.iconColor} />
                 </View>
@@ -128,7 +227,8 @@ export function MoneyPlanCard() {
                   {step.sign > 0 ? '+' : '-'}
                   {formatMoney(Math.abs(step.value))}
                 </Text>
-              </View>
+                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              </TouchableOpacity>
               {idx < steps.length - 1 ? (
                 <View style={styles.arrowRow}>
                   <Ionicons name="arrow-down" size={14} color={colors.textMuted} />
@@ -176,6 +276,18 @@ export function MoneyPlanCard() {
       <AddWealthItemModal visible={investVisible} kind="asset" presetAssetType="etf" onClose={() => setInvestVisible(false)} />
       <AddWealthItemModal visible={savingsVisible} kind="asset" presetAssetType="savings" onClose={() => setSavingsVisible(false)} />
       <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
+
+      <MoneyFlowCategoryDetailSheet
+        visible={flowDetailCategory !== null}
+        onClose={() => setFlowDetailCategory(null)}
+        categoryLabel={flowDetailCategory ? CATEGORY_LABELS[flowDetailCategory] : ''}
+        periodLabel="Monthly"
+        totalCents={flowDetailBreakdown?.totalCents ?? 0}
+        items={flowDetailBreakdown?.items ?? []}
+        emptyStateText={flowDetailEmpty.text || null}
+        ctaLabel={flowDetailEmpty.ctaLabel}
+        onCta={flowDetailEmpty.onCta}
+      />
     </SectionCard>
   );
 }

@@ -34,7 +34,6 @@ import { findOpportunities, OpportunityAction } from '../../lib/calculations/opp
 import { useFinancialState } from '../../lib/calculations/financialState';
 import { computeAchievements } from '../../lib/calculations/achievements';
 import { pickDailyInsight } from '../../lib/calculations/dailyInsight';
-import { daysUntilDue } from '../../lib/calculations/creditHealth';
 import { timeAwareGreeting, computeCheckInLine } from '../../lib/calculations/greeting';
 import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration, computeScoreMilestoneCelebration } from '../../lib/celebrations';
 import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
@@ -130,15 +129,6 @@ export function TodayScreen() {
   // in the already-open sheet (PRD bug report: "still behaves like active"
   // right after reaching 100%).
   const contributeGoal = data.goals.find((g) => g.id === contributeGoalId) ?? null;
-
-  const upcomingCards = useMemo(
-    () =>
-      data.creditCards
-        .map((c) => ({ card: c, days: daysUntilDue(c.dueDay, currentDate) }))
-        .filter((c) => c.days <= 7)
-        .sort((a, b) => a.days - b.days),
-    [data.creditCards, currentDate]
-  );
 
   // Celebrate a newly unlocked "Your Journey" milestone the moment it
   // happens (PRD ask: Lulu should feel alive, not a passive checklist).
@@ -308,9 +298,6 @@ export function TodayScreen() {
         quickButtonOther: { backgroundColor: colors.surfaceMuted },
         quickButtonText: { ...typography.micro, fontSize: 11, color: colors.accentStrong, fontWeight: '700' },
         quickButtonTextOther: { color: colors.textSecondary },
-        paymentRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-        paymentLabel: { ...typography.caption, fontSize: 13, color: colors.textPrimary },
-        paymentDue: { ...typography.micro, color: colors.textSecondary },
       }),
     [colors, spacing, typography, radius, glow, cardShadow, insets.top]
   );
@@ -378,7 +365,7 @@ export function TodayScreen() {
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{monthLabel} so far</Text>
       </View>
-      <MonthSnapshotCard today={currentDate} />
+      <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
 
       {/* 5. Key recommendation — one thing at a time, Lulu talking, not a
           checklist (PRD ask). Comes after Journey: celebrate first, then
@@ -476,18 +463,6 @@ export function TodayScreen() {
         <ProfileNudgeCard />
         <LoanBalanceReminderCard />
       </View>
-
-      {upcomingCards.length > 0 ? (
-        <SectionCard>
-          <Text style={styles.sectionTitle}>Upcoming payments</Text>
-          {upcomingCards.map(({ card, days }) => (
-            <View key={card.id} style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>{card.label}</Text>
-              <Text style={styles.paymentDue}>{days <= 0 ? 'Due today' : days === 1 ? 'Due tomorrow' : `Due in ${days} days`}</Text>
-            </View>
-          ))}
-        </SectionCard>
-      ) : null}
 
       <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />

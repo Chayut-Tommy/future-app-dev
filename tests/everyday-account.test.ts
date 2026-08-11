@@ -60,6 +60,7 @@ import { computeSafeToSpend } from '../src/lib/calculations/safeToSpend';
 import { computeMonthToDateActivity } from '../src/lib/calculations/monthlySummary';
 import { computeAchievements } from '../src/lib/calculations/achievements';
 import { parseMoneyInput, parseMoneyInputAllowZero } from '../src/lib/calculations/money';
+import { LIQUID_BALANCE_TYPES, isEligibleLiquidBalance } from '../src/lib/calculations/moveMoneyEligibility';
 import type { AppData, Asset } from '../src/types/models';
 
 let failures = 0;
@@ -343,21 +344,26 @@ console.log('\n=== 25. Existing Navilo Score, achievements, milestones and oppor
   );
 }
 
-console.log('\n=== 26. Everyday Account does not appear in Move Money (Structural — TransferForm.tsx cannot be imported) ===');
+console.log('\n=== 26. Everyday Account Move Money eligibility (real import + structural) ===');
 {
-  // Correction pass (2026-08-08) — TransferForm.tsx's nonCashAssets filter
-  // was found to silently include 'everyday' (neither 'cash' nor
-  // 'savings', so it fell into the generic "everything else" destination
-  // bucket) and was fixed. This assertion now confirms the FIX, not mere
-  // absence of a touch — see tests/everyday-account-provider-and-select-balances.test.ts
-  // for the fuller Move Money exclusion coverage.
+  // Move Money architecture correction (2026-08-10) — the earlier
+  // 2026-08-08 exclusion of Everyday Account from Move Money (asserted by
+  // this section until now) was DELIBERATELY REVERSED by the approved
+  // Move Money correction round: Everyday Accounts are now a fully
+  // eligible Move Money source AND destination, alongside Cash and
+  // Savings, via the single shared allowlist in moveMoneyEligibility.ts
+  // (LIQUID_BALANCE_TYPES) that both TransferForm.tsx and
+  // transferFundsTransition import — never a TransferForm.tsx-local
+  // filter that could silently drift. This is a real-import (Class A)
+  // check of the actual shared predicate, not a mirrored regex.
+  assert("26a. The shared LIQUID_BALANCE_TYPES allowlist includes 'everyday'", LIQUID_BALANCE_TYPES.includes('everyday'));
   assert(
-    "26a. TransferForm.tsx's From (cashAssets) filter still excludes 'everyday'",
-    /const cashAssets = data\.assets\.filter\(\(a\) => a\.type === 'cash' \|\| a\.type === 'savings'\);/.test(TRANSFER_FORM_SRC)
+    "26b. isEligibleLiquidBalance (the real, shared predicate) accepts an Everyday Account",
+    isEligibleLiquidBalance({ type: 'everyday' })
   );
   assert(
-    "26b. TransferForm.tsx's To (nonCashAssets) filter now explicitly excludes 'everyday' too — the confirmed fix",
-    /const nonCashAssets = data\.assets\.filter\(\(a\) => a\.type !== 'cash' && a\.type !== 'savings' && a\.type !== 'everyday'\);/.test(TRANSFER_FORM_SRC)
+    '26c. Structural: TransferForm.tsx sources its From/To eligibility from the shared moveMoneyEligibility.ts module, not a local inline filter',
+    /listEligibleLiquidBalances/.test(TRANSFER_FORM_SRC) && /listEligibleLiquidDestinations/.test(TRANSFER_FORM_SRC)
   );
 }
 

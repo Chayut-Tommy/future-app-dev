@@ -41,6 +41,7 @@ import { applyNewTransaction, applyTransactionUpdate, applyTransactionDelete } f
 import { computeMoneyAvailableBalances } from '../src/lib/calculations/liquidAssets';
 import { computeAccessibleNetWorth } from '../src/lib/calculations/wealthDefinitions';
 import { computeAchievements } from '../src/lib/calculations/achievements';
+import { listEligibleLiquidBalances, listEligibleLiquidDestinations } from '../src/lib/calculations/moveMoneyEligibility';
 import type { AppData, Asset, Transaction } from '../src/types/models';
 
 let failures = 0;
@@ -74,24 +75,31 @@ function assetById(data: AppData, id: string): Asset {
   return a;
 }
 
-console.log('=== 1. Move Money exclusion — both directions (Mirrored, tied to shipped source) ===');
+console.log('=== 1. Move Money Everyday Account eligibility (Real import — architecture correction, 2026-08-10) ===');
 {
+  // Move Money architecture correction (2026-08-10): the 2026-08-08
+  // exclusion this section previously asserted was DELIBERATELY REVERSED
+  // by the approved Move Money correction round. Everyday Accounts are now
+  // a fully eligible Move Money source AND destination, alongside Cash and
+  // Savings, via the single shared allowlist in moveMoneyEligibility.ts
+  // that both TransferForm.tsx and transferFundsTransition import — see
+  // tests/transfer-funds-wiring.test.ts and tests/everyday-account.test.ts
+  // (section 26) for the fuller shared-module coverage. This section now
+  // proves the real, shared predicate directly rather than mirroring a
+  // TransferForm.tsx-local filter that no longer exists.
   const data = baseData([cashAsset(), everydayAsset(), { id: 'savings-1', type: 'savings', label: 'Savings', currentValue: 500 }]);
-  // Verbatim mirror of TransferForm.tsx's own two filters.
-  const cashAssetsMirror = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings');
-  const nonCashAssetsMirror = data.assets.filter((a) => a.type !== 'cash' && a.type !== 'savings' && a.type !== 'everyday');
-  assert('1a. "From" list (cashAssets) never includes an Everyday Account', !cashAssetsMirror.some((a) => a.type === 'everyday'));
-  assert('1b. "To" list (nonCashAssets) never includes an Everyday Account — the confirmed fix', !nonCashAssetsMirror.some((a) => a.type === 'everyday'));
-  assert('1c. "From" list still includes Cash and Savings (accepted behaviour preserved)', cashAssetsMirror.length === 2);
+  const sourceEligible = listEligibleLiquidBalances(data.assets);
+  const destinationEligible = listEligibleLiquidDestinations(data.assets, cashAsset().id);
+  assert('1a. "From" list (shared eligible-source predicate) includes the Everyday Account', sourceEligible.some((a) => a.type === 'everyday'));
+  assert('1b. "To" list (shared eligible-destination predicate) includes the Everyday Account', destinationEligible.some((a) => a.type === 'everyday'));
+  assert('1c. Both lists still include Cash and Savings (accepted behaviour preserved)', sourceEligible.length === 3);
   assert(
-    '1d. mirror matches shipped TransferForm.tsx cashAssets filter text exactly',
-    /const cashAssets = data\.assets\.filter\(\(a\) => a\.type === 'cash' \|\| a\.type === 'savings'\);/.test(TRANSFER_FORM_SRC)
+    '1d. Structural: TransferForm.tsx sources its "From" list from the shared listEligibleLiquidBalances, not a local inline filter',
+    /listEligibleLiquidBalances/.test(TRANSFER_FORM_SRC)
   );
   assert(
-    '1e. mirror matches shipped TransferForm.tsx nonCashAssets filter text exactly',
-    /const nonCashAssets = data\.assets\.filter\(\(a\) => a\.type !== 'cash' && a\.type !== 'savings' && a\.type !== 'everyday'\);/.test(
-      TRANSFER_FORM_SRC
-    )
+    '1e. Structural: TransferForm.tsx sources its "To" list from the shared listEligibleLiquidDestinations, not a local inline filter',
+    /listEligibleLiquidDestinations/.test(TRANSFER_FORM_SRC)
   );
 }
 

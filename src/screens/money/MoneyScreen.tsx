@@ -28,6 +28,8 @@ import { computeSpendingInsights } from '../../lib/calculations/spendingInsights
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { deriveDisplayedWaterfall } from '../../lib/calculations/moneyWaterfall';
 import { FlowPeriod, fromMonthlyAmount } from '../../lib/calculations/incomeEngine';
+import { computeMoneyFlowCategoryBreakdown, MoneyFlowCategory } from '../../lib/calculations/moneyFlowBreakdown';
+import { MoneyFlowCategoryDetailSheet } from '../../components/money/MoneyFlowCategoryDetailSheet';
 import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { computeMoneyTimeline, computeAttentionItems } from '../../lib/calculations/moneyTimeline';
 import { MoneyTimelineCard } from '../../components/money/MoneyTimelineCard';
@@ -80,6 +82,13 @@ export function MoneyScreen() {
   const [viewCreditCardId, setViewCreditCardId] = useState<string | null>(null);
   const [flowPeriod, setFlowPeriod] = useState<FlowPeriod>('monthly');
   const [flowInfoVisible, setFlowInfoVisible] = useState(false);
+  // Correction round, 2026-08-10 — which of Typical Money Flow's four
+  // category rows currently has its shared read-only breakdown sheet open,
+  // if any. Always uses the currently-selected flowPeriod — Typical
+  // Monthly Allocation (MoneyPlanCard.tsx) owns its own separate instance
+  // of the same shared MoneyFlowCategoryDetailSheet component, always at
+  // 'monthly', so the two surfaces can never inherit each other's period.
+  const [flowDetailCategory, setFlowDetailCategory] = useState<MoneyFlowCategory | null>(null);
   const [thisMonthInfoVisible, setThisMonthInfoVisible] = useState(false);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [selectBalancesVisible, setSelectBalancesVisible] = useState(false);
@@ -222,20 +231,20 @@ export function MoneyScreen() {
   // plan is paid off) — so this "typical" row never overstates a finite
   // BNPL commitment beyond what's genuinely still owed.
   const typicalBills = fromMonthlyAmount(safeToSpend.fixedExpensesMonthly + safeToSpend.bnplMonthlyExpected, flowPeriod);
-  // Savings Allocation and goal contributions combined into one concise row
-  // here (PRD ask) — the detailed split remains visible in Typical Monthly
-  // Allocation's waterfall below.
-  const typicalSavingsAndGoals = fromMonthlyAmount(
-    safeToSpend.savingsAllocationMonthly + safeToSpend.goalContributionsMonthly,
-    flowPeriod
-  );
+  // Correction round, 2026-08-10 — Savings and Goals are now two
+  // independent rows (previously one merged "savings and goals" row) so
+  // each can carry its own tappable, itemised drill-down — matching
+  // Typical Monthly Allocation's own already-separate Savings/Goals rows
+  // exactly, rather than the other way around.
+  const typicalSavings = fromMonthlyAmount(safeToSpend.savingsAllocationMonthly, flowPeriod);
+  const typicalGoals = fromMonthlyAmount(safeToSpend.goalContributionsMonthly, flowPeriod);
   // Signed recurring net, derived as a rounded-dollar "balancing plug" —
-  // displayed(income) - displayed(bills) - displayed(savingsAndGoals) —
-  // rather than independently rounding the raw net. Independently rounding
-  // all four rows can disagree by $1 (verified: ~21% of weekly/fortnightly
-  // conversions swept across a realistic income/bills/savings range produce
-  // a mismatch, since four separately-rounded numbers don't generally sum
-  // to a fifth independently-rounded number). This guarantees the four
+  // displayed(income) - displayed(bills) - displayed(savings) -
+  // displayed(goals) — rather than independently rounding the raw net.
+  // Independently rounding every row can disagree by $1 (verified: ~21% of
+  // weekly/fortnightly conversions swept across a realistic income/bills/
+  // savings range produce a mismatch, since separately-rounded numbers
+  // don't generally sum to a separately-rounded total). This guarantees the
   // numbers actually on screen always reconcile exactly, matching the
   // standard "balancing plug" convention finance UIs use for this exact
   // class of rounding problem. discretionaryPool itself stays floored,
@@ -246,36 +255,85 @@ export function MoneyScreen() {
   // cards can't drift onto different rounding behaviour.
   const {
     displayedIncome: displayedTypicalIncome,
-    displayedDeductions: [displayedTypicalBills, displayedTypicalSavingsAndGoals],
+    displayedDeductions: [displayedTypicalBills, displayedTypicalSavings, displayedTypicalGoals],
     displayedNet: displayedTypicalNet,
-  } = deriveDisplayedWaterfall(typicalIncome, [typicalBills, typicalSavingsAndGoals]);
-  const flowRows = [
-    {
-      key: 'income',
-      label: `Typical ${periodAdjective} income`,
-      value: displayedTypicalIncome,
-      color: colors.accent,
-      onPress: () => {
-        setEditIncome(null);
-        setIncomeModalVisible(true);
-      },
-    },
-    { key: 'bills', label: `Typical ${periodAdjective} bills`, value: displayedTypicalBills, color: colors.navy, onPress: undefined },
-    {
-      key: 'savingsGoals',
-      label: `Typical ${periodAdjective} savings and goals`,
-      value: displayedTypicalSavingsAndGoals,
-      color: colors.aiBlue,
-      onPress: undefined,
-    },
-    {
-      key: 'remainder',
-      label: displayedTypicalNet >= 0 ? `Typical ${periodAdjective} remainder` : `Typical ${periodAdjective} shortfall`,
-      value: Math.abs(displayedTypicalNet),
-      color: displayedTypicalNet >= 0 ? colors.successBright : colors.warning,
-      onPress: undefined,
-    },
+  } = deriveDisplayedWaterfall(typicalIncome, [typicalBills, typicalSavings, typicalGoals]);
+  // Every category row is now independently tappable, opening the one
+  // shared read-only MoneyFlowCategoryDetailSheet — Unallocated/Remainder
+  // stays non-interactive, out of this round's drill-down scope.
+  const flowRows: { key: MoneyFlowCategory; label: string; value: number; color: string }[] = [
+    { key: 'income', label: `Typical ${periodAdjective} income`, value: displayedTypicalIncome, color: colors.accent },
+    { key: 'bills', label: `Typical ${periodAdjective} bills`, value: displayedTypicalBills, color: colors.navy },
+    { key: 'savings', label: `Typical ${periodAdjective} savings`, value: displayedTypicalSavings, color: colors.aiBlue },
+    { key: 'goals', label: `Typical ${periodAdjective} goals`, value: displayedTypicalGoals, color: colors.purple },
   ];
+  const remainderRow = {
+    label: displayedTypicalNet >= 0 ? `Typical ${periodAdjective} remainder` : `Typical ${periodAdjective} shortfall`,
+    value: Math.abs(displayedTypicalNet),
+    color: displayedTypicalNet >= 0 ? colors.successBright : colors.warning,
+  };
+
+  const flowDetailBreakdown = useMemo(
+    () => (flowDetailCategory ? computeMoneyFlowCategoryBreakdown(data, flowDetailCategory, flowPeriod, currentDate) : null),
+    [flowDetailCategory, data, flowPeriod, currentDate]
+  );
+
+  const CATEGORY_LABELS: Record<MoneyFlowCategory, string> = { income: 'Income', bills: 'Bills', savings: 'Savings', goals: 'Goals' };
+  const PERIOD_LABELS: Record<FlowPeriod, string> = { weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly' };
+
+  // Zero-state copy/CTA per category — distinguishes "not configured" from
+  // "configured but currently zero" from "records exist but are inactive"
+  // (PRD ask: never say "not set up" merely because the current calculated
+  // contribution rounds to zero). Reuses the exact existing Add/Manage
+  // journeys already mounted on this screen — never a duplicated form.
+  function flowDetailEmptyState(): { text: string; ctaLabel: string | null; onCta: (() => void) | null } {
+    if (!flowDetailCategory || !flowDetailBreakdown) return { text: '', ctaLabel: null, onCta: null };
+    const state = flowDetailBreakdown.configurationState;
+    switch (flowDetailCategory) {
+      case 'income':
+        return state === 'not_configured'
+          ? { text: 'No regular income is set up yet.', ctaLabel: 'Add income', onCta: () => { setEditIncome(null); setIncomeModalVisible(true); } }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'Your income sources are currently inactive.'
+                  : "Your income is currently $0 once rounded — it's still set up.",
+              ctaLabel: 'Manage income',
+              onCta: () => { setEditIncome(null); setIncomeModalVisible(true); },
+            };
+      case 'bills':
+        return state === 'not_configured'
+          ? { text: 'No regular bills are set up yet.', ctaLabel: 'Add bill', onCta: openAddBill }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'Your bills are currently inactive.'
+                  : "Your bills are currently $0 once rounded — they're still set up.",
+              ctaLabel: 'Manage bills',
+              onCta: openAddBill,
+            };
+      case 'savings':
+        return state === 'not_configured'
+          ? { text: 'No savings allocation is set up yet.', ctaLabel: 'Set up savings allocation', onCta: () => setEditSavingsAllocationVisible(true) }
+          : {
+              text: "Your savings allocation is currently $0 because there's no regular income to calculate it from.",
+              ctaLabel: 'Manage savings allocation',
+              onCta: () => setEditSavingsAllocationVisible(true),
+            };
+      case 'goals':
+        return state === 'not_configured'
+          ? { text: 'No goals are set up yet.', ctaLabel: 'Add goal', onCta: () => setGoalModalVisible(true) }
+          : {
+              text:
+                state === 'inactive_or_excluded'
+                  ? 'You have goals set up, but none are currently active.'
+                  : 'You have goals set up, but nothing is currently allocated to them each month.',
+              ctaLabel: 'View goals',
+              onCta: () => navigation.navigate('Goals'),
+            };
+    }
+  }
+  const flowDetailEmpty = flowDetailEmptyState();
 
   const styles = useMemo(
     () =>
@@ -300,8 +358,9 @@ export function MoneyScreen() {
         periodToggleTextActive: { color: colors.onAccent },
 
         // Money Flow bars
-        barBlock: { marginBottom: spacing.md },
-        barLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+        barBlock: { marginBottom: spacing.md, minHeight: 24, justifyContent: 'center' },
+        barLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+        barLabelWithChevron: { flexDirection: 'row', alignItems: 'center', gap: 4 },
         barLabel: { ...typography.body, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
         barValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
 
@@ -540,19 +599,52 @@ export function MoneyScreen() {
           <TouchableOpacity
             key={row.key}
             style={styles.barBlock}
-            activeOpacity={row.onPress ? 0.7 : 1}
-            onPress={row.onPress}
-            disabled={!row.onPress}
+            activeOpacity={0.7}
+            onPress={() => setFlowDetailCategory(row.key)}
+            accessibilityRole="button"
+            accessibilityLabel={`${row.label}, ${formatMoney(row.value)}`}
+            accessibilityHint="Opens a breakdown of what makes up this amount"
           >
             <View style={styles.barLabelRow}>
-              <Text style={styles.barLabel}>{row.label}</Text>
-              <Text style={styles.barValue}>{row.key === 'income' && row.value <= 0 ? 'Add income' : formatMoney(row.value)}</Text>
+              <View style={styles.barLabelWithChevron}>
+                <Text style={styles.barLabel}>{row.label}</Text>
+                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              </View>
+              <Text style={styles.barValue}>{formatMoney(row.value)}</Text>
             </View>
           </TouchableOpacity>
         ))}
+        <View style={styles.barBlock}>
+          <View style={styles.barLabelRow}>
+            <Text style={styles.barLabel}>{remainderRow.label}</Text>
+            <Text style={styles.barValue}>{formatMoney(remainderRow.value)}</Text>
+          </View>
+        </View>
       </SectionCard>
 
-      {data.user.monthlyIncome > 0 ? <MoneyPlanCard /> : null}
+      <MoneyFlowCategoryDetailSheet
+        visible={flowDetailCategory !== null}
+        onClose={() => setFlowDetailCategory(null)}
+        categoryLabel={flowDetailCategory ? CATEGORY_LABELS[flowDetailCategory] : ''}
+        periodLabel={PERIOD_LABELS[flowPeriod]}
+        totalCents={flowDetailBreakdown?.totalCents ?? 0}
+        items={flowDetailBreakdown?.items ?? []}
+        emptyStateText={flowDetailEmpty.text || null}
+        ctaLabel={flowDetailEmpty.ctaLabel}
+        onCta={flowDetailEmpty.onCta}
+      />
+
+      {data.user.monthlyIncome > 0 ? (
+        <MoneyPlanCard
+          onAddIncome={() => {
+            setEditIncome(null);
+            setIncomeModalVisible(true);
+          }}
+          onAddBill={openAddBill}
+          onAddGoal={() => setGoalModalVisible(true)}
+          onManageSavingsAllocation={() => setEditSavingsAllocationVisible(true)}
+        />
+      ) : null}
 
       {/* End of Month Outlook is temporarily hidden (PRD ask, Decision 4) —
           the old calculation was not a genuine calendar-month forecast (no

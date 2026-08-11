@@ -24,6 +24,7 @@ import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
 import { moneyAmountToCents } from '../lib/calculations/money';
 import { resolveBnplLinkedItems, toBalanceCentsAllowingZero } from '../lib/calculations/bnpl';
 import { resolveIncomeDestinationAsset } from '../lib/calculations/incomeDestinations';
+import { isEligibleLiquidBalance, listEligibleDebtDestinations } from '../lib/calculations/moveMoneyEligibility';
 import {
   initialPersistenceState,
   issueWrite,
@@ -1421,6 +1422,28 @@ export function deleteLiabilityTransition(data: AppData, id: string): AppData {
   return upsertNetWorthHistory({ ...data, liabilities: data.liabilities.filter((l) => l.id !== id), recurringItems });
 }
 
+export type TransferFundsResult =
+  | { applied: true; data: AppData; effectiveAmountCents: number }
+  | {
+      applied: false;
+      data: AppData;
+      reason:
+        | 'invalid_amount'
+        | 'source_missing'
+        | 'destination_missing'
+        | 'source_not_eligible'
+        | 'destination_not_eligible'
+        | 'same_balance'
+        | 'invalid_recorded_balance'
+        | 'insufficient_source'
+        | 'exceeds_liability_balance';
+      /** Only set when reason === 'invalid_recorded_balance' — internal
+       * diagnostic detail (which stored record failed conversion), never
+       * surfaced verbatim to the customer; the UI maps every value of this
+       * reason to one neutral message regardless of side. */
+      invalidBalanceSide?: 'source' | 'destination' | 'liability';
+    };
+
 /**
  * Moves money between two places the user already owns — buying
  * investments with cash, or paying down a liability with cash. Both sides
@@ -1434,43 +1457,104 @@ export function deleteLiabilityTransition(data: AppData, id: string): AppData {
  * Correction, 2026-08-10 — This Month round: pulled out as its own pure,
  * exported, directly-testable function (same rationale as every other
  * transition in this file — a production behaviour this important must be
- * exercisable against the exact code the app runs). Also fixes a confirmed
+ * exercisable against the exact code the app runs). Also fixed a confirmed
  * pre-existing defect: when the target liability is a credit card's
  * mirrored liability (`creditCardId` set), the matching
- * `CreditCard.currentBalance` is now healed to the liability's own EXACT
+ * `CreditCard.currentBalance` is healed to the liability's own EXACT
  * resulting balance, not decremented from the card's own (possibly
- * already-stale) currentBalance. Before this fix, "Pay down [Card]" only
- * ever updated `data.liabilities` — `data.creditCards`, the record
- * `computeCreditCardBalanceTotal` (and so This Month's credit-card
- * snapshot, CardsScreen, every creditHealth.ts aggregate) actually reads,
- * was never touched, so the two records could silently diverge and stay
- * diverged indefinitely (confirmed reachable: TransferForm.tsx's
- * transferableLiabilities filter only excludes BNPL, never credit_card).
- * Setting the card to the liability's resulting value — not
- * `card.currentBalance - amount` — is deliberate: it heals any PRIOR
- * disagreement between the two records in the same step, rather than
- * compounding it forward. A liabilityId that doesn't resolve, or a
- * liability with no linked card, is a safe no-op for the credit-card side
- * — never a crash, never touching an unrelated card.
+ * already-stale) currentBalance.
+ *
+ * Correction round, 2026-08-10 (Move Money architecture correction) — two
+ * further fixes, both CRITICAL:
+ *
+ * 1. Eligibility is now independently re-validated here against the exact
+ *    same shared allowlist `TransferForm.tsx` uses to build its own
+ *    chips (`LIQUID_BALANCE_TYPES`/`listEligibleDebtDestinations` in
+ *    `moveMoneyEligibility.ts`) — the UI and this transition can never
+ *    drift onto two different eligibility rules.
+ *
+ * 2. Every amount, stored balance, and resulting balance is handled in
+ *    integer cents throughout — never `currentValue - amount` on raw
+ *    decimal dollars. The requested amount is parsed through the existing
+ *    strict `moneyAmountToCents` (rejects zero/negative/non-finite/
+ *    over-precision); every stored balance this transition reads is
+ *    converted through the existing zero-allowing `toBalanceCentsAllowingZero`
+ *    (rejects NaN/Infinity/over-precision, but correctly allows an exact
+ *    stored $0). A conversion failure on ANY side rejects with
+ *    `invalid_recorded_balance` before any mutation. An amount that would
+ *    overdraw the source, or a liability payment larger than what's
+ *    recorded as owed, is rejected BEFORE mutation — never silently
+ *    clamped via `Math.max(0, ...)`, which previously destroyed value by
+ *    debiting the source in full while flooring the liability at zero (a
+ *    confirmed, reachable net-worth-losing defect). Conversion back to a
+ *    stored decimal-dollar value happens exactly once per touched record,
+ *    at the point of constructing the new `assets`/`liabilities`/
+ *    `creditCards` arrays — `wholeCents / 100`, never an intermediate
+ *    floating add/subtract on a dollar value.
  */
-export function transferFundsTransition(data: AppData, fromAssetId: string, to: TransferTarget, amount: number): AppData {
-  let assets = data.assets.map((a) => (a.id === fromAssetId ? { ...a, currentValue: a.currentValue - amount } : a));
-  let liabilities = data.liabilities;
-  let creditCards = data.creditCards;
+export function transferFundsTransition(data: AppData, fromAssetId: string, to: TransferTarget, amount: number): TransferFundsResult {
+  const parsedAmount = moneyAmountToCents(amount);
+  if (!parsedAmount.valid) return { applied: false, data, reason: 'invalid_amount' };
+  const requestedCents = parsedAmount.cents;
+
+  const source = data.assets.find((a) => a.id === fromAssetId);
+  if (!source) return { applied: false, data, reason: 'source_missing' };
+  if (!isEligibleLiquidBalance(source)) return { applied: false, data, reason: 'source_not_eligible' };
+
+  const sourceCents = toBalanceCentsAllowingZero(source.currentValue);
+  if (sourceCents === undefined) return { applied: false, data, reason: 'invalid_recorded_balance', invalidBalanceSide: 'source' };
+
   if (to.kind === 'asset') {
-    assets = assets.map((a) => (a.id === to.assetId ? { ...a, currentValue: a.currentValue + amount } : a));
-  } else {
-    const target = liabilities.find((l) => l.id === to.liabilityId);
-    if (target) {
-      const resultingBalance = Math.max(0, target.currentBalance - amount);
-      liabilities = liabilities.map((l) => (l.id === to.liabilityId ? { ...l, currentBalance: resultingBalance } : l));
-      if (target.creditCardId !== undefined) {
-        const linkedCardId = target.creditCardId;
-        creditCards = creditCards.map((c) => (c.id === linkedCardId ? { ...c, currentBalance: resultingBalance } : c));
-      }
-    }
+    if (to.assetId === fromAssetId) return { applied: false, data, reason: 'same_balance' };
+    const dest = data.assets.find((a) => a.id === to.assetId);
+    if (!dest) return { applied: false, data, reason: 'destination_missing' };
+    if (!isEligibleLiquidBalance(dest)) return { applied: false, data, reason: 'destination_not_eligible' };
+
+    const destCents = toBalanceCentsAllowingZero(dest.currentValue);
+    if (destCents === undefined) return { applied: false, data, reason: 'invalid_recorded_balance', invalidBalanceSide: 'destination' };
+
+    if (requestedCents > sourceCents) return { applied: false, data, reason: 'insufficient_source' };
+
+    const newSourceCents = sourceCents - requestedCents;
+    const newDestCents = destCents + requestedCents;
+
+    const assets = data.assets.map((a) =>
+      a.id === fromAssetId
+        ? { ...a, currentValue: newSourceCents / 100 }
+        : a.id === to.assetId
+        ? { ...a, currentValue: newDestCents / 100 }
+        : a
+    );
+    return { applied: true, data: upsertNetWorthHistory({ ...data, assets }), effectiveAmountCents: requestedCents };
   }
-  return upsertNetWorthHistory({ ...data, assets, liabilities, creditCards });
+
+  const target = data.liabilities.find((l) => l.id === to.liabilityId);
+  if (!target) return { applied: false, data, reason: 'destination_missing' };
+  if (!listEligibleDebtDestinations([target]).length) return { applied: false, data, reason: 'destination_not_eligible' };
+
+  const liabilityCents = toBalanceCentsAllowingZero(target.currentBalance);
+  if (liabilityCents === undefined) return { applied: false, data, reason: 'invalid_recorded_balance', invalidBalanceSide: 'liability' };
+
+  if (requestedCents > sourceCents) return { applied: false, data, reason: 'insufficient_source' };
+  if (requestedCents > liabilityCents) return { applied: false, data, reason: 'exceeds_liability_balance' };
+
+  const newSourceCents = sourceCents - requestedCents;
+  const resultingLiabilityCents = liabilityCents - requestedCents;
+
+  const assets = data.assets.map((a) => (a.id === fromAssetId ? { ...a, currentValue: newSourceCents / 100 } : a));
+  const liabilities = data.liabilities.map((l) =>
+    l.id === to.liabilityId ? { ...l, currentBalance: resultingLiabilityCents / 100 } : l
+  );
+  const creditCards =
+    target.creditCardId !== undefined
+      ? data.creditCards.map((c) => (c.id === target.creditCardId ? { ...c, currentBalance: resultingLiabilityCents / 100 } : c))
+      : data.creditCards;
+
+  return {
+    applied: true,
+    data: upsertNetWorthHistory({ ...data, assets, liabilities, creditCards }),
+    effectiveAmountCents: requestedCents,
+  };
 }
 
 export type ConfirmBnplRepaymentInput = {
@@ -1947,7 +2031,7 @@ interface AppStateContextValue {
    * appear correctly, checklist asks user to add again"). One persist()
    * call combining the user patch and every new asset/liability. */
   completeOnboarding: (userPatch: Partial<UserProfile>, assets: Omit<Asset, 'id'>[], liabilities: Omit<Liability, 'id'>[]) => void;
-  transferFunds: (fromAssetId: string, to: TransferTarget, amount: number) => void;
+  transferFunds: (fromAssetId: string, to: TransferTarget, amount: number) => TransferFundsResult;
   addSavingsComparison: (entry: Omit<SavingsComparisonEntry, 'id'>) => void;
   updateSavingsComparison: (id: string, patch: Partial<Omit<SavingsComparisonEntry, 'id'>>) => void;
   deleteSavingsComparison: (id: string) => void;
@@ -2414,12 +2498,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   // Thin wrapper over the pure, exported, directly-testable
   // transferFundsTransition — see its own doc comment above for the full
-  // contract, including the This Month round's credit-card-mirror fix.
+  // exact-cent/eligibility contract, including the credit-card-mirror fix.
+  // Correction round, 2026-08-10 — reads dataRef.current (not the closed-
+  // over `data`), the same established latest-state pattern every other
+  // transition wrapper in this file already uses, so a second call fired
+  // immediately after a first one in the same handler validates against
+  // the first call's already-committed result rather than a stale
+  // snapshot. Only calls persist() on the success path — a rejected
+  // result never touches storage.
   const transferFunds = useCallback(
-    (fromAssetId: string, to: TransferTarget, amount: number) => {
-      persist(transferFundsTransition(data, fromAssetId, to, amount));
+    (fromAssetId: string, to: TransferTarget, amount: number): TransferFundsResult => {
+      const result = transferFundsTransition(dataRef.current, fromAssetId, to, amount);
+      if (result.applied) persist(result.data);
+      return result;
     },
-    [data, persist]
+    [persist]
   );
 
   const addSavingsComparison = useCallback(

@@ -17,12 +17,21 @@ function formatMoney(value: number): string {
  * (PRD ask, §Today: "a simple live snapshot since the beginning of the
  * current month"). The "X so far" title is rendered by TodayScreen as an
  * external section header, consistent with every other Today section —
- * this component is just the card content. Tapping anywhere on the card
- * opens Money. Always visible — a brand-new user sees an empty state that
- * encourages completion instead of the section disappearing, so the page
- * layout stays consistent for every user.
+ * this component is just the card content. Always visible — a brand-new
+ * user sees an empty state that encourages completion instead of the
+ * section disappearing, so the page layout stays consistent for every user.
+ *
+ * Correction round, 2026-08-10 — populated state now opens Transaction
+ * History directly (the established root-stack `Transactions` route, the
+ * exact same parameterless call Money's own "View transactions" already
+ * uses), not the Money tab. The empty state's tap target is now genuinely
+ * different: it opens `onAddTransaction` (the same transaction-specific
+ * entry point `ThisMonthCard.tsx`'s own empty state already uses on the
+ * Money screen), never Transaction History itself — an empty card would
+ * otherwise be a dead navigation target into an equally empty history
+ * screen.
  */
-export function MonthSnapshotCard({ today }: { today: Date }) {
+export function MonthSnapshotCard({ today, onAddTransaction }: { today: Date; onAddTransaction: () => void }) {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, spacing, typography, cardShadow, radius } = useTheme();
@@ -69,31 +78,31 @@ export function MonthSnapshotCard({ today }: { today: Date }) {
     [colors, spacing, typography, cardShadow, radius]
   );
 
-  return (
-    <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Money')}>
+  return hasData ? (
+    <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Transactions')} accessibilityRole="button" accessibilityLabel="View transaction history">
       <SectionCard>
-        {hasData ? (
-          <>
-            <View style={styles.row}>
-              <View style={styles.tile}>
-                <Text style={styles.tileLabel}>Income received</Text>
-                <Text style={[styles.tileValue, { color: colors.accentStrong }]}>{formatMoney(activity.income)}</Text>
-              </View>
-              <View style={styles.tile}>
-                <Text style={styles.tileLabel}>Spent</Text>
-                <Text style={[styles.tileValue, { color: colors.textPrimary }]}>{formatMoney(-activity.spend)}</Text>
-              </View>
-            </View>
-            <View style={styles.netRow}>
-              <Text style={styles.netLabel}>Net this month</Text>
-              <Text style={[styles.netValue, { color: netColor }]}>{formatMoney(net)}</Text>
-            </View>
-          </>
-        ) : (
-          <Text style={styles.emptyText}>
-            Not enough information yet. Add your income and spending to unlock your monthly snapshot.
-          </Text>
-        )}
+        <View style={styles.row}>
+          <View style={styles.tile}>
+            <Text style={styles.tileLabel}>Income received</Text>
+            <Text style={[styles.tileValue, { color: colors.accentStrong }]}>{formatMoney(activity.income)}</Text>
+          </View>
+          <View style={styles.tile}>
+            <Text style={styles.tileLabel}>Spent</Text>
+            <Text style={[styles.tileValue, { color: colors.textPrimary }]}>{formatMoney(-activity.spend)}</Text>
+          </View>
+        </View>
+        <View style={styles.netRow}>
+          <Text style={styles.netLabel}>Net this month</Text>
+          <Text style={[styles.netValue, { color: netColor }]}>{formatMoney(net)}</Text>
+        </View>
+      </SectionCard>
+    </TouchableOpacity>
+  ) : (
+    <TouchableOpacity activeOpacity={0.7} onPress={onAddTransaction} accessibilityRole="button" accessibilityLabel="Add transaction">
+      <SectionCard>
+        <Text style={styles.emptyText}>
+          Not enough information yet. Add your income and spending to unlock your monthly snapshot.
+        </Text>
       </SectionCard>
     </TouchableOpacity>
   );

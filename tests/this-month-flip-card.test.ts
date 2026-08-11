@@ -262,7 +262,8 @@ console.log('\n=== Section 11: transfer exclusion (real import) ===');
   });
   const beforeTransfer = computeThisMonthRecordedSummary(data, d('2026-08-10'));
   const afterTransfer = transferFundsTransition(data, 'everyday1', { kind: 'asset', assetId: 'savings1' }, 1000);
-  const afterSummary = computeThisMonthRecordedSummary(afterTransfer, d('2026-08-10'));
+  if (!afterTransfer.applied) throw new Error(`expected applied:true, got rejected with reason "${afterTransfer.reason}"`);
+  const afterSummary = computeThisMonthRecordedSummary(afterTransfer.data, d('2026-08-10'));
   assert('Spending recorded is $25.00 both before and after a $1,000 transfer — the transfer contributes $0', beforeTransfer.spendingCents === 2500 && afterSummary.spendingCents === 2500);
   assert('The transfer never creates a Transaction, so the source breakdown is byte-identical before/after', JSON.stringify(beforeTransfer.spendingSources) === JSON.stringify(afterSummary.spendingSources));
 }
