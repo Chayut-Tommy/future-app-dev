@@ -53,9 +53,16 @@ const OPTIONS: { value: ThemePreference; label: string; icon: keyof typeof Ionic
   { value: 'system', label: 'System', icon: 'contrast-outline' },
 ];
 
-const CARD_THEME_OPTIONS: { value: 'purple' | 'blue'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { value: 'purple', label: 'Purple', icon: 'sparkles-outline' },
+// Pass 2B correction — extended from a two-way "Lulu Score card style"
+// toggle to a three-way "Navilo colour style" (see palettes.ts): the
+// customer-facing labels below are the three names named in the PRD ask,
+// deliberately in this order (Ocean Blue first, as the existing default).
+// No engineering/token terminology (e.g. "primaryAccent", "hero gradient")
+// is ever exposed here.
+const CARD_THEME_OPTIONS: { value: 'purple' | 'blue' | 'sunrise'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { value: 'blue', label: 'Ocean Blue', icon: 'water-outline' },
+  { value: 'purple', label: 'Purple', icon: 'sparkles-outline' },
+  { value: 'sunrise', label: 'Sunrise', icon: 'partly-sunny-outline' },
 ];
 
 export function SettingsScreen() {
@@ -131,7 +138,10 @@ export function SettingsScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
           </View>
         </TouchableOpacity>
-        <Text style={[styles.rowLabel, { marginTop: spacing.md, marginBottom: spacing.sm }]}>{brand.scoreName} card style</Text>
+        {/* Pass 2B correction — renamed from "{Score} card style": the
+            preference now drives the Today Briefing hero and every other
+            Navilo-accent surface, not just the Score card. */}
+        <Text style={[styles.rowLabel, { marginTop: spacing.md, marginBottom: spacing.sm }]}>{brand.name} colour style</Text>
         <View style={styles.optionRow}>
           {CARD_THEME_OPTIONS.map((opt) => {
             const active = cardTheme === opt.value;

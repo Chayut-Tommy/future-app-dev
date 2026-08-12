@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -18,10 +18,30 @@ const INITIAL_VISIBLE = 5;
  * priority on iOS once the list gets tall (PRD bug report: milestones past
  * ~7-8 became unreachable). Expanded content just flows into the page
  * scroll instead, like every other section on Today already does.
+ *
+ * Pass 2B correction — expand/collapse is now controlled by the caller
+ * (`expanded`/`onToggleExpanded`) rather than owned internally. Grow's
+ * one-tap Journey destination (DiscoverScreen.tsx, fulfilling a 'journey'
+ * focus request from Today) needs to arrive already showing every
+ * milestone, not stuck behind this component's own "View full journey"
+ * gate a second time — an internal useState couldn't be driven from
+ * outside once already mounted (tab screens stay mounted between visits;
+ * a prop only read on first mount would silently fail to re-expand on a
+ * later visit). Lifting the state to the single existing caller keeps
+ * ordinary collapsed-by-default Grow behaviour (the caller simply starts
+ * its own state at false) while making one-tap expand and "Show less"
+ * both work correctly regardless of mount timing.
  */
-export function JourneyTimeline({ achievements }: { achievements: Achievement[] }) {
+export function JourneyTimeline({
+  achievements,
+  expanded,
+  onToggleExpanded,
+}: {
+  achievements: Achievement[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
   const { colors, radius, spacing, typography, glow } = useTheme();
-  const [expanded, setExpanded] = useState(false);
   const nextIndex = achievements.findIndex((a) => !a.unlocked);
 
   const visibleCount = expanded ? achievements.length : Math.min(achievements.length, Math.max(INITIAL_VISIBLE, nextIndex + 1));
@@ -110,7 +130,7 @@ export function JourneyTimeline({ achievements }: { achievements: Achievement[] 
         })}
       </View>
       {hasMore ? (
-        <TouchableOpacity style={styles.expandButton} onPress={() => setExpanded((v) => !v)}>
+        <TouchableOpacity style={styles.expandButton} onPress={onToggleExpanded}>
           <Text style={styles.expandText}>{expanded ? 'Show less' : 'View full journey'}</Text>
           <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.accent} />
         </TouchableOpacity>

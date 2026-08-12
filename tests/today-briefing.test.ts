@@ -592,42 +592,43 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     const checklistIdx = TODAY_SCREEN_SRC.indexOf('<MoneyPictureChecklistCard');
     return greetingIdx !== -1 && briefingIdx !== -1 && checklistIdx !== -1 && greetingIdx < briefingIdx && briefingIdx < checklistIdx && /today=\{currentDate\}/.test(TODAY_SCREEN_SRC);
   })());
+  // Pass 2B layout correction — the reminder's full detailed presentation
+  // (question, disclosure copy, account-choice controls) is no longer
+  // embedded inline inside TodayBriefingCard's own SectionCard at all; it
+  // now mounts exclusively inside ReminderDetailSheet, reached by tapping
+  // the Briefing's compact Reminder tile. The assertions below replace the
+  // prior round's "embedded inside the same SectionCard" checks with the
+  // new architecture's own equivalents.
   assert(
-    'the standalone, prop-less <SmartReminderCard /> render is gone from TodayScreen.tsx — its behaviour now lives exclusively inside TodayBriefingCard',
-    !/<SmartReminderCard \/>/.test(TODAY_SCREEN_SRC) && !TODAY_SCREEN_SRC.includes('import { SmartReminderCard }')
+    'the standalone, prop-less <SmartReminderCard /> render remains absent from TodayScreen.tsx — SmartReminderCard is only ever mounted (with a real topReminder) inside ReminderDetailSheet now',
+    !/<SmartReminderCard \/>/.test(TODAY_SCREEN_SRC)
   );
   assert(
-    'SmartReminderCard is mounted in exactly one place across the whole Today pipeline (TodayBriefingCard.tsx), never duplicated, and rendered with embedded (correction §7: one Briefing row, not a second standalone card)',
-    (TODAY_BRIEFING_CARD_SRC.match(/<SmartReminderCard topReminder=\{topReminder\} embedded \/>/g) || []).length === 1 && !/<SmartReminderCard/.test(TODAY_SCREEN_SRC)
+    'TodayBriefingCard.tsx no longer imports or mounts SmartReminderCard at all — the compact Reminder tile (briefingTiles.ts/BriefingTileRow.tsx) replaces the old embedded row entirely',
+    !/SmartReminderCard/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
-    'the embedded reminder is placed INSIDE the same SectionCard as the AUP row and event rows (correction §7), not as a sibling after it',
+    'SmartReminderCard is mounted in exactly one place across the whole Today pipeline — ReminderDetailSheet.tsx, with a real topReminder, never duplicated',
     (() => {
-      const sectionCardStart = TODAY_BRIEFING_CARD_SRC.indexOf('<SectionCard>');
-      const sectionCardEnd = TODAY_BRIEFING_CARD_SRC.indexOf('</SectionCard>');
-      const reminderIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<SmartReminderCard topReminder={topReminder} embedded />');
-      return sectionCardStart !== -1 && sectionCardEnd !== -1 && reminderIdx > sectionCardStart && reminderIdx < sectionCardEnd;
+      const sheetSrc = readFileSync('src/components/today/ReminderDetailSheet.tsx', 'utf8');
+      return (sheetSrc.match(/<SmartReminderCard topReminder=\{topReminder\} \/>/g) || []).length === 1 && !/<SmartReminderCard/.test(TODAY_SCREEN_SRC);
     })()
   );
-  // CANONICAL RENDER ORDER (correction pass, this round): AUP row -> Smart
-  // Reminder row -> event rows. This is a STRUCTURAL check only — the
-  // literal source position of the three JSX blocks in TodayBriefingCard.tsx
-  // — since this repo has no react-native-testing-library or any other
-  // component-runtime harness and none may be added (no new dependencies
-  // authorised). It proves the JSX is AUTHORED in the required order; it
-  // does NOT prove React actually renders three DOM/native nodes in that
-  // visual order on a device (conditional rendering, RN layout, or a future
-  // unrelated edit could in principle diverge from source order without
-  // this check catching it). The genuine runtime visual-order proof remains
+  assert(
+    'TodayScreen.tsx owns reminderSheetVisible and mounts exactly one ReminderDetailSheet, opened by the Briefing tile\'s onPressReminderTile',
+    /const \[reminderSheetVisible, setReminderSheetVisible\] = useState\(false\);/.test(TODAY_SCREEN_SRC) &&
+      /onPressReminderTile=\{\(\) => setReminderSheetVisible\(true\)\}/.test(TODAY_SCREEN_SRC) &&
+      /<ReminderDetailSheet visible=\{reminderSheetVisible\} topReminder=\{topReminder\} onClose=\{\(\) => setReminderSheetVisible\(false\)\} \/>/.test(TODAY_SCREEN_SRC)
+  );
+  // CANONICAL TILE ORDER (correction pass, this round): AUP tile -> Smart
+  // Reminder tile -> event tiles — now enforced by selectBriefingTiles
+  // itself (briefingTiles.ts), not by JSX source position. This is a
+  // STRUCTURAL check that the call site passes its arguments in that exact
+  // order; genuine on-screen left-to-right/row-order proof remains
   // physical-device-only evidence, per the device checklist.
   assert(
-    'CANONICAL ORDER (Structural — source position only, see comment above): the AUP TouchableOpacity is authored before the embedded SmartReminderCard, which is authored before the eventRows.map(...) block — AUP -> Smart Reminder -> event, never event before reminder',
-    (() => {
-      const aupIdx = TODAY_BRIEFING_CARD_SRC.indexOf('style={styles.aupRow}');
-      const reminderIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<SmartReminderCard topReminder={topReminder} embedded />');
-      const eventsIdx = TODAY_BRIEFING_CARD_SRC.indexOf('{eventRows.map((row) => (');
-      return aupIdx !== -1 && reminderIdx !== -1 && eventsIdx !== -1 && aupIdx < reminderIdx && reminderIdx < eventsIdx;
-    })()
+    'CANONICAL TILE ORDER (Structural): TodayBriefingCard.tsx calls selectBriefingTiles(presentation, topReminder, eventRows) — AUP, then reminder, then events, in that argument order, matching the pure function\'s own documented composition',
+    /selectBriefingTiles\(presentation, topReminder, eventRows\)/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
     'the Briefing header renders a date/context line via formatBriefingDateContext(today) (correction §4)',
@@ -645,13 +646,14 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
   );
 
   assert(
-    'SmartReminderCard.tsx accepts an `embedded` prop and a `topReminder` prop; no longer imports computeTopReminder itself (compute-once architecture, unchanged from prior Pass 2A round)',
-    /embedded\?: boolean;/.test(SMART_REMINDER_CARD_SRC) && !/import \{[^}]*computeTopReminder/.test(SMART_REMINDER_CARD_SRC)
+    'SmartReminderCard.tsx retired its `embedded` prop this correction pass (its only caller — the old inline Briefing row — no longer exists) and still accepts a `topReminder` prop; still does not import computeTopReminder itself (compute-once architecture, unchanged from prior Pass 2A round)',
+    !/embedded\?: boolean/.test(SMART_REMINDER_CARD_SRC) && /topReminder: SmartReminder \| null/.test(SMART_REMINDER_CARD_SRC) && !/import \{[^}]*computeTopReminder/.test(SMART_REMINDER_CARD_SRC)
   );
   assert(
-    'SmartReminderCard.tsx conditionally wraps its content in SectionCard vs a plain View depending on `embedded` — the embedded row uses a hairline top divider, matching the exact convention TodayBriefingCard.tsx\'s own event rows already use, not a second card',
-    /const Wrapper = embedded \? View : SectionCard;/.test(SMART_REMINDER_CARD_SRC) &&
-      /embeddedRow: \{ paddingTop: spacing\.sm, borderTopWidth: StyleSheet\.hairlineWidth, borderTopColor: colors\.border \}/.test(SMART_REMINDER_CARD_SRC)
+    'SmartReminderCard.tsx always renders its own SectionCard now (the embedded/plain-View branch is gone) and its action-pill row gained flexWrap — the fix for the confirmed overflow defect, at the layout level, independent of where this component is mounted',
+    !/const Wrapper = embedded/.test(SMART_REMINDER_CARD_SRC) &&
+      (SMART_REMINDER_CARD_SRC.match(/<SectionCard>/g) || []).length === 1 &&
+      /actionRow: \{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing\.sm \}/.test(SMART_REMINDER_CARD_SRC)
   );
   assert(
     'every one of SmartReminderCard\'s confirm/dismiss/action functions (runConfirmation, runBnplConfirmation, confirmSalary, confirmSalaryToDestination, confirmBillPaid, confirmBnplEveryday, dismiss) is untouched by this correction — none of their bodies were edited, only the outer wrapper',

@@ -1,140 +1,116 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme/ThemeContext';
-import { SectionCard } from '../shared/SectionCard';
 import { SafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
 import { TodayBriefingEventRow, formatBriefingDateContext } from '../../lib/calculations/todayBriefing';
 import { SmartReminder } from '../../lib/calculations/reminders';
-import { SmartReminderCard } from './SmartReminderCard';
+import { ScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
+import { ScoreChip } from './ScoreChip';
+import { BriefingTile, selectBriefingTiles } from '../../lib/calculations/briefingTiles';
+import { BriefingTileRow } from './BriefingTileRow';
 
 /**
- * "Your Today Briefing" (Pass 2A, corrected) — a date/context header,
- * followed by rows in the canonical order:
- *   1. the primary AUP/Available Money row (always present)
- *   2. the eligible Smart Reminder row, if any (0 or 1)
- *   3. independent upcoming-event rows (0-2, or 0-1 when a reminder is
- *      present — see eventRows' own upstream sizing)
- * A reminder, when eligible, is always the first contextual row
- * immediately after the AUP row — it must never render below a
- * lower-priority event row. The Smart Reminder renders as one more row
- * INSIDE this same card (correction pass §7: it must visually behave as
- * one Briefing contextual row, not an awkward duplicate standalone card
- * nested inside another), via SmartReminderCard's own `embedded` mode —
- * its confirm/dismiss/error/persistence behaviour and every one of its
- * actions stay entirely unmodified, only the outer wrapper differs.
+ * "Your Today Briefing" — canonical composition (Pass 2B, layout
+ * correction):
+ *   1. title + date/context header
+ *   2. the compact Navilo Score chip — separate from, and never counted
+ *      toward, the three-item financial budget below; visually subordinate
+ *      to the primary money status beneath it.
+ *   3. up to three compact summary tiles (BriefingTileRow) — AUP always
+ *      first, the top Smart Reminder next when eligible, then independent
+ *      upcoming-event tiles. Total tile count is bounded by the exact same
+ *      upstream budget the previous row-based layout used
+ *      (selectTodayBriefingEventRows sizes eventRows down to 1 whenever a
+ *      reminder is present) — selectBriefingTiles (briefingTiles.ts) adds
+ *      no capping of its own, so this correction cannot change Briefing
+ *      eligibility, priority, or the three-item cap. The Score chip sits
+ *      outside this tile row entirely, so it can never occupy one of the
+ *      three slots.
  *
- * No more than three actionable rows overall: the AUP row (always 1) + the
- * reminder (0 or 1) + eventRows, whose own upstream
- * selectTodayBriefingEventRows call already sized itself down to 1 (not 2)
- * whenever a reminder is present — never enforced here by truncating
- * eventRows, since eventRows is already the correctly-sized array by the
- * time it reaches this component.
+ * Layout correction — the previous large white inner card (a SectionCard
+ * holding stacked AUP/reminder/event rows, with the reminder's full
+ * detailed question and account-choice controls embedded directly inside
+ * it) is gone. The reminder's full detail — including every account-choice
+ * control — now lives exclusively in ReminderDetailSheet, reached by
+ * tapping the compact Reminder tile; this is both the fix for the
+ * confirmed overflow (an unbounded row of account-choice pills has no
+ * reason to exist inside a one-third-width tile) and the "ambient hero →
+ * Score summary → up to three lightweight tiles" simplified construction
+ * this correction asks for. Every tile's destination — AUP, the reminder
+ * sheet, or an event's Money-timeline focus — is exactly the same
+ * authoritative destination the old rows already used; only the visual
+ * presentation changed.
+ *
+ * Colour correction — the hero gradient, tile surface/border, and tile
+ * accent colours all now read from `naviloPalette` (ThemeContext), which
+ * resolves the user's selected Navilo colour style (Ocean Blue / Purple /
+ * Sunrise) — never a hard-coded gradient. See theme/palettes.ts.
  */
 export function TodayBriefingCard({
   today,
+  scoreChip,
   presentation,
   eventRows,
   topReminder,
+  onPressScoreChip,
   onPressAup,
   onPressEventRow,
+  onPressReminderTile,
 }: {
   /** The same local-calendar Date every other Briefing calculation already
    * derives from (TodayScreen's useCurrentLocalDate-sourced `currentDate`)
    * — never a separately-captured `new Date()`, so the header always agrees
    * with what the rest of the Briefing is actually showing. */
   today: Date;
+  scoreChip: ScoreChipPresentation;
   presentation: SafeToSpendPresentation;
   eventRows: TodayBriefingEventRow[];
   topReminder: SmartReminder | null;
+  onPressScoreChip: () => void;
   onPressAup: () => void;
   onPressEventRow: (row: TodayBriefingEventRow) => void;
+  /** Opens ReminderDetailSheet — the compact Reminder tile's tap-through
+   * destination. This component never renders reminder confirmation/
+   * account-choice UI itself. */
+  onPressReminderTile: () => void;
 }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { spacing, radius, typography, glow, naviloPalette } = useTheme();
+
+  const tiles = useMemo(() => selectBriefingTiles(presentation, topReminder, eventRows), [presentation, topReminder, eventRows]);
+
+  function handlePressTile(tile: BriefingTile) {
+    if (tile.kind === 'aup') {
+      onPressAup();
+      return;
+    }
+    if (tile.kind === 'reminder') {
+      onPressReminderTile();
+      return;
+    }
+    const row = eventRows.find((r) => `event-${r.key}` === tile.key);
+    if (row) onPressEventRow(row);
+  }
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        sectionHeader: { marginBottom: spacing.sm, marginTop: spacing.sm },
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        sectionDateContext: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 1 },
-        aupRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingBottom: spacing.sm },
-        aupIconBadge: {
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: presentation.tone === 'warning' ? colors.warningSoft : colors.accentSoft,
-        },
-        aupTextBlock: { flex: 1 },
-        aupHeading: { ...typography.caption, fontSize: 11, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.3 },
-        aupAmount: { ...typography.title, fontSize: 22, color: colors.textPrimary, fontWeight: '800', marginTop: 2 },
-        aupStatusText: { ...typography.caption, fontSize: 13, color: presentation.tone === 'warning' ? colors.warning : colors.textSecondary, marginTop: 2, lineHeight: 18 },
-        eventRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: spacing.sm,
-          paddingVertical: spacing.sm,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
-        },
-        eventIconBadge: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-        eventIconBadgeWarning: { backgroundColor: colors.warningSoft },
-        eventIconBadgeNeutral: { backgroundColor: colors.surfaceMuted },
-        eventTitle: { ...typography.body, fontSize: 13, color: colors.textPrimary, flex: 1 },
+        hero: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, ...glow(naviloPalette.heroGradientStart) },
+        sectionHeader: { marginBottom: spacing.md },
+        sectionTitle: { ...typography.title, fontSize: 19, fontWeight: '800', color: naviloPalette.heroForeground },
+        sectionDateContext: { ...typography.caption, fontSize: 13, color: naviloPalette.heroForeground, opacity: 0.82, marginTop: 2 },
       }),
-    [colors, radius, spacing, typography, presentation.tone]
+    [radius, spacing, typography, glow, naviloPalette]
   );
 
   return (
-    <>
+    <LinearGradient colors={[naviloPalette.heroGradientStart, naviloPalette.heroGradientEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Your Today Briefing</Text>
         <Text style={styles.sectionDateContext}>{formatBriefingDateContext(today)}</Text>
       </View>
-      <SectionCard>
-        <TouchableOpacity
-          style={styles.aupRow}
-          onPress={onPressAup}
-          accessibilityRole="button"
-          accessibilityLabel={`${presentation.heading}${presentation.amountVisible ? `, ${presentation.displayAmount}` : ''}`}
-          accessibilityHint="Opens Money"
-        >
-          <View style={styles.aupIconBadge}>
-            <Ionicons name="wallet-outline" size={18} color={presentation.tone === 'warning' ? colors.warning : colors.accentStrong} />
-          </View>
-          <View style={styles.aupTextBlock}>
-            <Text style={styles.aupHeading}>{presentation.heading}</Text>
-            {presentation.amountVisible ? <Text style={styles.aupAmount}>{presentation.displayAmount}</Text> : null}
-            <Text style={styles.aupStatusText} numberOfLines={2}>
-              {[presentation.primaryCopy, presentation.supportingCopy].filter(Boolean).join(' ')}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </TouchableOpacity>
-
-        {topReminder ? <SmartReminderCard topReminder={topReminder} embedded /> : null}
-
-        {eventRows.map((row) => (
-          <TouchableOpacity
-            key={row.key}
-            style={styles.eventRow}
-            onPress={() => onPressEventRow(row)}
-            accessibilityRole="button"
-            accessibilityLabel={row.title}
-            accessibilityHint="Opens Money"
-          >
-            <View style={[styles.eventIconBadge, row.tone === 'warning' ? styles.eventIconBadgeWarning : styles.eventIconBadgeNeutral]}>
-              <Ionicons name={row.icon} size={14} color={row.tone === 'warning' ? colors.warning : colors.textSecondary} />
-            </View>
-            <Text style={styles.eventTitle} numberOfLines={1}>
-              {row.title}
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </TouchableOpacity>
-        ))}
-      </SectionCard>
-    </>
+      <ScoreChip presentation={scoreChip} onPress={onPressScoreChip} />
+      <BriefingTileRow tiles={tiles} onPressTile={handlePressTile} />
+    </LinearGradient>
   );
 }

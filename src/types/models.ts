@@ -362,10 +362,17 @@ export interface UserProfile {
   /** 'system' = follow the device locale (§ resolveDeviceLanguage). Defaults
    * to 'system' so a fresh install already speaks the phone's language. */
   language?: 'en' | 'th' | 'system';
-  /** Lulu Check-in card gradient — absent/'purple' = the default "AI
-   * companion" feel, 'blue' = an alternate "premium wealth assistant"
-   * treatment, kept as a Settings toggle so the two can be compared. */
-  luluCardTheme?: 'purple' | 'blue';
+  /** Navilo's selected colour style — drives the Today Briefing hero, the
+   * AI check-in banner, and every other surface ThemeContext's
+   * `naviloPalette`/`aiAccentColor` expose (Pass 2B correction, extended
+   * from a two-way "Lulu Check-in card" toggle to a three-way, app-wide
+   * colour style). Absent/'blue' = Ocean Blue (the default), 'purple' =
+   * Ambient Purple, 'sunrise' = the premium warm amber/champagne option.
+   * Field name kept as-is (an internal identifier, not customer-facing —
+   * see SettingsScreen.tsx for the renamed "Navilo colour style" label and
+   * its three customer-facing option names) rather than renamed, per this
+   * app's convention of not renaming legacy identifiers incidentally. */
+  luluCardTheme?: 'purple' | 'blue' | 'sunrise';
   /** Set the moment onboarding completes (hasSeenIntro becomes true) — the
    * real signal Lulu's greeting uses to tell "brand new" from "returning"
    * users apart, so it never claims to have "checked overnight" before it

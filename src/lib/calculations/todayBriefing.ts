@@ -96,6 +96,14 @@ export interface TodayBriefingEventRow {
   title: string;
   tone: 'warning' | 'neutral';
   icon: keyof typeof Ionicons.glyphMap;
+  /** Pass 2B correction — carried through from the source TimelineEvent so
+   * the compact Briefing tile (briefingTiles.ts) can derive a short
+   * relative-day supporting line ("Today"/"Tomorrow"/"In N days") using the
+   * exact same day-count `title` above was already built from
+   * (buildAttentionEventTitle), never a separately recomputed value. Purely
+   * additive — no existing consumer of this interface read this field
+   * before, so this cannot change any prior selection/rendering behaviour. */
+  daysUntil: number;
 }
 
 /**
@@ -183,6 +191,7 @@ export function selectTodayBriefingEventRows(
     title: buildAttentionEventTitle(e),
     tone: attentionEventTone(e),
     icon: e.kind === 'income' ? 'cash' : e.icon,
+    daysUntil: e.daysUntil,
   }));
 }
 

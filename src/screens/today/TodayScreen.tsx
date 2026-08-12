@@ -12,7 +12,6 @@ import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
-import { JourneyTimeline } from '../../components/health/JourneyTimeline';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
 import { SavingsCoachCard } from '../../components/health/SavingsCoachCard';
 import { LuluCheckInCard } from '../../components/today/LuluCheckInCard';
@@ -23,6 +22,8 @@ import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
 import { TodayBriefingCard } from '../../components/today/TodayBriefingCard';
+import { ReminderDetailSheet } from '../../components/today/ReminderDetailSheet';
+import { TodayJourneySnapshotCard } from '../../components/today/TodayJourneySnapshotCard';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
@@ -40,6 +41,8 @@ import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpen
 import { computeMoneyTimeline } from '../../lib/calculations/moneyTimeline';
 import { computeTopReminder } from '../../lib/calculations/reminders';
 import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
+import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
+import { computeJourneySnapshot } from '../../lib/calculations/journeySnapshot';
 import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration, computeScoreMilestoneCelebration } from '../../lib/celebrations';
 import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
@@ -66,6 +69,11 @@ export function TodayScreen() {
   const [wealthModalPresetType, setWealthModalPresetType] = useState<AssetType | undefined>(undefined);
   const [contributeGoalId, setContributeGoalId] = useState<string | null>(null);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
+  // Pass 2B correction §1/§2 — opened by the Briefing's compact Reminder
+  // tile; hosts the exact existing SmartReminderCard (its full question,
+  // disclosure copy, and account-choice controls) in ReminderDetailSheet,
+  // never inline inside the hero.
+  const [reminderSheetVisible, setReminderSheetVisible] = useState(false);
 
   // Round 6 correction — the single live local-date value this screen's
   // month heading and relative-day labels derive from; see
@@ -92,6 +100,12 @@ export function TodayScreen() {
   const topReminder = useMemo(() => computeTopReminder(data, currentDate), [data, currentDate]);
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
 
+  // Pass 2B — the compact Score chip and Journey snapshot each wrap an
+  // already-computed result (luluScore / achievements below) exactly once;
+  // neither presentation selector recomputes the Score formula or the
+  // achievement rules, only formats what's already there.
+  const scoreChipPresentation = useMemo(() => selectScoreChipPresentation(luluScore), [luluScore]);
+
   // Cash/savings shortcuts should update the user's existing savings
   // account rather than silently creating a duplicate one (PRD ask) —
   // adding a genuinely separate account is still possible from Wealth's
@@ -116,7 +130,13 @@ export function TodayScreen() {
   };
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
-  const dailyInsight = useMemo(() => pickDailyInsight(data), [data]);
+  const journeySnapshot = useMemo(() => computeJourneySnapshot(achievements), [achievements]);
+  // Pass 2B correction §4 — never offer a daily insight that merely
+  // restates the exact milestone Journey already shows as "Next" directly
+  // above it; compared by achievement id (structured identity), never by
+  // parsing or diffing rendered text. Every other insight in the pool
+  // (goal impact, savings interest, score band) remains fully eligible.
+  const dailyInsight = useMemo(() => pickDailyInsight(data, undefined, journeySnapshot.next?.id ?? null), [data, journeySnapshot.next]);
 
   // Real, in-session signal for "the user just did something" — not a
   // fabricated claim (PRD ask: Lulu's check-in line must stay honest about
@@ -252,6 +272,31 @@ export function TodayScreen() {
     }
   }
 
+  // Pass 2B — both compact presentations' destinations reuse the exact same
+  // stable section-focus architecture as the AUP row above (Grow's own
+  // pending-focus mechanism, corrected this pass — see DiscoverScreen.tsx),
+  // never a hard-coded pixel offset and never a new duplicate Score/Journey
+  // screen.
+  //
+  // Pass 2B correction — every Grow section-focus request (score, journey,
+  // and the pre-existing financial-learning) is stamped with a fresh,
+  // monotonically increasing id from this single shared counter. Grow's own
+  // pending-focus effect keys off {scrollTo, scrollToRequestId} together,
+  // not scrollTo alone: if it only read scrollTo, a second rapid tap on the
+  // same section would navigate with an identical params object and React
+  // Navigation would treat it as no change, silently swallowing the repeat
+  // tap. The id makes every intentional tap a genuine, detectable change,
+  // even back-to-back taps on the exact same section.
+  const focusRequestIdRef = useRef(0);
+  function handleScoreChipPress() {
+    focusRequestIdRef.current += 1;
+    navigation.navigate('Grow', { scrollTo: 'score', scrollToRequestId: focusRequestIdRef.current });
+  }
+  function handleJourneyPress() {
+    focusRequestIdRef.current += 1;
+    navigation.navigate('Grow', { scrollTo: 'journey', scrollToRequestId: focusRequestIdRef.current });
+  }
+
   function handleOpportunityAction(action: OpportunityAction) {
     switch (action) {
       case 'add_asset':
@@ -354,30 +399,40 @@ export function TodayScreen() {
           doesn't read like dashboard content (PRD ask). */}
       <Text style={styles.greeting}>{greeting}</Text>
 
-      {/* 1.25 Your Today Briefing (Pass 2A) — the leading Available Until
-          Payday/Available Money reading, the existing top Smart Reminder
-          when eligible, and up to two independent upcoming-event rows.
-          Immediately below the greeting, ahead of the guided checklist, so
-          it's the first substantive content a returning user sees. */}
+      {/* 1.25 Your Today Briefing (Pass 2A, extended Pass 2B) — a compact
+          Score chip, the leading Available Until Payday/Available Money
+          reading, the existing top Smart Reminder when eligible, and up to
+          two independent upcoming-event rows. Immediately below the
+          greeting, ahead of the guided checklist, so it's the first
+          substantive content a returning user sees. */}
       <TodayBriefingCard
         today={currentDate}
+        scoreChip={scoreChipPresentation}
         presentation={safeToSpendPresentation}
         eventRows={briefingEventRows}
         topReminder={topReminder}
+        onPressScoreChip={handleScoreChipPress}
         onPressAup={handleBriefingAupPress}
         onPressEventRow={() => navigation.navigate('Money', { scrollTo: 'timeline' })}
+        onPressReminderTile={() => setReminderSheetVisible(true)}
       />
+
+      {/* 1.3 Your Journey snapshot (Pass 2B) — replaces the long Today
+          Journey timeline; placed immediately after Your Today Briefing per
+          the canonical Briefing hierarchy. The full timeline remains
+          reachable in Grow via onPress. */}
+      <TodayJourneySnapshotCard snapshot={journeySnapshot} onPress={handleJourneyPress} />
 
       {/* 1.5 Guided first-run checklist — a brand-new user otherwise only
           sees a bare "Add income" prompt (PRD bug report). Real completion
           state, not a fabricated onboarding flow. */}
       <MoneyPictureChecklistCard />
 
-      {/* 2. Lulu Daily Check-in — message + score merged into one premium
-          AI briefing (PRD ask: understand everything important within 5
-          seconds, not two separate cards competing for attention). Tap the
-          score to expand into the full breakdown. */}
-      <LuluCheckInCard topLine={checkInLine.topLine} insight={checkInInsight} luluScore={luluScore} />
+      {/* 2. Lulu Daily Check-in — a short AI message (PRD ask). Pass 2B: no
+          longer also carries the Score presentation — see
+          LuluCheckInCard.tsx's own doc comment for why that was un-merged
+          into the new compact Score chip above. */}
+      <LuluCheckInCard topLine={checkInLine.topLine} insight={checkInInsight} />
       {luluScore.locked ? (
         <UnlockPromptCard
           icon={UNLOCK_COPY.lulu_score.icon}
@@ -387,15 +442,6 @@ export function TodayScreen() {
           onAction={() => setIncomeModalVisible(true)}
         />
       ) : null}
-
-      {/* 4. Your Journey — celebrate progress first (PRD ask: "look how far
-          you've come" before Lulu recommends improvement). */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{t('today.yourJourney')}</Text>
-      </View>
-      <SectionCard>
-        <JourneyTimeline achievements={achievements} />
-      </SectionCard>
 
       {/* 4.5 "X so far" — a live month-to-date pulse check, external header
           for consistency with every other Today section (PRD bug report:
@@ -417,7 +463,10 @@ export function TodayScreen() {
         <LuluRecommendationCard
           opportunity={topOpportunity}
           onAction={handleOpportunityAction}
-          onLearn={() => navigation.navigate('Grow', { scrollTo: 'financial-learning' })}
+          onLearn={() => {
+            focusRequestIdRef.current += 1;
+            navigation.navigate('Grow', { scrollTo: 'financial-learning', scrollToRequestId: focusRequestIdRef.current });
+          }}
         />
       ) : null}
 
@@ -502,6 +551,7 @@ export function TodayScreen() {
         <LoanBalanceReminderCard />
       </View>
 
+      <ReminderDetailSheet visible={reminderSheetVisible} topReminder={topReminder} onClose={() => setReminderSheetVisible(false)} />
       <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <AddWealthItemModal

@@ -19,11 +19,17 @@ import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { Button } from '../../components/shared/Button';
+import { ScoreExplanationSheet } from '../../components/health/ScoreExplanationSheet';
+import { JourneyTimeline } from '../../components/health/JourneyTimeline';
 import { learningCardsByCategory } from '../../lib/learningCards';
 import { LEARNING_PATHS } from '../../lib/learningPaths';
 import { computeMoneyOpportunities, MoneyOpportunity } from '../../lib/calculations/moneyOpportunities';
 import { computeWealthPaths } from '../../lib/calculations/wealthJourney';
 import { computeFutureYouPreview } from '../../lib/calculations/futureYouPreview';
+import { computeLuluScore } from '../../lib/calculations/luluScore';
+import { computeAchievements } from '../../lib/calculations/achievements';
+import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
+import { SectionFocusRequest, parseSectionFocusRequest, computeSectionFocusFulfillment } from '../../lib/calculations/sectionFocus';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { brand } from '../../lib/brand';
 
@@ -54,7 +60,17 @@ export function DiscoverScreen() {
   const { data } = useAppState();
   const { colors, spacing, typography, radius } = useTheme();
   const scrollRef = tabScrollRefs.Grow;
-  const exploreMoneyMovesY = useRef(0);
+  const exploreMoneyMovesY = useRef<number | null>(null);
+  const scoreSectionY = useRef<number | null>(null);
+  const journeySectionY = useRef<number | null>(null);
+  // Pass 2B correction — the pending focus request itself. Unlike a bare
+  // rAF-retry-then-abandon loop, an unfulfilled request is never discarded
+  // by a frame budget: it stays here until the matching section's onLayout
+  // (below) actually measures and fulfils it, however long that takes. The
+  // fulfillment decision itself is the pure, unit-tested
+  // computeSectionFocusFulfillment (sectionFocus.ts) — this ref and the
+  // functions below only hold/apply its result.
+  const pendingSectionFocusRef = useRef<SectionFocusRequest | null>(null);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [cashModalVisible, setCashModalVisible] = useState(false);
   // "Your goals" mounts its own AddGoalModal/GoalDetailSheet instances,
@@ -64,10 +80,32 @@ export function DiscoverScreen() {
   // just another reader/writer of the same data.goals via useAppState).
   const [growGoalModalVisible, setGrowGoalModalVisible] = useState(false);
   const [growSelectedGoalId, setGrowSelectedGoalId] = useState<string | null>(null);
+  // Pass 2B — opened by the new "Navilo Score" section below, reusing the
+  // exact same ScoreExplanationSheet Today's Score chip links here for —
+  // never a second/duplicate full-Score presentation.
+  const [scoreSheetVisible, setScoreSheetVisible] = useState(false);
+  // Pass 2B correction §5 — JourneyTimeline's own expand/collapse state,
+  // lifted here so Today's one-tap Journey focus request can drive it open
+  // (see attemptSectionFocus's shouldExpandJourney) while ordinary,
+  // non-Today-driven visits to Grow still see it collapsed by default
+  // (starts false, exactly like the component's previous internal state
+  // did) — see JourneyTimeline.tsx's own doc comment for why this can't
+  // stay internal to that component.
+  const [journeyExpanded, setJourneyExpanded] = useState(false);
 
   const opportunities = useMemo(() => computeMoneyOpportunities(data), [data]);
   const journeyPaths = useMemo(() => computeWealthPaths(data), [data]);
   const futureYouPreview = useMemo(() => computeFutureYouPreview(data), [data]);
+  // Pass 2B — the SAME computeLuluScore/computeAchievements engines Today
+  // reads, computed once here and mounted via the exact existing
+  // ScoreExplanationSheet/JourneyTimeline components — never recomputed
+  // rules, never a duplicate engine. Deliberately distinct from
+  // journeyPaths/computeWealthPaths above (Your Money Path) — two separate
+  // features that must never be merged just because their names are
+  // similar (PRD ask, Pass 2B §B).
+  const luluScore = useMemo(() => computeLuluScore(data), [data]);
+  const achievements = useMemo(() => computeAchievements(data), [data]);
+  const scoreChipPresentation = useMemo(() => selectScoreChipPresentation(luluScore), [luluScore]);
   const firstName = data.user.name?.trim() ? data.user.name.trim() : null;
   // Existing authoritative active/completed semantics only — no new
   // Grow-specific definition of "active" (Goals-to-Grow §4). data.goals is
@@ -79,15 +117,79 @@ export function DiscoverScreen() {
   // this sheet on the next render rather than leaving stale data open.
   const growSelectedGoal = data.goals.find((g) => g.id === growSelectedGoalId) ?? null;
 
-  // Investment nudges land here on purpose (PRD ask: "Learn the basics
-  // with Lulu" should actually open on investing content, not just the
-  // top of Grow).
+  /**
+   * Section-focused navigation (Pass 2A architecture; corrected Pass 2B).
+   *
+   * Contract: receive a typed focus request → retain it as pending →
+   * attempt it immediately if the target is already measurable → otherwise
+   * leave it pending → the target section's own onLayout (below) retries it
+   * the moment that section reports layout → scroll to the exact measured
+   * position → clear only that successfully-handled request.
+   *
+   * The previous version of this mechanism abandoned an unmeasured target
+   * after a fixed requestAnimationFrame budget, silently clearing the
+   * request and leaving the customer wherever they happened to be. That is
+   * exactly what this corrects: pendingSectionFocusRef is never cleared by
+   * a frame count, only by a genuine successful scroll (or by being
+   * superseded by a newer request — see below). In this screen every
+   * target section (financial-learning/score/journey headers) always
+   * renders unconditionally — locked/unavailable Score still renders its
+   * established muted copy, an empty achievements list still renders the
+   * Journey header — so onLayout is guaranteed to fire and fulfil the
+   * request; there is no "destination never mounts" case to hang on here.
+   *
+   * Repeated intentional requests to the SAME section (e.g. rapid taps on
+   * Today's Score chip) are supported via requestId: TodayScreen stamps
+   * every navigate() call with a fresh, monotonically increasing id (see
+   * its focusRequestIdRef), so route.params.scrollToRequestId always
+   * changes even when scrollTo repeats the same target string — otherwise
+   * React Navigation would treat an identical param object as unchanged
+   * and this effect would never re-fire for a second identical tap. A
+   * newer request always overwrites pendingSectionFocusRef outright (never
+   * queued), so if the user taps Score then Journey before the first
+   * resolves, only Journey's onLayout is allowed to fulfil the (now
+   * Journey) pending request — Score's own later onLayout finds the
+   * pending target no longer matches and does nothing, so a stale request
+   * can never scroll to (or open) the wrong destination.
+   */
+  function attemptSectionFocus() {
+    const result = computeSectionFocusFulfillment(
+      pendingSectionFocusRef.current,
+      { 'financial-learning': exploreMoneyMovesY.current, score: scoreSectionY.current, journey: journeySectionY.current },
+      scoreChipPresentation.state === 'available'
+    );
+    if (!result.fulfilled) return; // still pending — left untouched, retried by that section's own onLayout
+    scrollRef.current?.scrollTo({ y: result.scrollY!, animated: true });
+    // Pass 2B correction §2 — one Today tap must reach the full Navilo
+    // Score experience, not a second compact launcher requiring another
+    // tap. ScoreExplanationSheet IS that full experience (score, life
+    // stage, completeness, confidence, this month's movement, every
+    // category/factor with status/target/action) — reused exactly as-is,
+    // never redesigned or duplicated. shouldOpenScoreSheet is already
+    // false whenever the score isn't authoritative (see
+    // computeSectionFocusFulfillment) — auto-opening a locked sheet would
+    // show near-empty content with no unlock action, worse than just
+    // landing on this section's already-correct locked/unavailable copy,
+    // and Today's existing UnlockPromptCard already owns the one unlock
+    // CTA (must not gain a second, per this correction's own instruction).
+    if (result.shouldOpenScoreSheet) setScoreSheetVisible(true);
+    // Pass 2B correction §5 — one Today tap must reach the complete Journey
+    // presentation, not JourneyTimeline's own collapsed "View full journey"
+    // gate a second time. shouldExpandJourney is already false for every
+    // other target (see sectionFocus.ts), so this never affects Score/
+    // financial-learning fulfilment.
+    if (result.shouldExpandJourney) setJourneyExpanded(true);
+    pendingSectionFocusRef.current = null;
+    navigation.setParams({ scrollTo: undefined, scrollToRequestId: undefined });
+  }
+
   useEffect(() => {
-    if (route.params?.scrollTo === 'financial-learning') {
-      const timer = setTimeout(() => scrollRef.current?.scrollTo({ y: exploreMoneyMovesY.current, animated: true }), 250);
-      return () => clearTimeout(timer);
-    }
-  }, [route.params]);
+    const parsed = parseSectionFocusRequest(route.params?.scrollTo, route.params?.scrollToRequestId);
+    if (!parsed) return;
+    pendingSectionFocusRef.current = parsed;
+    attemptSectionFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.scrollTo, route.params?.scrollToRequestId]);
 
   function handleOpportunityAction(opportunity: MoneyOpportunity) {
     switch (opportunity.action) {
@@ -98,7 +200,7 @@ export function DiscoverScreen() {
         navigation.navigate('Money');
         break;
       case 'open_investing_path':
-        scrollRef.current?.scrollTo({ y: exploreMoneyMovesY.current, animated: true });
+        if (exploreMoneyMovesY.current !== null) scrollRef.current?.scrollTo({ y: exploreMoneyMovesY.current, animated: true });
         break;
       case 'debt_coach':
         setDebtCoachVisible(true);
@@ -238,6 +340,63 @@ export function DiscoverScreen() {
       <AddGoalModal visible={growGoalModalVisible} onClose={() => setGrowGoalModalVisible(false)} />
       <GoalDetailSheet goal={growSelectedGoal} onClose={() => setGrowSelectedGoalId(null)} />
 
+      {/* Pass 2B — the full Navilo Score detail's stable Grow destination
+          for Today's compact Score chip. Reuses the exact existing
+          ScoreExplanationSheet (never a redesigned/duplicate breakdown) and
+          the exact same shared presentation Today's chip reads
+          (selectScoreChipPresentation), so wording can never drift between
+          the two surfaces. */}
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          scoreSectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
+        {brand.scoreName}
+      </Text>
+      <TouchableOpacity onPress={() => setScoreSheetVisible(true)} activeOpacity={0.8}>
+        <SectionCard style={styles.navCard}>
+          {/* Pass 2B correction §2/§7 — matches ScoreChip.tsx's own icon and
+              green accent exactly, so Today's chip and Grow's launcher row
+              for the same feature never disagree, and neither reuses
+              Journey's trophy glyph (test requirement: "Score and Journey
+              do not reuse the same trophy presentation"). This is a minimal
+              icon/colour fix on the existing row only — Grow's wider
+              ordering and full Score visual hierarchy remain Pass 2C's. */}
+          <View style={styles.navIcon}>
+            <Ionicons name="speedometer-outline" size={20} color={colors.accent} />
+          </View>
+          <View style={styles.navTextBlock}>
+            <Text style={styles.navTitle}>{scoreChipPresentation.label}</Text>
+            <Text style={styles.navBody}>{scoreChipPresentation.supportingText}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </SectionCard>
+      </TouchableOpacity>
+      <ScoreExplanationSheet visible={scoreSheetVisible} onClose={() => setScoreSheetVisible(false)} result={luluScore} />
+
+      {/* Pass 2B — the full Journey timeline's stable Grow destination for
+          Today's compact Journey snapshot. Mounts the exact existing
+          JourneyTimeline component (byte-for-byte unchanged, same
+          computeAchievements source) — the same "full journey" a returning
+          user would have seen on Today before this pass, now reachable
+          here instead. */}
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          journeySectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
+        Your Journey
+      </Text>
+      <SectionCard>
+        <JourneyTimeline achievements={achievements} expanded={journeyExpanded} onToggleExpanded={() => setJourneyExpanded((v) => !v)} />
+      </SectionCard>
+
       {/* A. Hero — AI-driven, not a static article list (PRD ask). */}
       <MoneyOpportunitiesHero opportunities={opportunities} onAction={handleOpportunityAction} />
 
@@ -271,7 +430,13 @@ export function DiscoverScreen() {
       {/* D. Explore Money Moves — organised by real category, each lesson
           only ever reachable through its journey (PRD ask: never a bare
           "What is an ETF?" card floating at the top level). */}
-      <Text style={styles.categoryTitle} onLayout={(e) => (exploreMoneyMovesY.current = e.nativeEvent.layout.y)}>
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          exploreMoneyMovesY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+      >
         Explore Money Moves
       </Text>
 

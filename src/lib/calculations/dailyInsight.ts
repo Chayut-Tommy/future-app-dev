@@ -19,8 +19,23 @@ export interface DailyInsight {
  * that's a cohort/percentile claim with no real aggregate data source
  * behind it (same constraint as Discover's market data), so it's not
  * included even though it reads well as an example.
+ *
+ * Pass 2B correction — `excludeMilestoneAchievementId` lets the caller
+ * (TodayScreen.tsx) suppress the "$X away from unlocking..." entry
+ * specifically when it would restate the exact milestone the Journey
+ * snapshot already displays as "Next" directly above it. Compared by
+ * achievement id (structured identity — computeJourneySnapshot's own
+ * `next.id`), never by parsing or diffing the rendered text of either
+ * surface. getNextMilestone here and journeySnapshot.next use genuinely
+ * different definitions (this one only considers quantified achievements;
+ * journeySnapshot.next is the first unlocked achievement of any kind — see
+ * journeySnapshot.ts's own doc comment) and can diverge; when they do, this
+ * entry is a real, independent insight and stays eligible. Every other pool
+ * entry (goal impact, savings-interest, score-band) is untouched and always
+ * eligible — this exclusion is narrowly scoped to the one entry that can
+ * actually duplicate Journey's content.
  */
-function buildInsightPool(data: AppData): DailyInsight[] {
+function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string | null): DailyInsight[] {
   const pool: DailyInsight[] = [];
 
   const goalImpact = buildGoalImpactOpportunity(data);
@@ -29,7 +44,7 @@ function buildInsightPool(data: AppData): DailyInsight[] {
   }
 
   const nextMilestone = getNextMilestone(data);
-  if (nextMilestone && nextMilestone.remaining > 0) {
+  if (nextMilestone && nextMilestone.remaining > 0 && nextMilestone.achievement.id !== excludeMilestoneAchievementId) {
     pool.push({
       icon: 'flag',
       text: `You're only $${Math.round(nextMilestone.remaining).toLocaleString()} away from unlocking "${nextMilestone.achievement.title}".`,
@@ -60,8 +75,15 @@ function buildInsightPool(data: AppData): DailyInsight[] {
   return pool;
 }
 
-export function pickDailyInsight(data: AppData, date: Date = new Date()): DailyInsight | null {
-  const pool = buildInsightPool(data);
+/**
+ * `excludeMilestoneAchievementId` — pass the Journey snapshot's own
+ * `next?.id` (or `null` when unavailable/all-completed) so this never
+ * offers a milestone insight that merely restates what Journey already
+ * shows as "Next" directly above it on Today (Pass 2B correction §4).
+ * Structured id comparison only — see buildInsightPool's doc comment.
+ */
+export function pickDailyInsight(data: AppData, date: Date = new Date(), excludeMilestoneAchievementId: string | null = null): DailyInsight | null {
+  const pool = buildInsightPool(data, excludeMilestoneAchievementId);
   if (pool.length === 0) return null;
   const start = new Date(date.getFullYear(), 0, 0);
   const dayOfYear = Math.floor((date.getTime() - start.getTime()) / 86400000);

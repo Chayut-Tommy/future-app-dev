@@ -62,6 +62,10 @@ export const AddCreditCardModal = forwardRef<
   const [minRequiredPayment, setMinRequiredPayment] = useState('');
   const [apr, setApr] = useState('');
   const [saving, setSaving] = useState(false);
+  // Pass 2B correction — surfaces a genuine persistence failure instead of
+  // leaving Save silently inert (see submittingRef's own correction comment
+  // below for the actual root cause this pairs with).
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
   const isEditing = !!editCard;
 
@@ -77,6 +81,17 @@ export const AddCreditCardModal = forwardRef<
   // Save while the first is in flight; this ref additionally protects the
   // imperative requestSave() entry point the embedded host calls, the same
   // belt-and-braces pattern AddWealthItemModal's submittingRef uses).
+  //
+  // Pass 2B correction — physical-device retest found Save silently doing
+  // nothing on a legitimate edit. Root cause: this component is mounted
+  // once and kept alive for the lifetime of its host screen (WealthScreen/
+  // CardsScreen/MoneyScreen all render it unconditionally, toggling only
+  // `visible`), so the ref was never being reset back to false anywhere —
+  // AddWealthItemModal's own copy of this exact pattern resets it in two
+  // places (a fresh form session opening, and a failed save's catch block);
+  // this file was missing BOTH, so after the very first successful (or even
+  // attempted) Save in a session, every subsequent Save on any card silently
+  // no-opped forever. Fixed below by mirroring both of those reset points.
   const submittingRef = useRef(false);
 
   useEffect(() => {
@@ -125,6 +140,10 @@ export const AddCreditCardModal = forwardRef<
       initialSnapshot.current = { issuer: '', limit: '', balance: '', dueDay: '', expectedRepayment: '', minRequiredPayment: '', apr: '' };
     }
     setSaving(false);
+    // A genuinely new form session — see submittingRef's own correction
+    // comment for why this is one of the two places it must be cleared.
+    submittingRef.current = false;
+    setSaveErrorMessage(null);
   }, [visible, editCard]);
 
   useEffect(() => {
@@ -164,6 +183,7 @@ export const AddCreditCardModal = forwardRef<
     if (!canSave || saving || submittingRef.current) return;
     submittingRef.current = true;
     setSaving(true);
+    setSaveErrorMessage(null);
     const payload = {
       issuer: issuer.trim(),
       label: issuer.trim(),
@@ -176,22 +196,46 @@ export const AddCreditCardModal = forwardRef<
       // and computeCardPayoffInsight); expectedMonthlyRepayment is the
       // user's own planned amount (feeds What Happens Next, Available
       // Until Payday's in-cycle commitment, Typical Money Flow/Allocation).
+      // A $0/blank expectedMonthlyRepayment alongside a positive
+      // minimumPayment is a valid, deliberately-supported state — not
+      // contradictory data — because resolveExpectedMonthlyRepayment
+      // (creditHealth.ts) falls back to minimumPayment for every consumer
+      // that reads "the" repayment whenever expectedMonthlyRepayment isn't
+      // itself a genuine positive figure yet. Neither field is coerced into
+      // the other here.
       minimumPayment: parseRepaymentAmount(minRequiredPayment),
       expectedMonthlyRepayment: parseRepaymentAmount(expectedRepayment),
       apr: !isNaN(aprValue) && aprValue > 0 ? aprValue / 100 : undefined,
     };
-    if (editCard) {
-      updateCreditCard(editCard.id, payload);
-      if (payload.currentBalance < editCard.currentBalance) celebrate(buildDebtReducedCelebration());
-    } else {
-      addCreditCard(payload);
+    // Pass 2B correction — Save must never fail silently. Wrapping the
+    // actual persistence call means a genuine thrown failure lands in the
+    // catch below (error surfaced, submittingRef released, draft
+    // preserved, sheet stays open) instead of leaving the guard latched
+    // true forever with no feedback — the exact silent-failure symptom the
+    // physical-device retest reported.
+    try {
+      if (editCard) {
+        updateCreditCard(editCard.id, payload);
+        if (payload.currentBalance < editCard.currentBalance) celebrate(buildDebtReducedCelebration());
+      } else {
+        addCreditCard(payload);
+      }
+      // Successful Save never goes through requestClose/confirmDiscardIfDirty
+      // — it must never produce a discard prompt. Embedded: hand control back
+      // to the host (which closes the whole Add Anything journey exactly
+      // once). Standalone: unchanged direct onClose().
+      if (embedded) onSaveSuccess?.();
+      else onClose();
+    } catch (err) {
+      // Smallest safe recovery, mirroring AddWealthItemModal's own catch
+      // block: release the guard so a deliberate next tap can retry,
+      // surface a plain-language reason, and never call onClose() — the
+      // user's entered values stay on screen instead of being silently
+      // discarded behind a sheet they'd have to reopen and re-enter.
+      submittingRef.current = false;
+      setSaving(false);
+      setSaveErrorMessage('Something went wrong saving this card — nothing was lost. Your details are still here; tap Save to try again.');
     }
-    // Successful Save never goes through requestClose/confirmDiscardIfDirty
-    // — it must never produce a discard prompt. Embedded: hand control back
-    // to the host (which closes the whole Add Anything journey exactly
-    // once). Standalone: unchanged direct onClose().
-    if (embedded) onSaveSuccess?.();
-    else onClose();
   }
 
   function handleDelete() {
@@ -253,12 +297,22 @@ export const AddCreditCardModal = forwardRef<
         benefitBox: { backgroundColor: colors.marketSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
         benefitTitle: { ...typography.caption, fontSize: 13, color: colors.textPrimary, fontWeight: '600', marginBottom: spacing.xs },
         benefitLine: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 18 },
+        // Pass 2B correction — same helperBox/helperText pattern
+        // AddWealthItemModal uses for its own saveErrorMessage.
+        helperBox: { backgroundColor: colors.dangerSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
+        helperText: { ...typography.caption, fontSize: 12, color: colors.danger, lineHeight: 17 },
       }),
     [colors, radius, spacing, typography]
   );
 
   const content = (
     <>
+      {saveErrorMessage ? (
+        <View style={styles.helperBox}>
+          <Text style={styles.helperText}>{saveErrorMessage}</Text>
+        </View>
+      ) : null}
+
       {!isEditing ? (
         <View style={styles.benefitBox}>
           <Text style={styles.benefitTitle}>Add your card so {brand.name} can help you:</Text>

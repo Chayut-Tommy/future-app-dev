@@ -38,6 +38,14 @@ export interface ColorTokens {
   aiBlue: string;
   aiBlueSoft: string;
   onAiBlue: string;
+  /** Third Navilo colour style (Pass 2B correction) — the premium ambient
+   * orange/champagne option, alongside aiBlue ("Ocean Blue") and purple.
+   * Deliberately restrained (warm amber/terracotta), never bright warning
+   * yellow — kept visually distinct from `warning`/`gold` so a Sunrise
+   * ambient never reads as a caution/achievement state. */
+  sunrise: string;
+  sunriseSoft: string;
+  onSunrise: string;
   market: string; // market data / investment insights
   marketSoft: string;
   gold: string; // achievements, milestones
@@ -51,6 +59,10 @@ export interface ColorTokens {
    * available so the two can be compared (PRD ask), toggled in Settings. */
   aiGradientBlue: [string, string];
   navyGradient: [string, string];
+  /** Sunrise's own gradient pair — restrained amber-terracotta to warm
+   * apricot, the third option alongside aiGradient (Purple) and
+   * aiGradientBlue (Ocean Blue). */
+  sunriseGradient: [string, string];
 }
 
 // Growth green as the primary brand color. Navy carries premium/trust
@@ -90,6 +102,9 @@ export const lightColors: ColorTokens = {
   aiBlue: '#0E86A8',
   aiBlueSoft: '#E3F4F8',
   onAiBlue: '#FFFFFF',
+  sunrise: '#B9752E',
+  sunriseSoft: '#FBEADD',
+  onSunrise: '#FFFFFF',
   market: '#2563A8',
   marketSoft: '#E5EFF9',
   gold: '#B4881A',
@@ -99,6 +114,7 @@ export const lightColors: ColorTokens = {
   aiGradient: ['#4F3B96', '#6D4FC2'],
   aiGradientBlue: ['#0B2A4A', '#12A9C4'],
   navyGradient: ['#0A1830', '#1C3A66'],
+  sunriseGradient: ['#8C5A2E', '#D99A5B'],
 };
 
 export const darkColors: ColorTokens = {
@@ -132,6 +148,9 @@ export const darkColors: ColorTokens = {
   aiBlue: '#22B8DE',
   aiBlueSoft: '#123443',
   onAiBlue: '#06120C',
+  sunrise: '#D99A5B',
+  sunriseSoft: '#3A2A14',
+  onSunrise: '#241407',
   market: '#5B9BDA',
   marketSoft: '#132535',
   gold: '#E0B84A',
@@ -141,6 +160,7 @@ export const darkColors: ColorTokens = {
   aiGradient: ['#2E2352', '#5B3FA0'],
   aiGradientBlue: ['#0E3B5C', '#1FB8D6'],
   navyGradient: ['#0D1A2E', '#22456F'],
+  sunriseGradient: ['#5C3A1C', '#B87D42'],
 };
 
 export const spacing = {

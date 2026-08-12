@@ -45,21 +45,23 @@ function formatDisclosureAmount(cents: number): string {
  * against duplicate confirmation lives in that action's dataRef/
  * latest-nextDueDate eligibility check, not in this component
  * (regression-protection review, B2.0B §5).
+ *
+ * Pass 2B correction §1 — this full detailed presentation (the actual
+ * question, disclosure copy, and every account-choice control) is no
+ * longer rendered inline inside Today's Briefing hero at all; it now only
+ * mounts inside ReminderDetailSheet, reached by tapping the Briefing's
+ * compact Reminder tile. Retired the `embedded` row-inside-a-parent-card
+ * mode that variant used (its only caller): this component is always its
+ * own SectionCard now. Independently of that move, `actionRow` also gained
+ * `flexWrap: 'wrap'` here — the confirmed root cause of the overflow
+ * defect (an unbounded single-line row of account-choice pills, e.g.
+ * "From cash" / "From everyday account" / "From credit card", or one
+ * button per Everyday Account with a long customer-entered label) is fixed
+ * at the layout level regardless of where this component is mounted: pills
+ * that don't fit the available width now wrap onto additional rows inside
+ * their own container instead of extending past it.
  */
-export function SmartReminderCard({
-  topReminder,
-  embedded,
-}: {
-  topReminder: SmartReminder | null;
-  /** Correction pass §7 — when true, renders as one more row inside a
-   * PARENT SectionCard (a hairline top divider, no own card
-   * background/shadow/margin) instead of its own standalone SectionCard,
-   * so the Today Briefing can show it as one integrated Briefing row
-   * rather than a second, visually disconnected card. Every action,
-   * confirm/dismiss/error/persistence behaviour below is completely
-   * unaffected — only this outer wrapper differs. */
-  embedded?: boolean;
-}) {
+export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder | null }) {
   const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography } = useTheme();
@@ -121,18 +123,16 @@ export function SmartReminderCard({
     () =>
       StyleSheet.create({
         card: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-        // Correction pass §7 — the embedded variant's own top divider,
-        // matching the exact hairline-border-plus-padding convention
-        // TodayBriefingCard.tsx's own event rows already use, so the
-        // reminder reads as one more row in that same list, not a
-        // visually distinct second card.
-        embeddedRow: { paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
         iconBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
         textBlock: { flex: 1 },
         title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
         body: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
-        actionRow: { flexDirection: 'row', gap: spacing.sm },
-        actionButton: { paddingVertical: 7, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.accent },
+        // Pass 2B correction §1 — flexWrap fixes the confirmed overflow:
+        // pills that don't fit the available width wrap onto additional
+        // rows inside this container instead of extending past it. Never
+        // horizontal scrolling, never clipping.
+        actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+        actionButton: { paddingVertical: 7, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.accent, maxWidth: '100%' },
         actionButtonSecondary: { backgroundColor: colors.surfaceMuted },
         actionButtonDisabled: { opacity: 0.5 },
         actionText: { ...typography.caption, fontSize: 12, color: colors.onAccent, fontWeight: '700' },
@@ -342,10 +342,9 @@ export function SmartReminderCard({
       ? 'bag-handle-outline'
       : 'calendar-outline';
   const reminderCard = reminder.creditCardId ? data.creditCards.find((c) => c.id === reminder.creditCardId) ?? null : null;
-  const Wrapper = embedded ? View : SectionCard;
 
   return (
-    <Wrapper style={embedded ? styles.embeddedRow : undefined}>
+    <SectionCard>
       <View style={styles.card}>
         <View style={styles.iconBadge}>
           <Ionicons name={icon} size={16} color={colors.accentStrong} />
@@ -537,6 +536,6 @@ export function SmartReminderCard({
           dismiss();
         }}
       />
-    </Wrapper>
+    </SectionCard>
   );
 }
