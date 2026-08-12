@@ -3,7 +3,7 @@ import { AppData } from '../../types/models';
 import { buildGoalImpactOpportunity } from './opportunities';
 import { getNextMilestone } from './achievements';
 import { findSavingsAsset, computeSavingsSummary, findBestComparison, annualInterestDifference } from './savingsCoach';
-import { luluScoreBand, computeLuluScore } from './luluScore';
+import { computeLuluScore } from './luluScore';
 import { brand } from '../brand';
 
 export interface DailyInsight {
@@ -66,10 +66,17 @@ function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string |
     }
   }
 
+  // Pass 2C correction — previously used luluScoreBand's label ("You're
+  // doing incredibly well with your finances." at the top band), which
+  // implies a complete financial-health judgment from manually recorded
+  // information. Replaced with the same factual, recorded-data pattern
+  // scoreChipPresentation already uses elsewhere — no complete-wellbeing
+  // claim, for any score band, ever. luluScoreBand itself is left
+  // untouched in luluScore.ts (out of scope for this correction); this is
+  // simply no longer its caller.
   const luluScore = computeLuluScore(data);
   if (!luluScore.locked) {
-    const band = luluScoreBand(luluScore.score);
-    pool.push({ icon: 'trending-up', text: `${band.label} Your ${brand.scoreName} is ${luluScore.score}/100 today.` });
+    pool.push({ icon: 'trending-up', text: `Your ${brand.scoreName} is ${luluScore.score}/100 based on what you've recorded.` });
   }
 
   return pool;

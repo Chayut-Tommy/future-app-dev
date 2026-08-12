@@ -262,8 +262,8 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
     /if \(result\.shouldOpenScoreSheet\) setScoreSheetVisible\(true\);/.test(DISCOVER_SCREEN_SRC)
   );
   assert(
-    'the Score section is still independently tappable for an organic (non-Today-driven) visit to Grow — the compact launcher row is preserved, not replaced, so this correction adds the auto-open without removing the existing manual affordance',
-    /<TouchableOpacity onPress=\{\(\) => setScoreSheetVisible\(true\)\} activeOpacity=\{0\.8\}>/.test(DISCOVER_SCREEN_SRC)
+    'the Score section is still independently tappable for an organic (non-Today-driven) visit to Grow — the whole Score card is one TouchableOpacity with onPress={() => setScoreSheetVisible(true)}, so this correction (and the Pass 2C radial-gauge redesign) adds the auto-open without removing the existing manual affordance',
+    /<TouchableOpacity\s+onPress=\{\(\) => setScoreSheetVisible\(true\)\}\s+activeOpacity=\{0\.8\}/.test(DISCOVER_SCREEN_SRC)
   );
 
   // --- Back behaviour: the sheet is the same, unmodified, existing Modal —

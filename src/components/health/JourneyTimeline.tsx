@@ -41,7 +41,7 @@ export function JourneyTimeline({
   expanded: boolean;
   onToggleExpanded: () => void;
 }) {
-  const { colors, radius, spacing, typography, glow } = useTheme();
+  const { colors, radius, spacing, typography, glow, naviloPalette } = useTheme();
   const nextIndex = achievements.findIndex((a) => !a.unlocked);
 
   const visibleCount = expanded ? achievements.length : Math.min(achievements.length, Math.max(INITIAL_VISIBLE, nextIndex + 1));
@@ -66,18 +66,18 @@ export function JourneyTimeline({
         subtitle: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
         nextBadge: {
           alignSelf: 'flex-start',
-          backgroundColor: colors.goldSoft,
+          backgroundColor: naviloPalette.secondaryAccentSoft,
           paddingHorizontal: spacing.sm,
           paddingVertical: 2,
           borderRadius: radius.pill,
           marginTop: 6,
         },
-        nextBadgeText: { ...typography.micro, fontSize: 10, color: colors.gold, fontWeight: '700' },
+        nextBadgeText: { ...typography.micro, fontSize: 10, color: naviloPalette.secondaryAccent, fontWeight: '700' },
         progressWrap: { marginTop: spacing.sm, width: '80%' },
         expandButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingTop: spacing.xs },
-        expandText: { ...typography.caption, fontSize: 13, color: colors.accent, fontWeight: '700' },
+        expandText: { ...typography.caption, fontSize: 13, color: naviloPalette.secondaryAccent, fontWeight: '700' },
       }),
-    [colors, radius, spacing, typography, expanded]
+    [colors, radius, spacing, typography, expanded, naviloPalette]
   );
 
   return (
@@ -95,20 +95,20 @@ export function JourneyTimeline({
                   style={[
                     styles.node,
                     a.unlocked
-                      ? { backgroundColor: colors.gold, ...glow(colors.gold) }
+                      ? { backgroundColor: naviloPalette.secondaryAccent, ...glow(naviloPalette.secondaryAccent) }
                       : isNext
-                      ? { backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.gold }
+                      ? { backgroundColor: colors.surface, borderWidth: 2, borderColor: naviloPalette.secondaryAccent }
                       : { backgroundColor: colors.surfaceMuted },
                   ]}
                 >
                   <Ionicons
                     name={a.unlocked || isNext ? a.icon : 'lock-closed-outline'}
                     size={18}
-                    color={a.unlocked ? colors.onGold : isNext ? colors.gold : colors.textMuted}
+                    color={a.unlocked ? naviloPalette.secondaryAccentForeground : isNext ? naviloPalette.secondaryAccent : colors.textMuted}
                   />
                 </View>
                 {!isLast ? (
-                  <View style={[styles.connectorLine, { backgroundColor: a.unlocked ? colors.gold : colors.border }]} />
+                  <View style={[styles.connectorLine, { backgroundColor: a.unlocked ? naviloPalette.secondaryAccent : colors.border }]} />
                 ) : null}
               </View>
               <View style={styles.textCol}>
@@ -121,7 +121,7 @@ export function JourneyTimeline({
                 ) : null}
                 {isNext && a.target ? (
                   <View style={styles.progressWrap}>
-                    <ProgressBar progress={progress} color={colors.gold} height={4} />
+                    <ProgressBar progress={progress} color={naviloPalette.progressAccent} height={4} />
                   </View>
                 ) : null}
               </View>

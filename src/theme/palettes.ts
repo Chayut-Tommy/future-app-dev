@@ -81,6 +81,22 @@ export interface NaviloPalette {
    * consistent progress treatment, per correction §3's "one calm, legible
    * progress treatment"). */
   progressAccent: string;
+  /** Pass 2C correction — the full combined Journey (JourneyTimeline.tsx)
+   * previously hard-coded colors.gold/goldSoft/onGold everywhere (node
+   * fills, connector lines, the "NEXT UP" badge, the progress bar), so it
+   * stayed mustard regardless of the selected Ocean Blue/Purple/Sunrise
+   * style — the confirmed physical-device defect this fixes. secondaryAccent
+   * already covers the solid fill/icon/line colour; these two cover the
+   * two remaining raw-gold usages a solid accent alone can't replace: a
+   * soft badge background, and a readable-on-the-solid-accent foreground
+   * (a node's unlock icon sits ON TOP of secondaryAccent, so it needs a
+   * token tuned for contrast against THAT colour specifically — the same
+   * job colors.onAiBlue/onPurple/onSunrise already do for their own accent
+   * counterpart). Both are 100% reused from already-accepted ColorTokens
+   * (aiBlueSoft/purpleSoft/sunriseSoft and onAiBlue/onPurple/onSunrise) —
+   * no new raw colour is introduced anywhere for this fix. */
+  secondaryAccentSoft: string;
+  secondaryAccentForeground: string;
 }
 
 /** Muted alternative to the vivid brand gradient, used only by the AI
@@ -128,6 +144,8 @@ const TILE_ICON_FOREGROUND: Record<NaviloColorStyle, Record<'light' | 'dark', st
 export function selectNaviloPalette(style: NaviloColorStyle, scheme: 'light' | 'dark', colors: ColorTokens): NaviloPalette {
   const heroGradient = style === 'blue' ? colors.aiGradientBlue : style === 'purple' ? colors.aiGradient : colors.sunriseGradient;
   const accent = style === 'blue' ? colors.aiBlue : style === 'purple' ? colors.purple : colors.sunrise;
+  const accentSoft = style === 'blue' ? colors.aiBlueSoft : style === 'purple' ? colors.purpleSoft : colors.sunriseSoft;
+  const accentForeground = style === 'blue' ? colors.onAiBlue : style === 'purple' ? colors.onPurple : colors.onSunrise;
   const insight = MUTED_INSIGHT_GRADIENT[style][scheme];
   const chrome = TILE_CHROME[scheme];
   const tileIconForeground = TILE_ICON_FOREGROUND[style][scheme];
@@ -146,5 +164,7 @@ export function selectNaviloPalette(style: NaviloColorStyle, scheme: 'light' | '
     aiInsightForeground: '#FFFFFF',
     attentionAccent: colors.danger,
     progressAccent: accent,
+    secondaryAccentSoft: accentSoft,
+    secondaryAccentForeground: accentForeground,
   };
 }

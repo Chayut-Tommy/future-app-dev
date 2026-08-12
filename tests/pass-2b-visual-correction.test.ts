@@ -120,10 +120,14 @@ console.log('\n=== Section 2: duplicate milestone-derived check-in content is su
   // 8. genuinely independent check-in content remains eligible — every
   // other pool entry (goal impact / savings-interest / score-band) must
   // still be reachable across the year even with the milestone excluded.
+  // Pass 2C correction — dailyInsight.ts's score-band pool entry no longer
+  // reads luluScoreBand's judgmental label ("You're doing incredibly well
+  // with your finances."); it uses the same factual, recorded-data pattern
+  // scoreChipPresentation already uses elsewhere. Updated literal to match.
   const scoreBandText = (() => {
     const luluScore = computeLuluScore(data);
     if (luluScore.locked) return null;
-    return `is ${luluScore.score}/100 today.`;
+    return `is ${luluScore.score}/100 based on what you've recorded.`;
   })();
   if (scoreBandText) {
     const hasScoreBandDay = Array.from(textsFiltered).some((t) => t.includes(scoreBandText));
@@ -285,9 +289,14 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
     !/const \[expanded, setExpanded\] = useState\(false\);/.test(JOURNEY_TIMELINE_SRC) && /expanded: boolean;/.test(JOURNEY_TIMELINE_SRC) && /onToggleExpanded: \(\) => void;/.test(JOURNEY_TIMELINE_SRC)
   );
   assert(
-    "DiscoverScreen.tsx drives JourneyTimeline's expanded prop from its own journeyExpanded state, defaulting to false (ordinary collapsed Grow behaviour) and settable true by fulfilling a journey focus request",
+    // Pass 2C correction — shouldExpandJourney now also selects the
+    // Milestones subview of the combined Journey/Money Path tab (a block
+    // statement, not the old single-line call), so a one-tap arrival always
+    // lands on the milestone timeline rather than a possibly-stale Money
+    // Path selection.
+    "DiscoverScreen.tsx drives JourneyTimeline's expanded prop from its own journeyExpanded state, defaulting to false (ordinary collapsed Grow behaviour) and settable true by fulfilling a journey focus request, which also selects the Milestones subview",
     /const \[journeyExpanded, setJourneyExpanded\] = useState\(false\);/.test(DISCOVER_SCREEN_SRC) &&
-      /if \(result\.shouldExpandJourney\) setJourneyExpanded\(true\);/.test(DISCOVER_SCREEN_SRC) &&
+      /if \(result\.shouldExpandJourney\) \{\s*setJourneyExpanded\(true\);\s*setJourneySubview\('milestones'\);\s*\}/.test(DISCOVER_SCREEN_SRC) &&
       /<JourneyTimeline achievements=\{achievements\} expanded=\{journeyExpanded\} onToggleExpanded=\{\(\) => setJourneyExpanded\(\(v\) => !v\)\} \/>/.test(DISCOVER_SCREEN_SRC)
   );
   assert(

@@ -21,13 +21,16 @@ import { ProgressBar } from '../../components/shared/ProgressBar';
 import { Button } from '../../components/shared/Button';
 import { ScoreExplanationSheet } from '../../components/health/ScoreExplanationSheet';
 import { JourneyTimeline } from '../../components/health/JourneyTimeline';
+import { ScoreRadialGauge } from '../../components/shared/ScoreRadialGauge';
+import { toScoreGaugePresentation } from '../../lib/calculations/scoreGaugePresentation';
 import { learningCardsByCategory } from '../../lib/learningCards';
 import { LEARNING_PATHS } from '../../lib/learningPaths';
 import { computeMoneyOpportunities, MoneyOpportunity } from '../../lib/calculations/moneyOpportunities';
 import { computeWealthPaths } from '../../lib/calculations/wealthJourney';
 import { computeFutureYouPreview } from '../../lib/calculations/futureYouPreview';
-import { computeLuluScore } from '../../lib/calculations/luluScore';
+import { computeLuluScore, LIFE_STAGE_LABEL } from '../../lib/calculations/luluScore';
 import { computeAchievements } from '../../lib/calculations/achievements';
+import { computeStrongestArea, computeBiggestOpportunity } from '../../lib/calculations/scoreExplanation';
 import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
 import { SectionFocusRequest, parseSectionFocusRequest, computeSectionFocusFulfillment } from '../../lib/calculations/sectionFocus';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
@@ -58,7 +61,7 @@ export function DiscoverScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { data } = useAppState();
-  const { colors, spacing, typography, radius } = useTheme();
+  const { colors, spacing, typography, radius, naviloPalette } = useTheme();
   const scrollRef = tabScrollRefs.Grow;
   const exploreMoneyMovesY = useRef<number | null>(null);
   const scoreSectionY = useRef<number | null>(null);
@@ -92,6 +95,16 @@ export function DiscoverScreen() {
   // did) — see JourneyTimeline.tsx's own doc comment for why this can't
   // stay internal to that component.
   const [journeyExpanded, setJourneyExpanded] = useState(false);
+  // Pass 2C correction — Milestones vs Money Path are genuinely distinct
+  // engines (computeAchievements vs computeWealthPaths, see the doc
+  // comment on the combined "Your Journey" section below); this is purely
+  // a local UI selection between their two existing, unmodified
+  // presentations — it never reads or writes either engine's own state,
+  // so switching subviews can never mutate Journey progress or Money Path
+  // stage data. Defaults to 'milestones' — the same "established collapsed
+  // Milestones presentation" an organic (non-Today-driven) Grow visit
+  // already showed before this correction.
+  const [journeySubview, setJourneySubview] = useState<'milestones' | 'moneyPath'>('milestones');
 
   const opportunities = useMemo(() => computeMoneyOpportunities(data), [data]);
   const journeyPaths = useMemo(() => computeWealthPaths(data), [data]);
@@ -106,6 +119,29 @@ export function DiscoverScreen() {
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const scoreChipPresentation = useMemo(() => selectScoreChipPresentation(luluScore), [luluScore]);
+  // Pass 2C physical-device correction #2 — the single source of truth for
+  // the radial gauge's own validity, computed once here and reused for
+  // BOTH the drawn ring/numeral (passed to ScoreRadialGauge) AND the
+  // announced accessibility label below, so the two can never diverge.
+  // toScoreGaugePresentation re-checks finite/in-range explicitly rather
+  // than trusting scoreChipPresentation.state === 'available' alone — see
+  // its own doc comment in ScoreRadialGauge.tsx for why a second,
+  // independent guard at this exact presentation boundary matters.
+  const scoreGaugePresentation = useMemo(
+    () => toScoreGaugePresentation(scoreChipPresentation.state === 'available', scoreChipPresentation.scoreValue),
+    [scoreChipPresentation]
+  );
+  // Pass 2C correction — the exact same deterministic-explanation-layer
+  // functions ScoreExplanationSheet's own category breakdown already
+  // derives from (scoreExplanation.ts), reused here so the redesigned
+  // radial-gauge card can show "at most one strongest area and one next
+  // opportunity" as two short factual lines — never a second/duplicate
+  // trend or scoring calculation, and never more than one of each (per
+  // this round's explicit "avoid multiple paragraphs" requirement). Both
+  // return null defensively (result.locked, or no clear strongest/
+  // opportunity category in the fixture) — the JSX below gates on that.
+  const strongestArea = useMemo(() => computeStrongestArea(luluScore), [luluScore]);
+  const biggestOpportunity = useMemo(() => computeBiggestOpportunity(luluScore), [luluScore]);
   const firstName = data.user.name?.trim() ? data.user.name.trim() : null;
   // Existing authoritative active/completed semantics only — no new
   // Grow-specific definition of "active" (Goals-to-Grow §4). data.goals is
@@ -178,7 +214,13 @@ export function DiscoverScreen() {
     // gate a second time. shouldExpandJourney is already false for every
     // other target (see sectionFocus.ts), so this never affects Score/
     // financial-learning fulfilment.
-    if (result.shouldExpandJourney) setJourneyExpanded(true);
+    // Pass 2C correction — one Today tap must land on Milestones
+    // specifically (never leave a prior Money Path selection showing
+    // instead), in addition to the existing expand behaviour.
+    if (result.shouldExpandJourney) {
+      setJourneyExpanded(true);
+      setJourneySubview('milestones');
+    }
     pendingSectionFocusRef.current = null;
     navigation.setParams({ scrollTo: undefined, scrollToRequestId: undefined });
   }
@@ -250,8 +292,59 @@ export function DiscoverScreen() {
         navTextBlock: { flex: 1 },
         navTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
         navBody: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+        // Pass 2C — the full Navilo Score card, upper-Grow's dominant
+        // progress view. A restrained accent border (never a full gradient
+        // hero — that identity stays exclusive to Today) resolved from the
+        // user's selected colour style, so Score visually leads Grow
+        // without competing with Today's own hero.
+        scoreCard: { borderWidth: 1.5 },
+        // Pass 2C correction — the radial-gauge header row: gauge on the
+        // left, life stage/supporting/completeness text stacked beside it.
+        scoreHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+        scoreHeaderText: { flex: 1 },
+        scoreLifeStage: { ...typography.heading, fontSize: 15, color: colors.textPrimary, marginBottom: 2 },
+        scoreExpandedBlock: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+        scoreSummaryLine: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginTop: spacing.xs },
+        scoreActionRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.sm,
+          marginTop: spacing.md,
+          paddingTop: spacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        scoreActionText: { ...typography.body, fontSize: 14, color: colors.accent, fontWeight: '600' },
+        // Pass 2C correction — the combined "Your Journey" section's
+        // Milestones/Money Path segmented control. Sits above whichever
+        // subview's own card is currently selected — never inside either
+        // card, so WealthJourneyCard's own internal SectionCard (Money
+        // Path) is never nested inside a second outer card.
+        // Physical-device correction §2 — minHeight: 44 gives each tab an
+        // adequate touch target regardless of Dynamic Type size (the prior
+        // paddingVertical: 8 alone could fall well under 44pt at the
+        // default caption font size). The selected tab also gets a visible
+        // border (journeyTabSelected) so selection is never communicated
+        // through background colour alone — see journeyTabTextSelected for
+        // the matching non-colour (bold) text cue.
+        journeyTabRow: { flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.sm },
+        journeyTab: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: 44,
+          paddingVertical: 8,
+          borderRadius: radius.pill,
+          backgroundColor: colors.surfaceMuted,
+          borderWidth: 1.5,
+          borderColor: 'transparent',
+        },
+        journeyTabSelected: { borderColor: naviloPalette.secondaryAccent },
+        journeyTabText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
+        journeyTabTextSelected: { color: naviloPalette.secondaryAccent, fontWeight: '800' },
+        journeySubviewCaption: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm },
       }),
-    [colors, spacing, typography, radius]
+    [colors, spacing, typography, radius, naviloPalette]
   );
 
   return (
@@ -260,6 +353,189 @@ export function DiscoverScreen() {
         <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
         <Text style={styles.disclaimerText}>Educational information only. Not investment advice.</Text>
       </View>
+
+      {/* Pass 2C correction — Grow is now the canonical home for the full
+          Navilo Score experience (spec: "top of Grow must communicate
+          longer-term financial progress"), so this is the first substantive
+          Grow section — moved here from its previous position (between
+          "Your goals" and the opportunities hero) in the prior Pass 2C
+          round, unchanged internally since. Reuses the exact existing
+          computeLuluScore result and the exact existing ScoreExplanationSheet
+          (never a redesigned/duplicate breakdown) — the whole card is still
+          one TouchableOpacity that opens that same sheet for the full
+          category-by-category detail.
+          Physical-device review correction — the previous compact icon+
+          label+chevron launcher row lacked the visual prominence/clarity of
+          the pre-Pass-2B circular ring presentation. Restored here as
+          ScoreRadialGauge (src/components/shared/ScoreRadialGauge.tsx) — a
+          new, deliberately static (no animation this pass) presentational
+          component that only draws the SAME already-computed
+          scoreChipPresentation.scoreValue; no new score/band/trend
+          calculation exists anywhere in this file or that component.
+          "Strongest area"/"Next opportunity" reuse computeStrongestArea/
+          computeBiggestOpportunity (scoreExplanation.ts) — the exact
+          functions ScoreExplanationSheet's own category cards already
+          derive from — capped at one line each, never a paragraph. Every
+          authoritative-only field (life stage, completeness, strongest
+          area, opportunity) is gated on scoreChipPresentation.state ===
+          'available', the same existing guard that already keeps a locked/
+          unavailable/invalid score from ever showing a fabricated number —
+          the non-authoritative branch renders only the existing, unchanged
+          compact label/supportingText row, no ring fill, no life stage,
+          no trend. */}
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          scoreSectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
+        {brand.scoreName}
+      </Text>
+      <TouchableOpacity
+        onPress={() => setScoreSheetVisible(true)}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={
+          scoreGaugePresentation.state === 'available'
+            ? `${brand.scoreName} ${scoreGaugePresentation.value} out of 100, based on what you've recorded.`
+            : `${scoreChipPresentation.label}. ${scoreChipPresentation.supportingText}`
+        }
+        accessibilityHint="Opens the full score breakdown"
+      >
+        <SectionCard style={[styles.scoreCard, { borderColor: naviloPalette.primaryAccent }]}>
+          <View style={styles.scoreHeaderRow}>
+            <ScoreRadialGauge presentation={scoreGaugePresentation} ringColor={naviloPalette.primaryAccent} trackColor={colors.surfaceMuted} />
+            <View style={styles.scoreHeaderText}>
+              {scoreGaugePresentation.state === 'available' && luluScore.lifeStage ? (
+                <Text style={styles.scoreLifeStage} numberOfLines={1}>
+                  {LIFE_STAGE_LABEL[luluScore.lifeStage]}
+                </Text>
+              ) : null}
+              <Text style={styles.navBody} numberOfLines={2}>
+                {scoreChipPresentation.supportingText}
+              </Text>
+              {scoreGaugePresentation.state === 'available' ? (
+                <Text style={styles.navBody} numberOfLines={1}>
+                  Money Picture {luluScore.completeness.percent}% complete
+                </Text>
+              ) : null}
+            </View>
+          </View>
+          {scoreGaugePresentation.state === 'available' && (strongestArea || biggestOpportunity) ? (
+            <View style={styles.scoreExpandedBlock}>
+              {strongestArea ? (
+                <Text style={styles.scoreSummaryLine} numberOfLines={1}>
+                  Strongest area: {strongestArea.label}
+                </Text>
+              ) : null}
+              {biggestOpportunity ? (
+                <Text style={styles.scoreSummaryLine} numberOfLines={1}>
+                  Next opportunity: {biggestOpportunity.factor.label}
+                  {biggestOpportunity.factor.potentialPoints >= 0.5 ? ` · up to +${Math.round(biggestOpportunity.factor.potentialPoints)} points` : ''}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+          <View style={styles.scoreActionRow}>
+            <Ionicons name="speedometer-outline" size={20} color={colors.accent} />
+            <Text style={styles.scoreActionText}>View score breakdown</Text>
+          </View>
+        </SectionCard>
+      </TouchableOpacity>
+      <ScoreExplanationSheet visible={scoreSheetVisible} onClose={() => setScoreSheetVisible(false)} result={luluScore} />
+
+      {/* Pass 2C correction — physical-device review: Milestones (this
+          section, computeAchievements/JourneyTimeline) and Money Path
+          (computeWealthPaths/WealthJourneyCard) are genuinely distinct
+          engines — confirmed by inspection, wealthJourney.ts uses
+          computeAchievements only as one partial input signal among several
+          (hasInvestments, hasProperty, etc.), not as its source of truth —
+          but the two repeat similar-looking milestones (Started, income,
+          cash/savings, first goal) and both used a long connected vertical
+          timeline, which read as duplicative and made Grow unnecessarily
+          long. This section composes them into ONE canonical upper-Grow
+          progress experience without merging, rewriting, or cross-
+          contaminating either engine: a single "Your Journey" header, a
+          two-way Milestones/Money Path segmented control, and below it
+          whichever subview's own existing, unmodified presentation is
+          selected. Milestones keeps its exact existing achievement source,
+          order, next/progress, actions, persistence, celebrations, and
+          collapsed/expanded behaviour (JourneyTimeline, unchanged).
+          Money Path keeps its exact existing computeWealthPaths source,
+          Foundation/Debt/Wealth/Retirement stage selection, current-stage
+          "You are here", and actions (WealthJourneyCard, unchanged) —
+          rendered directly, not wrapped in a second outer SectionCard,
+          since WealthJourneyCard already renders its own internal
+          SectionCard (avoids a card nested inside a card). Selecting a
+          subview is a purely local UI choice (journeySubview state, above)
+          that never reads or writes either engine's own data, so switching
+          tabs can never mutate Journey progress or Money Path stage data
+          in either direction.
+          The standalone lower-page "Your Money Path" section that used to
+          sit after the opportunities hero has been removed (below,
+          formerly here) now that Money Path is reachable from this
+          combined section — WealthJourneyCard.tsx and wealthJourney.ts
+          themselves are untouched, so the complete Money Path is still
+          shown, just not twice. */}
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          journeySectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
+        Your Journey
+      </Text>
+      {/* Physical-device correction §2 — accessibilityRole="tablist" +
+          "tab" (not "button") give VoiceOver/TalkBack the correct
+          segmented-control semantics, so each option is announced as a
+          tab and its selected state is read aloud automatically from
+          accessibilityState — no separate, duplicate "selected" text is
+          ever added to the label. Milestones is declared first in the
+          tree and Money Path second, so reading order is always
+          Milestones → Money Path → whichever subview's content follows
+          below, matching source/visual order (no accessibility ordering
+          override is used anywhere here). Selection is shown via both a
+          border AND bold text (journeyTabSelected/journeyTabTextSelected)
+          in addition to the background/colour change, so it is never
+          conveyed by colour alone; each tab has a minHeight: 44 touch
+          target. */}
+      <View style={styles.journeyTabRow} accessibilityRole="tablist">
+        <TouchableOpacity
+          style={[styles.journeyTab, journeySubview === 'milestones' ? styles.journeyTabSelected : null]}
+          onPress={() => setJourneySubview('milestones')}
+          accessibilityRole="tab"
+          accessibilityLabel="Milestones"
+          accessibilityState={{ selected: journeySubview === 'milestones' }}
+        >
+          <Text style={[styles.journeyTabText, journeySubview === 'milestones' ? styles.journeyTabTextSelected : null]}>Milestones</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.journeyTab, journeySubview === 'moneyPath' ? styles.journeyTabSelected : null]}
+          onPress={() => setJourneySubview('moneyPath')}
+          accessibilityRole="tab"
+          accessibilityLabel="Money Path"
+          accessibilityState={{ selected: journeySubview === 'moneyPath' }}
+        >
+          <Text style={[styles.journeyTabText, journeySubview === 'moneyPath' ? styles.journeyTabTextSelected : null]}>Money Path</Text>
+        </TouchableOpacity>
+      </View>
+      {journeySubview === 'milestones' ? (
+        <>
+          <Text style={styles.journeySubviewCaption}>Achievements you've reached across {brand.name}.</Text>
+          <SectionCard>
+            <JourneyTimeline achievements={achievements} expanded={journeyExpanded} onToggleExpanded={() => setJourneyExpanded((v) => !v)} />
+          </SectionCard>
+        </>
+      ) : (
+        <>
+          <Text style={styles.journeySubviewCaption}>Steps across Foundation, Debt, Wealth and Retirement.</Text>
+          <WealthJourneyCard name={firstName} paths={journeyPaths} />
+        </>
+      )}
 
       {/* "Your goals" — Grow is now the primary home for goal discovery and
           management (Goals-to-Grow §1/§3): "Wealth: what I own and owe" vs
@@ -340,71 +616,16 @@ export function DiscoverScreen() {
       <AddGoalModal visible={growGoalModalVisible} onClose={() => setGrowGoalModalVisible(false)} />
       <GoalDetailSheet goal={growSelectedGoal} onClose={() => setGrowSelectedGoalId(null)} />
 
-      {/* Pass 2B — the full Navilo Score detail's stable Grow destination
-          for Today's compact Score chip. Reuses the exact existing
-          ScoreExplanationSheet (never a redesigned/duplicate breakdown) and
-          the exact same shared presentation Today's chip reads
-          (selectScoreChipPresentation), so wording can never drift between
-          the two surfaces. */}
-      <Text
-        style={styles.categoryTitle}
-        onLayout={(e) => {
-          scoreSectionY.current = e.nativeEvent.layout.y;
-          attemptSectionFocus();
-        }}
-        accessibilityRole="header"
-      >
-        {brand.scoreName}
-      </Text>
-      <TouchableOpacity onPress={() => setScoreSheetVisible(true)} activeOpacity={0.8}>
-        <SectionCard style={styles.navCard}>
-          {/* Pass 2B correction §2/§7 — matches ScoreChip.tsx's own icon and
-              green accent exactly, so Today's chip and Grow's launcher row
-              for the same feature never disagree, and neither reuses
-              Journey's trophy glyph (test requirement: "Score and Journey
-              do not reuse the same trophy presentation"). This is a minimal
-              icon/colour fix on the existing row only — Grow's wider
-              ordering and full Score visual hierarchy remain Pass 2C's. */}
-          <View style={styles.navIcon}>
-            <Ionicons name="speedometer-outline" size={20} color={colors.accent} />
-          </View>
-          <View style={styles.navTextBlock}>
-            <Text style={styles.navTitle}>{scoreChipPresentation.label}</Text>
-            <Text style={styles.navBody}>{scoreChipPresentation.supportingText}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </SectionCard>
-      </TouchableOpacity>
-      <ScoreExplanationSheet visible={scoreSheetVisible} onClose={() => setScoreSheetVisible(false)} result={luluScore} />
-
-      {/* Pass 2B — the full Journey timeline's stable Grow destination for
-          Today's compact Journey snapshot. Mounts the exact existing
-          JourneyTimeline component (byte-for-byte unchanged, same
-          computeAchievements source) — the same "full journey" a returning
-          user would have seen on Today before this pass, now reachable
-          here instead. */}
-      <Text
-        style={styles.categoryTitle}
-        onLayout={(e) => {
-          journeySectionY.current = e.nativeEvent.layout.y;
-          attemptSectionFocus();
-        }}
-        accessibilityRole="header"
-      >
-        Your Journey
-      </Text>
-      <SectionCard>
-        <JourneyTimeline achievements={achievements} expanded={journeyExpanded} onToggleExpanded={() => setJourneyExpanded((v) => !v)} />
-      </SectionCard>
-
       {/* A. Hero — AI-driven, not a static article list (PRD ask). */}
       <MoneyOpportunitiesHero opportunities={opportunities} onAction={handleOpportunityAction} />
 
-      {/* B. Your Money Path — one connected journey instead of a flat list
-          of learning paths (PRD ask), tied to the same real signals as
-          Journey achievements on Today. */}
-      <Text style={styles.categoryTitle}>Your Money Path</Text>
-      <WealthJourneyCard name={firstName} paths={journeyPaths} />
+      {/* Pass 2C correction — the standalone "Your Money Path" section that
+          used to sit here (WealthJourneyCard, same journeyPaths) has been
+          removed; it is now reachable as the "Money Path" subview of the
+          combined "Your Journey" section above, so the complete Money Path
+          is never shown twice on Grow. WealthJourneyCard.tsx and
+          wealthJourney.ts are unchanged — only this second render site was
+          removed. */}
 
       {/* C. Smart Tools — emotionally reframed, not generic calculators
           (PRD ask: "make users imagine outcomes"). */}
