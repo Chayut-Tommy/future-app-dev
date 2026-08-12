@@ -417,15 +417,31 @@ console.log('\n=== Section 7: persisted-timezone results (real function, 4 timez
 }
 
 console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-shipped-component evidence ===');
+// Pass 2A update, 2026-08-11: SafeToSpendHero.tsx no longer calls
+// selectSafeToSpendHeroState directly — it now goes through the new shared
+// selectSafeToSpendPresentation(safeToSpend, heroCopy) (safeToSpendPresentation.ts),
+// which itself wraps selectSafeToSpendHeroState unchanged (confirmed by
+// reading that file — see safeToSpendPresentation.ts's own header comment
+// and Section 9 below) so both Money and the new Today Briefing read one
+// shared, single-sourced presentation. The two assertions below are updated
+// to match this real one-hop-further wiring; every state-precedence
+// assertion later in this section still passes against the current source
+// unmodified, since heroState (now presentation.heroState) still gates the
+// same 8 branches in the same order.
 {
   const SAFE_TO_SPEND_HERO_SRC = readFileSync('src/components/money/SafeToSpendHero.tsx', 'utf8');
+  const SAFE_TO_SPEND_PRESENTATION_SRC = readFileSync('src/lib/calculations/safeToSpendPresentation.ts', 'utf8');
   assert(
-    'SafeToSpendHero.tsx imports selectSafeToSpendHeroState from safeToSpend.ts (not a re-derived local copy)',
-    /import \{ SafeToSpendResult, selectSafeToSpendHeroState \} from '\.\.\/\.\.\/lib\/calculations\/safeToSpend'/.test(SAFE_TO_SPEND_HERO_SRC)
+    'SafeToSpendHero.tsx imports the shared selectSafeToSpendPresentation selector (not a re-derived local copy), and that shared selector itself imports selectSafeToSpendHeroState from safeToSpend.ts unchanged',
+    /import \{ selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney \} from '\.\.\/\.\.\/lib\/calculations\/safeToSpendPresentation'/.test(
+      SAFE_TO_SPEND_HERO_SRC
+    ) && /import \{ SafeToSpendResult, SafeToSpendHeroState, selectSafeToSpendHeroState \} from '\.\/safeToSpend'/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
   );
   assert(
-    'SafeToSpendHero.tsx calls it exactly once and stores the result as heroState',
-    (SAFE_TO_SPEND_HERO_SRC.match(/const heroState = selectSafeToSpendHeroState\(safeToSpend\);/g) || []).length === 1
+    'SafeToSpendHero.tsx calls selectSafeToSpendPresentation exactly once and stores the result as presentation/heroState; the shared selector itself calls selectSafeToSpendHeroState exactly once',
+    (SAFE_TO_SPEND_HERO_SRC.match(/const presentation = selectSafeToSpendPresentation\(safeToSpend, heroCopy\);/g) || []).length === 1 &&
+      (SAFE_TO_SPEND_HERO_SRC.match(/const heroState = presentation\.heroState;/g) || []).length === 1 &&
+      (SAFE_TO_SPEND_PRESENTATION_SRC.match(/const heroState = selectSafeToSpendHeroState\(safeToSpend\);/g) || []).length === 1
   );
   assert(
     'every one of the 8 card-state branches gates on heroState, not a locally re-derived boolean (final Pass 1 closure: invalid_data split into unavailable_balance_data / unavailable_other_data)',
@@ -440,17 +456,21 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
     ].every((state) => SAFE_TO_SPEND_HERO_SRC.includes(`heroState === ${state}`))
   );
   assert(
-    'the unavailable_balance_data branch renders neither $0 nor any numeric formatMoney call, does not render the "≈ .../day" daily-rate line, and uses the balance-specific wording',
+    'the unavailable_balance_data branch renders neither $0 nor any numeric formatMoney call, does not render the "≈ .../day" daily-rate line, and renders whatever primaryCopy/supportingCopy the shared selector returns (Pass 2A correction: statusLines was replaced by these two explicit fields; the literal balance-specific wording itself now lives once in safeToSpendPresentation.ts, checked separately below, not duplicated here)',
     (() => {
       const start = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'unavailable_balance_data')");
       const end = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'unavailable_other_data')");
       const block = SAFE_TO_SPEND_HERO_SRC.slice(start, end);
-      return (
-        block.includes('Available amount unavailable') &&
-        block.includes('Review your recorded balances.') &&
-        !block.includes('formatMoney') &&
-        !block.includes('/day')
-      );
+      return block.includes('presentation.primaryCopy') && block.includes('presentation.supportingCopy') && !block.includes('formatMoney') && !block.includes('/day');
+    })()
+  );
+  assert(
+    "Pass 2A: the shared selector's unavailable_balance_data case carries the exact balance-specific wording SafeToSpendHero.tsx used to author locally, unchanged, and unavailable_other_data carries the distinct money-details wording — the single source both this card and the Today Briefing now read",
+    (() => {
+      const start = SAFE_TO_SPEND_PRESENTATION_SRC.indexOf("case 'unavailable_balance_data':");
+      const end = SAFE_TO_SPEND_PRESENTATION_SRC.indexOf("case 'unavailable_other_data':");
+      const block = SAFE_TO_SPEND_PRESENTATION_SRC.slice(start, end);
+      return block.includes('Available amount unavailable') && block.includes('Review your recorded balances.');
     })()
   );
   // SUPERSEDED, 2026-08-11 (final Pass 1 closure): the finding below was
@@ -474,12 +494,21 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
     })()
   );
   assert(
-    'the unavailable_other_data branch uses the money-details wording and does NOT render renderManageBalancesButton at all — a bill/transaction problem must never show a balance-specific action',
+    'the unavailable_other_data branch renders whatever primaryCopy/supportingCopy the shared selector returns and does NOT render renderManageBalancesButton at all — a bill/transaction problem must never show a balance-specific action (Pass 2A correction: statusLines was replaced by these two explicit fields; the literal money-details wording itself is checked in the shared-selector assertion above)',
     (() => {
       const start = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'unavailable_other_data')");
       const end = SAFE_TO_SPEND_HERO_SRC.indexOf("if (heroState === 'no_known_payday')");
       const block = SAFE_TO_SPEND_HERO_SRC.slice(start, end);
-      return block.includes('Available amount unavailable') && block.includes('Review your recorded money details.') && !block.includes('renderManageBalancesButton');
+      return block.includes('presentation.primaryCopy') && block.includes('presentation.supportingCopy') && !block.includes('renderManageBalancesButton');
+    })()
+  );
+  assert(
+    "Pass 2A: the shared selector's unavailable_other_data case carries the distinct money-details wording, never the balance-specific wording",
+    (() => {
+      const start = SAFE_TO_SPEND_PRESENTATION_SRC.indexOf("case 'unavailable_other_data':");
+      const end = SAFE_TO_SPEND_PRESENTATION_SRC.indexOf("case 'no_known_payday':");
+      const block = SAFE_TO_SPEND_PRESENTATION_SRC.slice(start, end);
+      return block.includes('Available amount unavailable') && block.includes('Review your recorded money details.') && !block.includes('Review your recorded balances.');
     })()
   );
   assert(

@@ -301,6 +301,76 @@ export interface AttentionItem {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   tone: 'warning' | 'neutral';
+  /** Structured source identity (Pass 2A) — mirrors the source TimelineEvent's
+   * own kind/recurringItemId/creditCardId/bnplLiabilityId exactly, so a
+   * consumer can compare identity against a SmartReminder without parsing
+   * this item's composite `id` string. Absent only for the synthetic
+   * 'shortfall' entry, which has no underlying source record. */
+  kind?: TimelineEventKind;
+  daysUntil?: number;
+  recurringItemId?: string;
+  creditCardId?: string;
+  bnplLiabilityId?: string;
+}
+
+/**
+ * Bills/mortgage/credit-card outflows due within 7 days, soonest first —
+ * extracted (Pass 2A) so a consumer needing the full, uncapped eligible set
+ * (e.g. the Today Briefing's own ranking, which must not apply an arbitrary
+ * intermediate cap before its own dedup/sort/cap pipeline) can reuse the
+ * exact same eligibility rule computeAttentionItems itself uses below,
+ * rather than re-deriving it.
+ */
+export function selectUrgentOutflowEvents(events: TimelineEvent[]): TimelineEvent[] {
+  return events
+    .filter((e) => e.amount < 0 && e.daysUntil <= 7 && (e.kind === 'bill' || e.kind === 'mortgage' || e.kind === 'credit_card'))
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+}
+
+/** The single soonest income event due within 3 days, if any — same
+ * extraction rationale as selectUrgentOutflowEvents above. Kept exactly as
+ * it has always behaved (a plain `.find()`, position-based within `events`,
+ * not independently sorted) — this is the one and only function
+ * computeAttentionItems itself still calls below; its own accepted
+ * Money-tab "Needs your attention" behaviour must never change. */
+export function selectNearTermIncomeEvent(events: TimelineEvent[]): TimelineEvent | undefined {
+  return events.find((e) => e.kind === 'income' && e.daysUntil <= 3);
+}
+
+/**
+ * Every income event due within 3 days, soonest first (Pass 2A correction) —
+ * NOT the same as selectNearTermIncomeEvent above, which returns only the
+ * single nearest one. That single-selection shape is correct for
+ * computeAttentionItems' own "one heads-up row" design, but wrong as an
+ * eligible-candidate GATHERING step for the Today Briefing: if the nearest
+ * income occurrence happens to be the one the current top Smart Reminder is
+ * already about, pre-selecting only that one occurrence before reminder
+ * dedup runs would silently discard every other, genuinely independent
+ * upcoming income occurrence — an arbitrary single-item preselection with
+ * the same practical effect as an arbitrary cap. This function instead
+ * returns the full uncapped set so the Briefing's own dedup/sort/cap
+ * pipeline (in todayBriefing.ts) can correctly let a later, independent
+ * income occurrence take the freed slot once the matching one is excluded.
+ */
+export function selectNearTermIncomeEvents(events: TimelineEvent[]): TimelineEvent[] {
+  return events.filter((e) => e.kind === 'income' && e.daysUntil <= 3).sort((a, b) => a.daysUntil - b.daysUntil);
+}
+
+/** The exact wording computeAttentionItems has always used for an outflow
+ * or income event — extracted (Pass 2A) so the Today Briefing can reuse the
+ * identical phrasing rather than re-authoring it. */
+export function buildAttentionEventTitle(e: TimelineEvent): string {
+  if (e.kind === 'income') {
+    const dueText = e.daysUntil <= 0 ? 'expected today' : e.daysUntil === 1 ? 'expected tomorrow' : `expected in ${e.daysUntil} days`;
+    return `Income ${dueText}`;
+  }
+  const dueText = e.daysUntil <= 0 ? 'due today' : e.daysUntil === 1 ? 'due tomorrow' : `due in ${e.daysUntil} days`;
+  return `${e.label} ${dueText}`;
+}
+
+/** The exact tone rule computeAttentionItems has always used. */
+export function attentionEventTone(e: TimelineEvent): 'warning' | 'neutral' {
+  return e.kind !== 'income' && e.daysUntil <= 2 ? 'warning' : 'neutral';
 }
 
 /**
@@ -310,6 +380,9 @@ export interface AttentionItem {
  * computed elsewhere on the page rather than a new prioritisation engine —
  * urgency here is just "soonest due first," with a shortfall (if any)
  * always shown first since it affects everything else on the page.
+ * Internals extracted into selectUrgentOutflowEvents/selectNearTermIncomeEvent/
+ * buildAttentionEventTitle/attentionEventTone (Pass 2A) — this function's
+ * own behaviour and output are unchanged by that extraction.
  */
 export function computeAttentionItems(events: TimelineEvent[], remainingPool: number, maxItems: number = 3): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -318,19 +391,34 @@ export function computeAttentionItems(events: TimelineEvent[], remainingPool: nu
     items.push({ id: 'shortfall', icon: 'alert-circle', title: 'Recorded spending is currently ahead of the estimated plan', tone: 'warning' });
   }
 
-  const urgentOutflows = events
-    .filter((e) => e.amount < 0 && e.daysUntil <= 7 && (e.kind === 'bill' || e.kind === 'mortgage' || e.kind === 'credit_card'))
-    .sort((a, b) => a.daysUntil - b.daysUntil);
-  for (const e of urgentOutflows) {
+  for (const e of selectUrgentOutflowEvents(events)) {
     if (items.length >= maxItems) break;
-    const dueText = e.daysUntil <= 0 ? 'due today' : e.daysUntil === 1 ? 'due tomorrow' : `due in ${e.daysUntil} days`;
-    items.push({ id: e.id, icon: e.icon, title: `${e.label} ${dueText}`, tone: e.daysUntil <= 2 ? 'warning' : 'neutral' });
+    items.push({
+      id: e.id,
+      icon: e.icon,
+      title: buildAttentionEventTitle(e),
+      tone: attentionEventTone(e),
+      kind: e.kind,
+      daysUntil: e.daysUntil,
+      recurringItemId: e.recurringItemId,
+      creditCardId: e.creditCardId,
+      bnplLiabilityId: e.bnplLiabilityId,
+    });
   }
 
-  const upcomingIncome = events.find((e) => e.kind === 'income' && e.daysUntil <= 3);
+  const upcomingIncome = selectNearTermIncomeEvent(events);
   if (upcomingIncome && items.length < maxItems) {
-    const dueText = upcomingIncome.daysUntil <= 0 ? 'expected today' : upcomingIncome.daysUntil === 1 ? 'expected tomorrow' : `expected in ${upcomingIncome.daysUntil} days`;
-    items.push({ id: upcomingIncome.id, icon: 'cash', title: `Income ${dueText}`, tone: 'neutral' });
+    items.push({
+      id: upcomingIncome.id,
+      icon: 'cash',
+      title: buildAttentionEventTitle(upcomingIncome),
+      tone: attentionEventTone(upcomingIncome),
+      kind: upcomingIncome.kind,
+      daysUntil: upcomingIncome.daysUntil,
+      recurringItemId: upcomingIncome.recurringItemId,
+      creditCardId: upcomingIncome.creditCardId,
+      bnplLiabilityId: upcomingIncome.bnplLiabilityId,
+    });
   }
 
   return items.slice(0, maxItems);

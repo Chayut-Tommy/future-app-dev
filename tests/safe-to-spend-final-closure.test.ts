@@ -280,7 +280,7 @@ console.log('\n=== Section 6: downstream-consumer recheck — computeAttentionIt
 {
   const MONEY_TIMELINE_SRC = readFileSync('src/lib/calculations/moneyTimeline.ts', 'utf8');
   assert(
-    'CONFIRMED, READ-ONLY: computeAttentionItems itself only compares remainingPool < 0 as a boolean threshold and never displays the raw dollar amount — unchanged this pass, moneyTimeline.ts stays a byte-identical Pass 0 file',
+    'CONFIRMED, READ-ONLY: computeAttentionItems itself still only compares remainingPool < 0 as a boolean threshold and never displays the raw dollar amount. UPDATED (Pass 2A, then its correction pass): moneyTimeline.ts is no longer byte-identical to its Pass 0 state — computeAttentionItems\' own internal eligibility/title/tone logic was extracted into separately-exported helper functions (selectUrgentOutflowEvents, selectNearTermIncomeEvent(s), buildAttentionEventTitle, attentionEventTone) it now calls, and it also now populates structured recurringItemId/creditCardId/bnplLiabilityId fields on each AttentionItem it pushes. This assertion\'s own two regex checks (the exact function signature, and the unconditional shortfall threshold) are what is actually still protected here, and both still hold against the current source — the finding\'s original point (the pool\'s raw dollar amount is never displayed) remains true; only the file-level "byte-identical" framing was stale.',
     /export function computeAttentionItems\(events: TimelineEvent\[\], remainingPool: number, maxItems: number = 3\)/.test(MONEY_TIMELINE_SRC) &&
       /if \(remainingPool < 0\) \{/.test(MONEY_TIMELINE_SRC)
   );

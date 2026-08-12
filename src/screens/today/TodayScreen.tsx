@@ -22,7 +22,7 @@ import { SavingFactsCard } from '../../components/today/SavingFactsCard';
 import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
-import { SmartReminderCard } from '../../components/today/SmartReminderCard';
+import { TodayBriefingCard } from '../../components/today/TodayBriefingCard';
 import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
@@ -34,6 +34,12 @@ import { useFinancialState } from '../../lib/calculations/financialState';
 import { computeAchievements } from '../../lib/calculations/achievements';
 import { pickDailyInsight } from '../../lib/calculations/dailyInsight';
 import { timeAwareGreeting, computeCheckInLine } from '../../lib/calculations/greeting';
+import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
+import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
+import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
+import { computeMoneyTimeline } from '../../lib/calculations/moneyTimeline';
+import { computeTopReminder } from '../../lib/calculations/reminders';
+import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
 import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration, computeScoreMilestoneCelebration } from '../../lib/celebrations';
 import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
@@ -73,6 +79,18 @@ export function TodayScreen() {
   const opportunities = useMemo(() => findOpportunities(data), [data]);
   const topOpportunity = opportunities[0] ?? null;
   const financialState = useFinancialState(data);
+
+  // Today Briefing (Pass 2A) — every input computed exactly once here and
+  // passed down, never re-derived inside TodayBriefingCard/SmartReminderCard,
+  // so the Briefing's AUP reading and its dedup against the top reminder
+  // always agree with each other and with Money's own reading of the same
+  // functions.
+  const safeToSpend = useMemo(() => computeSafeToSpend(data, currentDate), [data, currentDate]);
+  const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
+  const safeToSpendPresentation = useMemo(() => selectSafeToSpendPresentation(safeToSpend, heroCopy), [safeToSpend, heroCopy]);
+  const timelineEvents = useMemo(() => computeMoneyTimeline(data, currentDate), [data, currentDate]);
+  const topReminder = useMemo(() => computeTopReminder(data, currentDate), [data, currentDate]);
+  const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
 
   // Cash/savings shortcuts should update the user's existing savings
   // account rather than silently creating a duplicate one (PRD ask) —
@@ -221,6 +239,19 @@ export function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [luluScore.locked, luluScore.score, data.user.highestScoreMilestoneCelebrated, data.user.scoreMilestoneBaselineSet]);
 
+  // Correction pass — the shared AUP presentation now owns its own action
+  // declaratively (safeToSpendPresentation.action), rather than this screen
+  // hard-coding a single navigate() call independent of state. Every state
+  // currently resolves to the same action (focus Money's existing AUP
+  // section, whose own per-state CTA already owns the actual recovery
+  // journey) — this switch exists so that ownership is genuinely read from
+  // the presentation, not merely declared on its type and then ignored.
+  function handleBriefingAupPress() {
+    if (safeToSpendPresentation.action.kind === 'focus_money_section') {
+      navigation.navigate('Money', { scrollTo: safeToSpendPresentation.action.section });
+    }
+  }
+
   function handleOpportunityAction(action: OpportunityAction) {
     switch (action) {
       case 'add_asset':
@@ -323,15 +354,24 @@ export function TodayScreen() {
           doesn't read like dashboard content (PRD ask). */}
       <Text style={styles.greeting}>{greeting}</Text>
 
+      {/* 1.25 Your Today Briefing (Pass 2A) — the leading Available Until
+          Payday/Available Money reading, the existing top Smart Reminder
+          when eligible, and up to two independent upcoming-event rows.
+          Immediately below the greeting, ahead of the guided checklist, so
+          it's the first substantive content a returning user sees. */}
+      <TodayBriefingCard
+        today={currentDate}
+        presentation={safeToSpendPresentation}
+        eventRows={briefingEventRows}
+        topReminder={topReminder}
+        onPressAup={handleBriefingAupPress}
+        onPressEventRow={() => navigation.navigate('Money', { scrollTo: 'timeline' })}
+      />
+
       {/* 1.5 Guided first-run checklist — a brand-new user otherwise only
           sees a bare "Add income" prompt (PRD bug report). Real completion
           state, not a fabricated onboarding flow. */}
       <MoneyPictureChecklistCard />
-
-      {/* 1.75 Smart reminder — a genuinely time-sensitive "did this happen?"
-          confirmation (salary arrived, bill due/overdue) surfaces above the
-          daily briefing (PRD ask). Never assumes money moved on its own. */}
-      <SmartReminderCard />
 
       {/* 2. Lulu Daily Check-in — message + score merged into one premium
           AI briefing (PRD ask: understand everything important within 5

@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
-import { computeTopReminder } from '../../lib/calculations/reminders';
+import { SmartReminder } from '../../lib/calculations/reminders';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { moneyAmountToCents } from '../../lib/calculations/money';
@@ -46,7 +46,20 @@ function formatDisclosureAmount(cents: number): string {
  * latest-nextDueDate eligibility check, not in this component
  * (regression-protection review, B2.0B §5).
  */
-export function SmartReminderCard() {
+export function SmartReminderCard({
+  topReminder,
+  embedded,
+}: {
+  topReminder: SmartReminder | null;
+  /** Correction pass §7 — when true, renders as one more row inside a
+   * PARENT SectionCard (a hairline top divider, no own card
+   * background/shadow/margin) instead of its own standalone SectionCard,
+   * so the Today Briefing can show it as one integrated Briefing row
+   * rather than a second, visually disconnected card. Every action,
+   * confirm/dismiss/error/persistence behaviour below is completely
+   * unaffected — only this outer wrapper differs. */
+  embedded?: boolean;
+}) {
   const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography } = useTheme();
@@ -77,10 +90,13 @@ export function SmartReminderCard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const reminder = useMemo(() => {
-    const top = computeTopReminder(data);
-    return top && !dismissedIds.has(top.id) ? top : null;
-  }, [data, dismissedIds]);
+  // Pass 2A — topReminder is now computed once by the caller (TodayScreen's
+  // own useMemo(() => computeTopReminder(data, today), [data, today])) and
+  // shared with the Today Briefing's own dedup logic, rather than this
+  // component independently recomputing it. Only the session-scoped
+  // dismissal filter stays local — dismissal is this card's own concern,
+  // not something a caller's raw reminder value should ever encode.
+  const reminder = useMemo(() => (topReminder && !dismissedIds.has(topReminder.id) ? topReminder : null), [topReminder, dismissedIds]);
 
   // Both are scoped to one specific reminder — if the displayed reminder
   // identity changes (resolved elsewhere, superseded, or this card moved
@@ -105,6 +121,12 @@ export function SmartReminderCard() {
     () =>
       StyleSheet.create({
         card: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+        // Correction pass §7 — the embedded variant's own top divider,
+        // matching the exact hairline-border-plus-padding convention
+        // TodayBriefingCard.tsx's own event rows already use, so the
+        // reminder reads as one more row in that same list, not a
+        // visually distinct second card.
+        embeddedRow: { paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
         iconBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
         textBlock: { flex: 1 },
         title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
@@ -320,9 +342,10 @@ export function SmartReminderCard() {
       ? 'bag-handle-outline'
       : 'calendar-outline';
   const reminderCard = reminder.creditCardId ? data.creditCards.find((c) => c.id === reminder.creditCardId) ?? null : null;
+  const Wrapper = embedded ? View : SectionCard;
 
   return (
-    <SectionCard>
+    <Wrapper style={embedded ? styles.embeddedRow : undefined}>
       <View style={styles.card}>
         <View style={styles.iconBadge}>
           <Ionicons name={icon} size={16} color={colors.accentStrong} />
@@ -514,6 +537,6 @@ export function SmartReminderCard() {
           dismiss();
         }}
       />
-    </SectionCard>
+    </Wrapper>
   );
 }

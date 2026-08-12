@@ -17,6 +17,15 @@ export interface SmartReminder {
   /** Present only for kind === 'bnpl_repayment_due' — the linked BNPL
    * liability confirmBnplRepayment needs alongside recurringItemId. */
   liabilityId?: string;
+  /** Pass 2A correction — the ISO date string of the specific occurrence
+   * this reminder is about (the same `nextDueDate`/computed due-date value
+   * already used to build this reminder's own composite `id` below, now
+   * also exposed as its own field). Never parsed back out of `id`. This is
+   * what lets a consumer (the Today Briefing's dedup logic) tell apart two
+   * different occurrences of the SAME recurring source — e.g. an overdue
+   * Rent reminder for last week must not suppress a future Rent event two
+   * cycles from now, only the one specific occurrence it's actually about. */
+  occurrenceDate?: string;
 }
 
 /** Every recurring-item id currently linked (as the single active schedule)
@@ -90,6 +99,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       body: `It was due ${shortDate(overdueBill.nextDueDate)}.`,
       recurringItemId: overdueBill.id,
       amount: overdueBill.amount,
+      occurrenceDate: overdueBill.nextDueDate,
     };
   }
 
@@ -112,6 +122,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       recurringItemId: overdueBnplItem.id,
       liabilityId: liability.id,
       amount: cappedAmount,
+      occurrenceDate: overdueBnplItem.nextDueDate,
     };
   }
 
@@ -132,6 +143,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
         body: `${brand.name} expected it around ${shortDate(upcomingIncome.nextDueDate)}.`,
         recurringItemId: upcomingIncome.id,
         amount: upcomingIncome.amount,
+        occurrenceDate: upcomingIncome.nextDueDate,
       };
     }
   }
@@ -165,6 +177,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       body: "It's due today.",
       recurringItemId: dueTodayBill.id,
       amount: dueTodayBill.amount,
+      occurrenceDate: dueTodayBill.nextDueDate,
     };
   }
 
@@ -182,6 +195,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       recurringItemId: dueTodayBnplItem.id,
       liabilityId: liability.id,
       amount: cappedAmount,
+      occurrenceDate: dueTodayBnplItem.nextDueDate,
     };
   }
 
@@ -196,6 +210,7 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       body: `$${Math.round(dueSoon.amount).toLocaleString()} due ${shortDate(dueSoon.nextDueDate)}.`,
       recurringItemId: dueSoon.id,
       amount: dueSoon.amount,
+      occurrenceDate: dueSoon.nextDueDate,
     };
   }
 
@@ -227,6 +242,11 @@ export function computeTopReminder(data: AppData, today: Date = new Date()): Sma
       title: `Your ${cardDue.label} payment is coming up`,
       body: lines.join('\n'),
       creditCardId: cardDue.id,
+      // Only reminder branch with no pre-existing nextDueDate string on its
+      // source record (CreditCard has a dueDay, not a full date) — reuses
+      // the same dueDate this function already computed above (line 206-207)
+      // from that dueDay, rather than re-deriving it a second time.
+      occurrenceDate: dueDate.toISOString(),
     };
   }
 

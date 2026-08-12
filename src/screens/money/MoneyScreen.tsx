@@ -1,6 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -63,7 +63,13 @@ function formatMoney(value: number): string {
 export function MoneyScreen() {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { colors, spacing, typography, radius, cardShadow } = useTheme();
+  // Pass 2A section-focused navigation targets — null (not 0) is the
+  // "not yet measured" sentinel, distinguishing an unmeasured section from
+  // one genuinely positioned at the very top of the scroll content.
+  const aupSectionY = useRef<number | null>(null);
+  const whatHappensNextSectionY = useRef<number | null>(null);
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [editIncome, setEditIncome] = useState<RecurringItem | null>(null);
   const [billModalVisible, setBillModalVisible] = useState(false);
@@ -174,6 +180,41 @@ export function MoneyScreen() {
     () => [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3),
     [data.transactions]
   );
+
+  // Pass 2A section-focused navigation — supports layout-not-ready (a
+  // section's onLayout may not have fired yet on the very first frame after
+  // a tab switch, so this retries across a few animation frames rather than
+  // giving up immediately), repeated identical focus requests (achieved by
+  // always clearing scrollTo via setParams once handled, so navigating to
+  // the same target again is a genuine undefined→value transition next
+  // time), and an empty-state fallback (if a section's ref is still
+  // unmeasured after the retry budget — e.g. it never mounted — this clears
+  // the param and leaves the screen exactly where existing tab/Back
+  // behaviour already puts it, rather than leaving a stale request queued
+  // or crashing on a null offset).
+  useEffect(() => {
+    const target = route.params?.scrollTo;
+    if (target !== 'aup' && target !== 'timeline') return;
+    const targetRef = target === 'aup' ? aupSectionY : whatHappensNextSectionY;
+    let cancelled = false;
+    let frameId: number | null = null;
+    function attempt(retriesLeft: number) {
+      if (cancelled) return;
+      if (targetRef.current !== null) {
+        tabScrollRefs.Money.current?.scrollTo({ y: targetRef.current, animated: true });
+        navigation.setParams({ scrollTo: undefined });
+      } else if (retriesLeft > 0) {
+        frameId = requestAnimationFrame(() => attempt(retriesLeft - 1));
+      } else {
+        navigation.setParams({ scrollTo: undefined });
+      }
+    }
+    attempt(30);
+    return () => {
+      cancelled = true;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    };
+  }, [route.params?.scrollTo, navigation]);
 
   function openAddBill() {
     setEditBill(null);
@@ -461,18 +502,20 @@ export function MoneyScreen() {
 
   return (
     <Screen title="Money" scrollRef={tabScrollRefs.Money}>
-      <SafeToSpendHero
-        safeToSpend={safeToSpend}
-        hasActiveGoals={hasActiveGoals}
-        onCreateGoal={() => setGoalModalVisible(true)}
-        onAddPayday={() => {
-          setEditIncome(null);
-          setIncomeModalVisible(true);
-        }}
-        onSelectBalances={() => setSelectBalancesVisible(true)}
-        onReviewInWealth={() => navigation.navigate('Wealth')}
-        heroCopy={heroCopy}
-      />
+      <View onLayout={(e) => (aupSectionY.current = e.nativeEvent.layout.y)}>
+        <SafeToSpendHero
+          safeToSpend={safeToSpend}
+          hasActiveGoals={hasActiveGoals}
+          onCreateGoal={() => setGoalModalVisible(true)}
+          onAddPayday={() => {
+            setEditIncome(null);
+            setIncomeModalVisible(true);
+          }}
+          onSelectBalances={() => setSelectBalancesVisible(true)}
+          onReviewInWealth={() => navigation.navigate('Wealth')}
+          heroCopy={heroCopy}
+        />
+      </View>
 
       {/* This Month — a factual, calendar-month recorded-activity summary
           (PRD ask, Finding #40) placed directly under the hero so credit-
@@ -511,7 +554,7 @@ export function MoneyScreen() {
         </>
       ) : null}
 
-      <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeader} onLayout={(e) => (whatHappensNextSectionY.current = e.nativeEvent.layout.y)}>
         <Text style={styles.sectionTitle}>What happens next</Text>
         <TouchableOpacity onPress={openAddBill} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={styles.link}>+ Add bill</Text>

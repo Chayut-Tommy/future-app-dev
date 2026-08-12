@@ -3,13 +3,10 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { SafeToSpendResult, selectSafeToSpendHeroState } from '../../lib/calculations/safeToSpend';
+import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
+import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
 import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
-
-function formatMoney(value: number): string {
-  return `$${Math.round(value).toLocaleString()}`;
-}
 
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
   const { colors, spacing, typography } = useTheme();
@@ -82,15 +79,15 @@ export function SafeToSpendHero({
   // recorded-spending overrun is genuine overspending, forward-looking
   // commitments simply exceeding what's currently held is neither of those,
   // and invalid recorded data is a data-integrity issue distinct from all
-  // of them). selectSafeToSpendHeroState is the single source of truth for
-  // this precedence order (Pass 1 closure correction, 2026-08-11) — a real,
-  // independently-tested pure function, not logic re-derived here.
-  const heroState = selectSafeToSpendHeroState(safeToSpend);
-  // The portion attributable to spending, not the entire negative balance —
-  // since the pre-spend position was non-negative (a precondition of
-  // selectSafeToSpendHeroState returning 'recorded_overspend'), the
-  // shortfall itself is exactly what spending is responsible for.
-  const recordedOverspendAmount = -safeToSpend.cycleRemainingPool;
+  // of them). selectSafeToSpendPresentation (Pass 2A) wraps the same
+  // selectSafeToSpendHeroState precedence order (Pass 1 closure correction,
+  // 2026-08-11, unchanged) and additionally carries the exact heading/
+  // amount/status-sentence text for each state — the single shared source
+  // both this card and the Today Briefing read, so wording can never drift
+  // between the two surfaces. This card still branches on heroState for its
+  // own JSX/CTA structure; only the literal text now comes from `presentation`.
+  const presentation = selectSafeToSpendPresentation(safeToSpend, heroCopy);
+  const heroState = presentation.heroState;
 
   const { goalAllocation } = safeToSpend;
   const hasGoalReservation = safeToSpend.goalContributionsMonthly > 0;
@@ -250,10 +247,10 @@ export function SafeToSpendHero({
     return (
       <View style={[styles.card, styles.cardWarning]}>
         <View style={styles.labelRow}>
-          <Text style={[styles.label, styles.labelWarning]}>💰 AVAILABLE UNTIL PAYDAY</Text>
+          <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
         </View>
-        <Text style={styles.lineWarning}>Available amount unavailable</Text>
-        <Text style={styles.lineWarning}>Review your recorded balances.</Text>
+        <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
+        {presentation.supportingCopy ? <Text style={styles.lineWarning}>{presentation.supportingCopy}</Text> : null}
         {onReviewInWealth ? (
           <TouchableOpacity style={styles.warningCtaButton} onPress={onReviewInWealth}>
             <Text style={styles.warningCtaText}>Review in Wealth</Text>
@@ -276,10 +273,10 @@ export function SafeToSpendHero({
     return (
       <View style={[styles.card, styles.cardWarning]}>
         <View style={styles.labelRow}>
-          <Text style={[styles.label, styles.labelWarning]}>💰 AVAILABLE UNTIL PAYDAY</Text>
+          <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
         </View>
-        <Text style={styles.lineWarning}>Available amount unavailable</Text>
-        <Text style={styles.lineWarning}>Review your recorded money details.</Text>
+        <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
+        {presentation.supportingCopy ? <Text style={styles.lineWarning}>{presentation.supportingCopy}</Text> : null}
       </View>
     );
   }
@@ -295,13 +292,13 @@ export function SafeToSpendHero({
       <>
         <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>💰 AVAILABLE MONEY</Text>
+            <Text style={styles.label}>💰 {presentation.heading}</Text>
             <View style={styles.labelRowActions}>{renderManageBalancesButton()}</View>
           </View>
           {hasIncludedBalance ? (
             <>
-              <Text style={styles.line}>Based on the balances you selected.</Text>
-              <Text style={styles.value}>{formatMoney(safeToSpend.includedMoneyBalance)}</Text>
+              <Text style={styles.line}>{presentation.primaryCopy}</Text>
+              {presentation.amountVisible ? <Text style={styles.value}>{presentation.displayAmount}</Text> : null}
               {safeToSpend.includedMoneyBalanceAccounts.length > 0 ? (
                 <Text style={styles.explainer}>
                   {safeToSpend.includedMoneyBalanceAccounts.map((a) => `${a.label} (${formatMoney(a.value)})`).join(', ')}
@@ -310,7 +307,7 @@ export function SafeToSpendHero({
             </>
           ) : (
             <>
-              <Text style={styles.line}>Choose a balance to estimate your available money</Text>
+              <Text style={styles.line}>{presentation.primaryCopy}</Text>
               <Text style={styles.explainer}>Add or select a money balance that Navilo can use for short-term money calculations.</Text>
             </>
           )}
@@ -338,7 +335,7 @@ export function SafeToSpendHero({
       <>
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
             <View style={styles.labelRowActions}>
               {renderManageBalancesButton(true)}
               <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -346,10 +343,7 @@ export function SafeToSpendHero({
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.lineWarning}>
-            Select a balance for Navilo to use in your short-term money estimate — bills, savings and goals can't be compared against
-            your available cash until then.
-          </Text>
+          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
           {onSelectBalances ? (
             <TouchableOpacity style={styles.warningCtaButton} onPress={onSelectBalances}>
               <Text style={styles.warningCtaText}>Select balances</Text>
@@ -369,7 +363,7 @@ export function SafeToSpendHero({
       <>
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
             <View style={styles.labelRowActions}>
               {renderManageBalancesButton(true)}
               <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -377,9 +371,7 @@ export function SafeToSpendHero({
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.lineWarning}>
-            Recorded spending is currently about {formatMoney(recordedOverspendAmount)} ahead of the estimated amount for this cycle.
-          </Text>
+          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
         </View>
         {breakdown}
       </>
@@ -396,7 +388,7 @@ export function SafeToSpendHero({
       <>
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
             <View style={styles.labelRowActions}>
               {renderManageBalancesButton(true)}
               <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -404,10 +396,7 @@ export function SafeToSpendHero({
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.lineWarning}>
-            Your planned bills, savings and goals are currently about {formatMoney(Math.abs(safeToSpend.cycleRemainingPool))} above the
-            balance included in this estimate.
-          </Text>
+          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
         </View>
         {breakdown}
       </>
@@ -421,7 +410,7 @@ export function SafeToSpendHero({
       <>
         <View style={[styles.card, styles.cardWarning]}>
           <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
             <View style={styles.labelRowActions}>
               {renderManageBalancesButton(true)}
               <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -429,10 +418,7 @@ export function SafeToSpendHero({
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.lineWarning}>
-            Your goals would need {formatMoney(goalAllocation.totalRequiredMonthly)}/month but only{' '}
-            {formatMoney(goalAllocation.availableForGoals)} is currently available. Explore adjusting the timeline or contribution.
-          </Text>
+          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
         </View>
         {breakdown}
       </>
@@ -443,7 +429,7 @@ export function SafeToSpendHero({
     <>
       <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
         <View style={styles.labelRow}>
-          <Text style={styles.label}>💰 {heroCopy.eyebrowScheduled.toUpperCase()}</Text>
+          <Text style={styles.label}>💰 {presentation.heading}</Text>
           <View style={styles.labelRowActions}>
             {renderManageBalancesButton()}
             <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -451,8 +437,8 @@ export function SafeToSpendHero({
             </TouchableOpacity>
           </View>
         </View>
-        <Text style={styles.line}>{heroCopy.amountLabel}</Text>
-        <Text style={styles.value}>{formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))}</Text>
+        <Text style={styles.line}>{presentation.primaryCopy}</Text>
+        {presentation.amountVisible ? <Text style={styles.value}>{presentation.displayAmount}</Text> : null}
         {safeToSpend.daysRemaining > 0 ? (
           <Text style={styles.line}>
             ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day
