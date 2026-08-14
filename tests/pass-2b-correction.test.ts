@@ -51,7 +51,7 @@ function baseData(): AppData {
   return d;
 }
 
-const UNMEASURED: SectionFocusMeasurements = { 'financial-learning': null, score: null, journey: null };
+const UNMEASURED: SectionFocusMeasurements = { 'financial-learning': null, score: null, journey: null, goals: null, safety_net: null, saving: null, learning: null };
 
 console.log('=== Section 1: sectionFocus.ts — the real pending-focus decision core (real functions) ===');
 {
@@ -116,7 +116,7 @@ console.log('=== Section 1: sectionFocus.ts — the real pending-focus decision 
     // never queues multiple pending requests).
     const journeyRequest = parseSectionFocusRequest('journey', 2)!;
     // Both sections happen to measure in the same layout pass.
-    const bothMeasured: SectionFocusMeasurements = { 'financial-learning': null, score: 100, journey: 400 };
+    const bothMeasured: SectionFocusMeasurements = { 'financial-learning': null, score: 100, journey: 400, goals: null, safety_net: null, saving: null, learning: null };
     // The superseded Score request must NEVER be the one evaluated again —
     // simulating the caller's real behaviour: only the CURRENT pending ref
     // (now journeyRequest) is ever passed to computeSectionFocusFulfillment.
@@ -135,7 +135,7 @@ console.log('=== Section 1: sectionFocus.ts — the real pending-focus decision 
   }
 
   // --- 1f. null pending (no request in flight) is always safely not-fulfilled ---
-  assert('1f. no pending request at all: never fulfilled, never throws', computeSectionFocusFulfillment(null, { 'financial-learning': 10, score: 20, journey: 30 }, true).fulfilled === false);
+  assert('1f. no pending request at all: never fulfilled, never throws', computeSectionFocusFulfillment(null, { 'financial-learning': 10, score: 20, journey: 30, goals: 40, safety_net: 50, saving: 60, learning: 70 }, true).fulfilled === false);
 
   // --- 1g. financial-learning target is unaffected by the score-authoritative flag ---
   {
@@ -224,11 +224,17 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
     })()
   );
   assert(
-    "onLayout for all three focusable sections (score/journey/financial-learning aka Explore Money Moves) re-attempts the pending focus the moment that section measures",
+    // Pass 2D — DiscoverScreen.tsx gained four new focusable sections
+    // (goals, safety_net, and the Saving/Learning Explore categories),
+    // each with its own onLayout re-attempt, alongside the original three
+    // (score/journey/financial-learning). The mechanism itself — every
+    // onLayout handler re-attempts the one pending request — is unchanged;
+    // only the count of sections wired into it grew.
+    "onLayout for every focusable section (score/journey/financial-learning/goals/safety_net/saving/learning) re-attempts the pending focus the moment that section measures",
     (() => {
       const count = (DISCOVER_SCREEN_SRC.match(/attemptSectionFocus\(\);/g) || []).length;
-      // Once inside the route-params effect, once per onLayout handler (3) = 4.
-      return count === 4;
+      // Once inside the route-params effect, once per onLayout handler (7) = 8.
+      return count === 8;
     })()
   );
   assert(
@@ -249,11 +255,19 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   );
 
   // --- Repeated-request support: requestId stamping ---
+  // Pass 2D — TodayScreen.tsx consolidated the three near-identical
+  // score/journey/financial-learning navigate() call sites into one shared
+  // navigateToGrow(scrollTo) helper (also now reused by the new contextual-
+  // insight destination) — the counter increment and navigate() call each
+  // now appear once in source, not three times, but every caller still goes
+  // through this single helper, so a fresh id is still stamped on every
+  // single Grow-focus navigation, exactly as before.
   assert(
-    'TodayScreen.tsx stamps every Grow focus navigation (score, journey, financial-learning) with a fresh, monotonically increasing requestId from one shared counter',
+    'TodayScreen.tsx stamps every Grow focus navigation with a fresh, monotonically increasing requestId from one shared counter, via one shared navigateToGrow helper',
     /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) &&
-      (TODAY_SCREEN_SRC.match(/focusRequestIdRef\.current \+= 1;/g) || []).length === 3 &&
-      (TODAY_SCREEN_SRC.match(/scrollToRequestId: focusRequestIdRef\.current/g) || []).length === 3
+      /function navigateToGrow\(scrollTo: string\) \{\s*focusRequestIdRef\.current \+= 1;\s*navigation\.navigate\('Grow', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);\s*\}/.test(TODAY_SCREEN_SRC) &&
+      /navigateToGrow\('score'\);/.test(TODAY_SCREEN_SRC) &&
+      /navigateToGrow\('journey'\);/.test(TODAY_SCREEN_SRC)
   );
 
   // --- One-tap Score destination ---
@@ -361,7 +375,42 @@ console.log('\n=== Section 5: Score-outside-budget and reminder-ownership proper
     const selectTilesCall = TODAY_BRIEFING_CARD_SRC.match(/selectBriefingTiles\(([^)]*)\)/);
     return chipIdx !== -1 && tileRowIdx !== -1 && chipIdx < tileRowIdx && !!selectTilesCall && !/scoreChip/.test(selectTilesCall[1]);
   })());
-  assert('ReminderDetailSheet.tsx mounts the same, unmodified SmartReminderCard (topReminder prop only) — reminder confirmation/dismissal/persistence UI ownership is unchanged, just reached from the compact Reminder tile instead of an inline row', /<SmartReminderCard topReminder=\{topReminder\} \/>/.test(REMINDER_SHEET_SRC));
+  // Device-test correction round — SmartReminderCard now also receives
+  // onNavigateAway={onClose} (the fix for the blank-sheet-after-"Review
+  // card" defect: see ReminderDetailSheet.tsx's own doc comment). The
+  // underlying claim this assertion protects — SmartReminderCard is
+  // mounted here with a real, live reminder value, its own confirmation/
+  // dismissal/persistence ownership unchanged — still holds; only the
+  // literal prop list grew by one, additive prop each round. Final Pass 2D
+  // device-test correction — the reminder value is now `displayedReminder`
+  // (this sheet's own pinned "what's currently being viewed" state, set
+  // from the live topReminder only at open/settlement time — see this
+  // round's final report §1-§3 for why reacting to the raw live prop
+  // directly was the confirmed root cause of the interaction blocker), and
+  // a new onSettled prop was added (the settlement signal this correction
+  // introduces) — never a different component, never a stripped-down
+  // SmartReminderCard.
+  // WHY STALE (final Pass 2D device-test correction, native-Modal-lifecycle
+  // round): the sheet's own pinned displayedReminder state was replaced by
+  // useReducer(reduceReminderLifecycle, ...) (state.reminder supplies
+  // topReminder now), and two more props (onRequestLoanRepayment/
+  // onRequestCreditCardRepayment) were added so this mount can REQUEST a
+  // repayment form instead of a second component mounting its own native
+  // Modal (this round's confirmed stacked-Modal fix). Still the same,
+  // unmodified SmartReminderCard component — reminder confirmation/
+  // dismissal/persistence UI ownership is unchanged.
+  // WHY STALE AGAIN (Reminder-opening correction round): the confirmed
+  // blank-sheet defect (a competing external `visible`/`onClose` boolean
+  // racing this file's own reducer — see ReminderDetailSheet.tsx's own doc
+  // comment) removed the external `onClose` prop entirely; `onNavigateAway`
+  // is now the local `handleForceClose` — same semantic, sourced locally.
+  assert(
+    // WHY STALE: Reminder queue correction round renamed onSettled to
+    // onOutcome (session-deferred "Not yet" fix) and reads presentedState
+    // instead of state (blank-shell close fix) — same real mount.
+    'ReminderDetailSheet.tsx mounts the same, unmodified SmartReminderCard (a live reminder + onNavigateAway + onOutcome props) — reminder confirmation/dismissal/persistence UI ownership is unchanged, just reached from the compact Reminder tile instead of an inline row',
+    /<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/.test(REMINDER_SHEET_SRC)
+  );
 }
 
 console.log(`\n${total - failures}/${total} passed.`);

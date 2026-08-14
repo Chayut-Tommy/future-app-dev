@@ -17,7 +17,21 @@
  * replace an unfulfilled one.
  */
 
-export type SectionFocusTarget = 'financial-learning' | 'score' | 'journey';
+// Pass 2D — 'goals', 'safety_net', 'saving', and 'learning' are new targets
+// added for the reorganised Grow hierarchy (Your goals; the new Future You
+// and Safety Net section; and the Saving/Learning categories inside the new
+// Explore Money Moves accordion). 'financial-learning' is untouched and
+// still maps to the top of Explore Money Moves — kept exactly as Pass 2A-2C
+// shipped it (still a distinct, valid target) even though this pass retires
+// LuluRecommendationCard, its only caller, from Today's routine flow;
+// removing an accepted target/measurement purely because its one caller
+// went away would be an unnecessary, unauthorised deletion of existing
+// navigation surface. 'score' and 'journey' are also untouched — the spec's
+// prose ("navilo_score", "journey / milestones") describes what these
+// existing targets already do, not a request to rename them; introducing
+// parallel identifiers for the same destinations would only create
+// duplicate, inconsistent navigation surface.
+export type SectionFocusTarget = 'financial-learning' | 'score' | 'journey' | 'goals' | 'safety_net' | 'saving' | 'learning';
 
 export interface SectionFocusRequest {
   target: SectionFocusTarget;
@@ -31,6 +45,10 @@ export interface SectionFocusMeasurements {
   'financial-learning': number | null;
   score: number | null;
   journey: number | null;
+  goals: number | null;
+  safety_net: number | null;
+  saving: number | null;
+  learning: number | null;
 }
 
 export interface SectionFocusFulfillment {
@@ -65,9 +83,10 @@ const NO_FULFILLMENT: SectionFocusFulfillment = { fulfilled: false, scrollY: nul
  * `undefined`).
  */
 export function parseSectionFocusRequest(scrollTo: unknown, requestId: unknown): SectionFocusRequest | null {
-  if (scrollTo !== 'financial-learning' && scrollTo !== 'score' && scrollTo !== 'journey') return null;
+  const VALID_TARGETS: SectionFocusTarget[] = ['financial-learning', 'score', 'journey', 'goals', 'safety_net', 'saving', 'learning'];
+  if (typeof scrollTo !== 'string' || !(VALID_TARGETS as string[]).includes(scrollTo)) return null;
   if (typeof requestId !== 'number') return null;
-  return { target: scrollTo, requestId };
+  return { target: scrollTo as SectionFocusTarget, requestId };
 }
 
 /**

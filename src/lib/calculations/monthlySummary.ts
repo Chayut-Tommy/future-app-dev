@@ -1,6 +1,11 @@
 import { AppData } from '../../types/models';
 import { toMonthlyAmount } from './incomeEngine';
 import { moneyAmountToCents } from './money';
+import {
+  resolveTransactionCashflowAmount,
+  resolveTransactionAggregateSpendingAmount,
+  resolveTransactionAggregateSpendingCents,
+} from './repaymentAccounting';
 import { brand } from '../brand';
 
 // Correction round, 2026-08-10 — the single local-calendar month-to-date
@@ -41,9 +46,21 @@ export function computeSummaryForMonth(data: AppData, year: number, month: numbe
   // (recurringItemId set) — that bill's cost is already counted below via
   // fixedExpensesMonthly's recurring rate, so including the confirmation
   // transaction too would count the same bill twice (mirrors
-  // computeAdHocIncome's identical exclusion on the income side).
+  // computeAdHocIncome's identical exclusion on the income side). Also
+  // excludes a confirmed credit-card repayment (isRepayment set) — a
+  // repayment moves money from an asset to a card liability; it is never
+  // new consumer spending and must not inflate This Month's recorded
+  // expenses (a repayment has no RecurringItem to carry recurringItemId,
+  // and this function's own fixedExpensesMonthly below has no
+  // credit-card-repayment term to "already count" it via, unlike
+  // safeToSpend.ts's computeFixedCosts — so unlike the recurringItemId
+  // exclusion above, this one is not offsetting a rate counted elsewhere
+  // in THIS function; it simply keeps repayments out of "spending"
+  // entirely, per product decision).
   const loggedExpenses = data.transactions
-    .filter((t) => t.type === 'expense' && !t.recurringItemId && new Date(t.date) >= monthStart && new Date(t.date) < monthEnd)
+    .filter(
+      (t) => t.type === 'expense' && !t.recurringItemId && !t.isRepayment && new Date(t.date) >= monthStart && new Date(t.date) < monthEnd
+    )
     .reduce((sum, t) => sum + t.amount, 0);
 
   const fixedExpensesMonthly = data.recurringItems
@@ -115,40 +132,69 @@ export function computeMonthToDateActivity(data: AppData, today: Date = new Date
   const income = data.transactions
     .filter((t) => t.type === 'income' && isWithinMonthToDate(t.date, monthStart, today))
     .reduce((sum, t) => sum + t.amount, 0);
+  // Final three-measure accounting correction — this function is the
+  // AGGREGATE-SPENDING consumer (This Month "Spent" and its breakdown
+  // buckets), never the recorded-cashflow one; it uses
+  // resolveTransactionAggregateSpendingAmount, NOT
+  // resolveTransactionCashflowAmount (see computeRecordedMonthlyCashflow
+  // below, which independently uses the cashflow resolver instead of
+  // reusing this function's own `spend` — the two measures are now
+  // structurally distinct, not merely aliased). A confirmed ordinary bill
+  // counts here in full (the device test's own proof: a confirmed $50 bill
+  // correctly increased recorded spending by $50); a confirmed credit-card/
+  // BNPL repayment counts as $0 (an asset/liability transfer, not new
+  // consumer spending); a confirmed loan repayment counts only its known
+  // interest/fees portion (or the full amount when interest-only); and an
+  // UNKNOWN-split loan repayment counts as $0 here specifically — real cash
+  // left the account (so recorded cashflow below still counts it), but
+  // Navilo cannot identify any of it as interest or an expense, so it must
+  // never be presented as "Spent". See resolveTransactionAggregateSpendingAmount's
+  // own doc comment for the complete per-type contract.
   const monthExpenses = data.transactions.filter((t) => t.type === 'expense' && isWithinMonthToDate(t.date, monthStart, today));
-  const spend = monthExpenses.reduce((sum, t) => sum + t.amount, 0);
+  const spend = monthExpenses.reduce((sum, t) => sum + resolveTransactionAggregateSpendingAmount(data, t), 0);
   const cashSpend = monthExpenses
     .filter((t) => t.paymentSource === 'cash' || t.paymentSource === undefined || t.paymentSource === 'everyday')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const creditCardSpend = monthExpenses.filter((t) => t.paymentSource === 'credit_card').reduce((sum, t) => sum + t.amount, 0);
+    .reduce((sum, t) => sum + resolveTransactionAggregateSpendingAmount(data, t), 0);
+  const creditCardSpend = monthExpenses
+    .filter((t) => t.paymentSource === 'credit_card')
+    .reduce((sum, t) => sum + resolveTransactionAggregateSpendingAmount(data, t), 0);
   const otherSpend = monthExpenses
     .filter((t) => t.paymentSource === 'loan' || t.paymentSource === 'other')
-    .reduce((sum, t) => sum + t.amount, 0);
+    .reduce((sum, t) => sum + resolveTransactionAggregateSpendingAmount(data, t), 0);
   return { income, spend, cashSpend, creditCardSpend, otherSpend };
 }
 
 /**
  * The single authoritative "recorded cashflow this month" figure — every
  * logged income transaction this calendar month minus every logged expense
- * transaction, recurring-confirmed or ad-hoc alike (thin wrapper over
- * `computeMonthToDateActivity`, never reconstructed independently). This is
- * *recorded* activity, distinct from `computeMonthlySummary`'s
- * `netCashflow`, which blends the recurring monthly income *rate* with
- * logged expenses for budgeting/Lulu-Score math — the two answer different
- * questions and must not be swapped (PRD bug report: Financial State copy
- * said "recorded cashflow" while actually reading the recurring-rate
- * figure, so a user with a one-off $50,000 income transaction still saw
- * "this month's cashflow is also tight," even though July So Far, Available
- * Until Payday, and Estimated Wealth Change — all of which already use this
- * same recorded-activity source — showed a strongly positive month).
+ * transaction's RECORDED-CASHFLOW amount (resolveTransactionCashflowAmount
+ * — deliberately NOT `computeMonthToDateActivity`'s own `spend`, which is
+ * the separate AGGREGATE-SPENDING measure; see repaymentAccounting.ts's
+ * module header for why the two diverge for an unknown-split loan
+ * repayment). This is *recorded* activity, distinct from
+ * `computeMonthlySummary`'s `netCashflow`, which blends the recurring
+ * monthly income *rate* with logged expenses for budgeting/Lulu-Score math
+ * — the two answer different questions and must not be swapped (PRD bug
+ * report: Financial State copy said "recorded cashflow" while actually
+ * reading the recurring-rate figure, so a user with a one-off $50,000
+ * income transaction still saw "this month's cashflow is also tight," even
+ * though July So Far, Available Until Payday, and Estimated Wealth Change —
+ * all of which already use this same recorded-activity source — showed a
+ * strongly positive month).
  *
  * Any copy that says "recorded cashflow" (Financial State's Cashflow Focus
  * / Financial Rebuild variants) must use this function, not
  * `computeMonthlySummary`.
  */
 export function computeRecordedMonthlyCashflow(data: AppData, today: Date = new Date()): number {
-  const activity = computeMonthToDateActivity(data, today);
-  return activity.income - activity.spend;
+  const monthStart = monthToDateWindowStart(today);
+  const income = data.transactions
+    .filter((t) => t.type === 'income' && isWithinMonthToDate(t.date, monthStart, today))
+    .reduce((sum, t) => sum + t.amount, 0);
+  const spend = data.transactions
+    .filter((t) => t.type === 'expense' && isWithinMonthToDate(t.date, monthStart, today))
+    .reduce((sum, t) => sum + resolveTransactionCashflowAmount(data, t), 0);
+  return income - spend;
 }
 
 /**
@@ -278,35 +324,51 @@ export function computeThisMonthRecordedSummary(data: AppData, today: Date = new
   let spendingCents = 0;
   for (const t of data.transactions) {
     if (t.type !== 'expense' || !isWithinMonthToDate(t.date, monthStart, today)) continue;
-    const validated = moneyAmountToCents(t.amount);
-    if (!validated.valid) {
+    // Final three-measure accounting correction — this is the
+    // AGGREGATE-SPENDING breakdown (This Month's spending-source list), so
+    // it uses resolveTransactionAggregateSpendingCents, the SAME resolver
+    // computeMonthToDateActivity's `spend`/bucket fields above use — never
+    // resolveTransactionCashflowCents, which is reserved for
+    // computeRecordedMonthlyCashflow alone. The two diverge only for an
+    // unknown-split loan repayment (full cashflow, $0 aggregate spending —
+    // see repaymentAccounting.ts's module header for the full contract).
+    // resolveTransactionAggregateSpendingCents also catches a genuinely
+    // corrupt stored `t.amount` (non-finite, negative, fractional-cent),
+    // since a corrupt input can never resolve to a valid cents value either.
+    const resolvedCents = resolveTransactionAggregateSpendingCents(data, t);
+    if (resolvedCents === undefined) {
       hasInvalidRecordedAmounts = true;
       continue;
     }
-    spendingCents += validated.cents;
+    // A repayment (or interest-free loan principal payment) resolving to
+    // exactly $0 has nothing to attribute to a spending-source bucket —
+    // skipped here rather than added as a zero-amount row, which would
+    // clutter the breakdown with nothing to show.
+    if (resolvedCents === 0) continue;
+    spendingCents += resolvedCents;
 
     if (t.paymentSource === 'everyday' && t.targetAssetId) {
       const asset = data.assets.find((a) => a.id === t.targetAssetId && a.type === 'everyday');
-      if (asset) addToBucket(`everyday:${asset.id}`, 'everyday', asset.label, validated.cents, asset.id);
-      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+      if (asset) addToBucket(`everyday:${asset.id}`, 'everyday', asset.label, resolvedCents, asset.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', resolvedCents);
     } else if (t.paymentSource === 'credit_card' && t.creditCardId) {
       const card = data.creditCards.find((c) => c.id === t.creditCardId);
-      if (card) addToBucket(`creditCard:${card.id}`, 'credit_card', card.label, validated.cents, card.id);
-      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+      if (card) addToBucket(`creditCard:${card.id}`, 'credit_card', card.label, resolvedCents, card.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', resolvedCents);
     } else if (t.paymentSource === 'loan' && t.liabilityId) {
       const liability = data.liabilities.find((l) => l.id === t.liabilityId);
-      if (liability) addToBucket(`loan:${liability.id}`, 'loan', liability.label, validated.cents, liability.id);
-      else addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+      if (liability) addToBucket(`loan:${liability.id}`, 'loan', liability.label, resolvedCents, liability.id);
+      else addToBucket('unavailable', 'unavailable', 'Source unavailable', resolvedCents);
     } else if (t.paymentSource === 'other') {
-      addToBucket('other', 'other', 'Other funding', validated.cents);
+      addToBucket('other', 'other', 'Other funding', resolvedCents);
     } else if (t.paymentSource === 'cash' || t.paymentSource === undefined) {
-      addToBucket('cash', 'cash', 'Cash', validated.cents);
+      addToBucket('cash', 'cash', 'Cash', resolvedCents);
     } else {
       // Defensive only — an 'everyday'/'credit_card'/'loan' paymentSource
       // missing its required id, which the rest of this codebase never
       // produces (QuickAddModal always pairs them), still resolves to a
       // real, visible row rather than silently vanishing.
-      addToBucket('unavailable', 'unavailable', 'Source unavailable', validated.cents);
+      addToBucket('unavailable', 'unavailable', 'Source unavailable', resolvedCents);
     }
   }
 

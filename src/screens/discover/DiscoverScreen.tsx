@@ -9,10 +9,13 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { MarketPulsePreview } from '../../components/discover/MarketPulsePreview';
 import { LearningCardItem } from '../../components/discover/LearningCardItem';
 import { LearningPathCard } from '../../components/discover/LearningPathCard';
+import { ExploreCategorySection } from '../../components/discover/ExploreCategorySection';
 import { MoneyOpportunitiesHero } from '../../components/discover/MoneyOpportunitiesHero';
 import { WealthJourneyCard } from '../../components/discover/WealthJourneyCard';
 import { FutureYouCard } from '../../components/discover/FutureYouCard';
 import { SavingStrategyCalculator } from '../../components/discover/SavingStrategyCalculator';
+import { SavingsCoachCard } from '../../components/health/SavingsCoachCard';
+import { SavingFactsCard } from '../../components/today/SavingFactsCard';
 import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
@@ -45,17 +48,22 @@ const DEBT_PATH = LEARNING_PATHS.find((p) => p.id === 'debt_free')!;
 // convention already used by Money's "Needs your attention" list.
 const MAX_VISIBLE_GOALS = 3;
 
+// Pass 2D — the six Explore Money Moves categories, in the spec's required
+// order. 'markets-this-week' is deliberately excluded from the Learning
+// category's economy-card list below (it travels with Market Pulse to the
+// lower page instead — see the Market Pulse section's own comment).
+type ExploreCategoryId = 'saving' | 'investing' | 'debt_free' | 'home' | 'retirement' | 'learning';
+
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
 }
 
 /**
  * Grow (formerly Discover) — an AI coaching hub, not a financial-blog
- * article list (PRD ask). Leads with real, signal-driven opportunities,
- * then a single connected "Money Path" journey, hands-on Smart Tools, and
- * an Explore Money Moves section grouping investing/saving/property
- * content — individual lesson cards only ever live inside a journey, never
- * as bare top-level items.
+ * article list (PRD ask). Leads with the full Score, the combined Journey,
+ * goal discovery, Navilo Picks, a Future You/Safety Net section, then the
+ * six-category Explore Money Moves accordion, with Market Pulse lowest
+ * priority at the very bottom (Pass 2D — Today & Grow hierarchy cleanup).
  */
 export function DiscoverScreen() {
   const navigation = useNavigation<any>();
@@ -66,6 +74,12 @@ export function DiscoverScreen() {
   const exploreMoneyMovesY = useRef<number | null>(null);
   const scoreSectionY = useRef<number | null>(null);
   const journeySectionY = useRef<number | null>(null);
+  // Pass 2D — new focusable-section measurements, following the exact same
+  // null-sentinel "not yet measured" convention as the three refs above.
+  const goalsSectionY = useRef<number | null>(null);
+  const safetyNetSectionY = useRef<number | null>(null);
+  const savingCategoryY = useRef<number | null>(null);
+  const learningCategoryY = useRef<number | null>(null);
   // Pass 2B correction — the pending focus request itself. Unlike a bare
   // rAF-retry-then-abandon loop, an unfulfilled request is never discarded
   // by a frame budget: it stays here until the matching section's onLayout
@@ -105,6 +119,22 @@ export function DiscoverScreen() {
   // Milestones presentation" an organic (non-Today-driven) Grow visit
   // already showed before this correction.
   const [journeySubview, setJourneySubview] = useState<'milestones' | 'moneyPath'>('milestones');
+  // Pass 2D — purely local UI state for the new Explore Money Moves
+  // accordion; never persisted (no accepted persistence path owns this),
+  // so it resets to fully collapsed on every fresh mount of this screen —
+  // the established never-persisted convention JourneyTimeline's and
+  // LearningPathCard's own expand states already follow.
+  const [exploreExpanded, setExploreExpanded] = useState<Record<ExploreCategoryId, boolean>>({
+    saving: false,
+    investing: false,
+    debt_free: false,
+    home: false,
+    retirement: false,
+    learning: false,
+  });
+  function toggleExplore(id: ExploreCategoryId) {
+    setExploreExpanded((s) => ({ ...s, [id]: !s[id] }));
+  }
 
   const opportunities = useMemo(() => computeMoneyOpportunities(data), [data]);
   const journeyPaths = useMemo(() => computeWealthPaths(data), [data]);
@@ -154,7 +184,8 @@ export function DiscoverScreen() {
   const growSelectedGoal = data.goals.find((g) => g.id === growSelectedGoalId) ?? null;
 
   /**
-   * Section-focused navigation (Pass 2A architecture; corrected Pass 2B).
+   * Section-focused navigation (Pass 2A architecture; corrected Pass 2B;
+   * extended Pass 2D with 'goals'/'safety_net'/'saving'/'learning').
    *
    * Contract: receive a typed focus request → retain it as pending →
    * attempt it immediately if the target is already measurable → otherwise
@@ -168,11 +199,21 @@ export function DiscoverScreen() {
    * exactly what this corrects: pendingSectionFocusRef is never cleared by
    * a frame count, only by a genuine successful scroll (or by being
    * superseded by a newer request — see below). In this screen every
-   * target section (financial-learning/score/journey headers) always
+   * target section (financial-learning/score/journey/goals/safety_net
+   * headers, and the Saving/Learning accordion category headers) always
    * renders unconditionally — locked/unavailable Score still renders its
    * established muted copy, an empty achievements list still renders the
    * Journey header — so onLayout is guaranteed to fire and fulfil the
    * request; there is no "destination never mounts" case to hang on here.
+   *
+   * Pass 2D — 'saving'/'learning' target the Explore Money Moves accordion,
+   * whose content is collapsed by default. Fulfilling either first forces
+   * that one category open (a plain local state write, never a persisted
+   * ranking/dismissal change) — the category HEADER itself is always
+   * mounted regardless of expand state, so its own y-offset never shifts
+   * because of its own expansion (only sections BELOW it can move), and no
+   * separate "wait for the newly-revealed content to lay out" step is
+   * needed before scrolling to the header.
    *
    * Repeated intentional requests to the SAME section (e.g. rapid taps on
    * Today's Score chip) are supported via requestId: TodayScreen stamps
@@ -189,9 +230,23 @@ export function DiscoverScreen() {
    * can never scroll to (or open) the wrong destination.
    */
   function attemptSectionFocus() {
+    // Pass 2D — open the target Explore category before measuring/scrolling
+    // to it, per §14 ("open the required collapsed Explore category before
+    // fulfilling focus"). Idempotent and safe to call on every retry.
+    const target = pendingSectionFocusRef.current?.target;
+    if (target === 'saving' && !exploreExpanded.saving) setExploreExpanded((s) => ({ ...s, saving: true }));
+    if (target === 'learning' && !exploreExpanded.learning) setExploreExpanded((s) => ({ ...s, learning: true }));
     const result = computeSectionFocusFulfillment(
       pendingSectionFocusRef.current,
-      { 'financial-learning': exploreMoneyMovesY.current, score: scoreSectionY.current, journey: journeySectionY.current },
+      {
+        'financial-learning': exploreMoneyMovesY.current,
+        score: scoreSectionY.current,
+        journey: journeySectionY.current,
+        goals: goalsSectionY.current,
+        safety_net: safetyNetSectionY.current,
+        saving: savingCategoryY.current,
+        learning: learningCategoryY.current,
+      },
       scoreChipPresentation.state === 'available'
     );
     if (!result.fulfilled) return; // still pending — left untouched, retried by that section's own onLayout
@@ -377,12 +432,12 @@ export function DiscoverScreen() {
           functions ScoreExplanationSheet's own category cards already
           derive from — capped at one line each, never a paragraph. Every
           authoritative-only field (life stage, completeness, strongest
-          area, opportunity) is gated on scoreChipPresentation.state ===
-          'available', the same existing guard that already keeps a locked/
-          unavailable/invalid score from ever showing a fabricated number —
-          the non-authoritative branch renders only the existing, unchanged
-          compact label/supportingText row, no ring fill, no life stage,
-          no trend. */}
+          area, opportunity) is gated on scoreGaugePresentation.state ===
+          'available', the same doubly-validated guard that already keeps a
+          locked/unavailable/invalid score from ever showing a fabricated
+          number — the non-authoritative branch renders only the existing,
+          unchanged compact label/supportingText row, no ring fill, no life
+          stage, no trend. */}
       <Text
         style={styles.categoryTitle}
         onLayout={(e) => {
@@ -472,13 +527,7 @@ export function DiscoverScreen() {
           subview is a purely local UI choice (journeySubview state, above)
           that never reads or writes either engine's own data, so switching
           tabs can never mutate Journey progress or Money Path stage data
-          in either direction.
-          The standalone lower-page "Your Money Path" section that used to
-          sit after the opportunities hero has been removed (below,
-          formerly here) now that Money Path is reachable from this
-          combined section — WealthJourneyCard.tsx and wealthJourney.ts
-          themselves are untouched, so the complete Money Path is still
-          shown, just not twice. */}
+          in either direction. */}
       <Text
         style={styles.categoryTitle}
         onLayout={(e) => {
@@ -489,20 +538,6 @@ export function DiscoverScreen() {
       >
         Your Journey
       </Text>
-      {/* Physical-device correction §2 — accessibilityRole="tablist" +
-          "tab" (not "button") give VoiceOver/TalkBack the correct
-          segmented-control semantics, so each option is announced as a
-          tab and its selected state is read aloud automatically from
-          accessibilityState — no separate, duplicate "selected" text is
-          ever added to the label. Milestones is declared first in the
-          tree and Money Path second, so reading order is always
-          Milestones → Money Path → whichever subview's content follows
-          below, matching source/visual order (no accessibility ordering
-          override is used anywhere here). Selection is shown via both a
-          border AND bold text (journeyTabSelected/journeyTabTextSelected)
-          in addition to the background/colour change, so it is never
-          conveyed by colour alone; each tab has a minHeight: 44 touch
-          target. */}
       <View style={styles.journeyTabRow} accessibilityRole="tablist">
         <TouchableOpacity
           style={[styles.journeyTab, journeySubview === 'milestones' ? styles.journeyTabSelected : null]}
@@ -539,12 +574,18 @@ export function DiscoverScreen() {
 
       {/* "Your goals" — Grow is now the primary home for goal discovery and
           management (Goals-to-Grow §1/§3): "Wealth: what I own and owe" vs
-          "Grow: what I am working toward." First personalised content after
-          the compliance banner, ahead of the AI opportunities hero.
-          data.goals is the only source read here — no local goal state, no
-          recalculated allocation, exactly the same authoritative source
-          Today/Money/Wealth/GoalsScreen already read via useAppState(). */}
-      <Text style={styles.goalsSectionTitle} accessibilityRole="header">
+          "Grow: what I am working toward." data.goals is the only source
+          read here — no local goal state, no recalculated allocation,
+          exactly the same authoritative source Today/Money/Wealth/
+          GoalsScreen already read via useAppState(). */}
+      <Text
+        style={styles.goalsSectionTitle}
+        onLayout={(e) => {
+          goalsSectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
         Your goals
       </Text>
       {data.goals.length === 0 ? (
@@ -616,25 +657,28 @@ export function DiscoverScreen() {
       <AddGoalModal visible={growGoalModalVisible} onClose={() => setGrowGoalModalVisible(false)} />
       <GoalDetailSheet goal={growSelectedGoal} onClose={() => setGrowSelectedGoalId(null)} />
 
-      {/* A. Hero — AI-driven, not a static article list (PRD ask). */}
+      {/* Navilo Picks — AI-driven, not a static article list (PRD ask). */}
       <MoneyOpportunitiesHero opportunities={opportunities} onAction={handleOpportunityAction} />
 
-      {/* Pass 2C correction — the standalone "Your Money Path" section that
-          used to sit here (WealthJourneyCard, same journeyPaths) has been
-          removed; it is now reachable as the "Money Path" subview of the
-          combined "Your Journey" section above, so the complete Money Path
-          is never shown twice on Grow. WealthJourneyCard.tsx and
-          wealthJourney.ts are unchanged — only this second render site was
-          removed. */}
-
-      {/* C. Smart Tools — emotionally reframed, not generic calculators
-          (PRD ask: "make users imagine outcomes"). */}
-      <Text style={styles.categoryTitle}>Smart Tools</Text>
+      {/* Pass 2D — "Future You and Safety Net": one clearly organised
+          section grouping two previously-separate cards (Smart Tools'
+          FutureYouCard, and the standalone "How long would my safety net
+          last?" nav card) under a shared header, per the new Grow order.
+          Both cards are unchanged — same components, same props, same
+          destinations — only their surrounding heading/position moved.
+          This is also the 'safety_net' focus-request destination: Today's
+          eligible emergency-savings contextual insight routes here. */}
+      <Text
+        style={styles.categoryTitle}
+        onLayout={(e) => {
+          safetyNetSectionY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+        accessibilityRole="header"
+      >
+        Future You and Safety Net
+      </Text>
       <FutureYouCard preview={futureYouPreview} onAdjust={() => navigation.navigate('CompoundCalculator')} />
-      {/* The generic "When will I reach my goal?" nav card was removed —
-          "Your goals" above is now the one goal-management entry point in
-          Grow, showing real data instead of a duplicate generic route
-          (Goals-to-Grow §7B). */}
       <TouchableOpacity onPress={() => navigation.navigate('EmergencyFund')} activeOpacity={0.8}>
         <SectionCard style={styles.navCard}>
           <View style={styles.navIcon}>
@@ -648,9 +692,16 @@ export function DiscoverScreen() {
         </SectionCard>
       </TouchableOpacity>
 
-      {/* D. Explore Money Moves — organised by real category, each lesson
-          only ever reachable through its journey (PRD ask: never a bare
-          "What is an ETF?" card floating at the top level). */}
+      {/* Explore Money Moves — Pass 2D reorganises this into six named
+          categories (Saving, Investing, Debt-free, Home, Retirement,
+          Learning), each a collapsible ExploreCategorySection so the feed
+          doesn't render every category's full content expanded by default.
+          Every item below is the exact existing component/prop set this
+          screen already rendered pre-Pass-2D — only which category it sits
+          under, and whether that category starts collapsed, has changed.
+          Market Pulse has moved OUT of Investing entirely (see the lower-
+          page Market Pulse section further down) — Investing here now only
+          contains what remains genuinely "investing exploration" content. */}
       <Text
         style={styles.categoryTitle}
         onLayout={(e) => {
@@ -661,66 +712,126 @@ export function DiscoverScreen() {
         Explore Money Moves
       </Text>
 
-      <Text style={styles.groupTitle}>📈 Investing</Text>
+      <ExploreCategorySection
+        title="Saving"
+        icon="wallet-outline"
+        expanded={exploreExpanded.saving}
+        onToggle={() => toggleExplore('saving')}
+        onLayout={(e) => {
+          savingCategoryY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+      >
+        <TouchableOpacity onPress={() => navigation.navigate('SavingsComparison')} activeOpacity={0.8}>
+          <SectionCard style={styles.navCard}>
+            <View style={styles.navIcon}>
+              <Ionicons name="calculator-outline" size={20} color={colors.market} />
+            </View>
+            <View style={styles.navTextBlock}>
+              <Text style={styles.navTitle}>Compare savings rates</Text>
+              <Text style={styles.navBody}>Bank accounts, rates, and a savings calculator</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </SectionCard>
+        </TouchableOpacity>
+        {/* Pass 2D relocation — Savings Coach, moved here unchanged from
+            Today (same component, same calculations/actions/persistence,
+            no longer a standalone routine Today card). */}
+        <SavingsCoachCard />
+        <SavingStrategyCalculator />
+        <LearningPathCard path={SAVING_PATH} />
+      </ExploreCategorySection>
+
+      <ExploreCategorySection title="Investing" icon="trending-up-outline" expanded={exploreExpanded.investing} onToggle={() => toggleExplore('investing')}>
+        <LearningPathCard path={INVESTING_PATH} />
+        <TouchableOpacity onPress={() => navigation.navigate('CompoundCalculator')} activeOpacity={0.8}>
+          <SectionCard style={styles.navCard}>
+            <View style={styles.navIcon}>
+              <Ionicons name="trending-up-outline" size={20} color={colors.market} />
+            </View>
+            <View style={styles.navTextBlock}>
+              <Text style={styles.navTitle}>Compare investment options</Text>
+              <Text style={styles.navBody}>See how different monthly amounts could grow over time</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </SectionCard>
+        </TouchableOpacity>
+      </ExploreCategorySection>
+
+      <ExploreCategorySection title="Debt-free" icon="card-outline" expanded={exploreExpanded.debt_free} onToggle={() => toggleExplore('debt_free')}>
+        <LearningPathCard path={DEBT_PATH} />
+      </ExploreCategorySection>
+
+      <ExploreCategorySection title="Home" icon="home-outline" expanded={exploreExpanded.home} onToggle={() => toggleExplore('home')}>
+        <TouchableOpacity onPress={() => navigation.navigate('HomeLoanCalculator')} activeOpacity={0.8}>
+          <SectionCard style={styles.navCard}>
+            <View style={styles.navIcon}>
+              <Ionicons name="home-outline" size={20} color={colors.market} />
+            </View>
+            <View style={styles.navTextBlock}>
+              <Text style={styles.navTitle}>Can I buy a home?</Text>
+              <Text style={styles.navBody}>Estimate repayments, total interest, and total loan cost</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </SectionCard>
+        </TouchableOpacity>
+        <LearningPathCard path={PROPERTY_PATH} />
+      </ExploreCategorySection>
+
+      <ExploreCategorySection title="Retirement" icon="shield-outline" expanded={exploreExpanded.retirement} onToggle={() => toggleExplore('retirement')}>
+        {learningCardsByCategory('retirement').map((card) => (
+          <LearningCardItem key={card.id} card={card} />
+        ))}
+      </ExploreCategorySection>
+
+      <ExploreCategorySection
+        title="Learning"
+        icon="book-outline"
+        expanded={exploreExpanded.learning}
+        onToggle={() => toggleExplore('learning')}
+        onLayout={(e) => {
+          learningCategoryY.current = e.nativeEvent.layout.y;
+          attemptSectionFocus();
+        }}
+      >
+        {/* Pass 2D relocation — Money Fact, moved here unchanged from Today
+            (same component, same calculation source/inputs/calculator
+            action, no longer a standalone routine Today card). */}
+        <SavingFactsCard />
+        {learningCardsByCategory('tax').map((card) => (
+          <LearningCardItem key={card.id} card={card} />
+        ))}
+        {/* 'markets-this-week' is deliberately excluded here — it moves
+            with Market Pulse to the lower page (same unavailable
+            market-content area) instead of sitting in ordinary Learning
+            content. */}
+        {learningCardsByCategory('economy')
+          .filter((card) => card.id !== 'markets-this-week')
+          .map((card) => (
+            <LearningCardItem key={card.id} card={card} />
+          ))}
+      </ExploreCategorySection>
+
+      {/* Pass 2D — Market Pulse moves out of the premium upper-Grow content
+          (it previously sat inside the Investing group, above the fold)
+          to the lowest-priority position on the page, below Explore Money
+          Moves, while live market data remains unavailable. Unchanged
+          component — MarketPulsePreview already shows "Live data coming
+          soon" and "—" placeholders rather than fabricated values; nothing
+          about its own presentation changed, only its position. The
+          "What moved markets this week?" card joins it here, since both
+          are the same "unavailable live market content" area. */}
+      {/* No onLayout/focus-target here by design — Market Pulse is
+          intentionally not one of the typed SectionFocusTarget values,
+          since nothing in this pass routes a customer to it directly. */}
+      <Text style={styles.categoryTitle}>Markets</Text>
       <SectionCard>
         <MarketPulsePreview />
       </SectionCard>
-      <LearningPathCard path={INVESTING_PATH} />
-      <TouchableOpacity onPress={() => navigation.navigate('CompoundCalculator')} activeOpacity={0.8}>
-        <SectionCard style={styles.navCard}>
-          <View style={styles.navIcon}>
-            <Ionicons name="trending-up-outline" size={20} color={colors.market} />
-          </View>
-          <View style={styles.navTextBlock}>
-            <Text style={styles.navTitle}>Compare investment options</Text>
-            <Text style={styles.navBody}>See how different monthly amounts could grow over time</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </SectionCard>
-      </TouchableOpacity>
-
-      <Text style={styles.groupTitle}>🏦 Saving</Text>
-      <TouchableOpacity onPress={() => navigation.navigate('SavingsComparison')} activeOpacity={0.8}>
-        <SectionCard style={styles.navCard}>
-          <View style={styles.navIcon}>
-            <Ionicons name="calculator-outline" size={20} color={colors.market} />
-          </View>
-          <View style={styles.navTextBlock}>
-            <Text style={styles.navTitle}>Compare savings rates</Text>
-            <Text style={styles.navBody}>Bank accounts, rates, and a savings calculator</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </SectionCard>
-      </TouchableOpacity>
-      <SavingStrategyCalculator />
-      <LearningPathCard path={SAVING_PATH} />
-
-      <Text style={styles.groupTitle}>🏠 Property</Text>
-      <TouchableOpacity onPress={() => navigation.navigate('HomeLoanCalculator')} activeOpacity={0.8}>
-        <SectionCard style={styles.navCard}>
-          <View style={styles.navIcon}>
-            <Ionicons name="home-outline" size={20} color={colors.market} />
-          </View>
-          <View style={styles.navTextBlock}>
-            <Text style={styles.navTitle}>Can I buy a home?</Text>
-            <Text style={styles.navBody}>Estimate repayments, total interest, and total loan cost</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </SectionCard>
-      </TouchableOpacity>
-      {/* The generic "Deposit tracker" nav card was removed — "Your goals"
-          above is now the one goal-management entry point in Grow, and a
-          property deposit is just a goal like any other there
-          (Goals-to-Grow §7B). */}
-      <LearningPathCard path={PROPERTY_PATH} />
-
-      <Text style={styles.groupTitle}>💳 Debt Free</Text>
-      <LearningPathCard path={DEBT_PATH} />
-
-      <Text style={styles.groupTitle}>📚 More</Text>
-      {[...learningCardsByCategory('retirement'), ...learningCardsByCategory('tax'), ...learningCardsByCategory('economy')].map((card) => (
-        <LearningCardItem key={card.id} card={card} />
-      ))}
+      {(() => {
+        const marketsThisWeek = learningCardsByCategory('economy').find((card) => card.id === 'markets-this-week');
+        return marketsThisWeek ? <LearningCardItem card={marketsThisWeek} /> : null;
+      })()}
 
       <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
       <AddWealthItemModal visible={cashModalVisible} kind="asset" presetAssetType="cash" onClose={() => setCashModalVisible(false)} />

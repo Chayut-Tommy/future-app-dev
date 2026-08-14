@@ -158,8 +158,19 @@ function buildMoneyFlowCategory(data: AppData): ScoreCategory {
   const safeToSpend = computeSafeToSpend(data);
   const cycleTotalDays = Math.max(1, Math.round((safeToSpend.cycleEnd.getTime() - safeToSpend.cycleStart.getTime()) / 86400000));
   const elapsedDays = clamp(cycleTotalDays - safeToSpend.daysRemaining, 0, cycleTotalDays);
+  // Final Pass 2D device-test correction — excludes a confirmed recurring
+  // bill/BNPL/loan repayment or a confirmed credit-card repayment, mirroring
+  // safeToSpend.ts's own spendSoFarThisCycle-adjacent exclusions: a cycle
+  // whose only activity is a repayment shouldn't be read as "enough
+  // spending history" to compute a real Spending Control fraction against
+  // a correctly-filtered (and possibly $0) spendSoFarThisCycle.
   const cycleExpenseCount = data.transactions.filter(
-    (t) => t.type === 'expense' && new Date(t.date) >= safeToSpend.cycleStart && new Date(t.date) <= new Date()
+    (t) =>
+      t.type === 'expense' &&
+      !t.recurringItemId &&
+      !t.isRepayment &&
+      new Date(t.date) >= safeToSpend.cycleStart &&
+      new Date(t.date) <= new Date()
   ).length;
   const hasEnoughSpendingHistory = cycleExpenseCount >= 3;
   let spendingFraction = 0.5;

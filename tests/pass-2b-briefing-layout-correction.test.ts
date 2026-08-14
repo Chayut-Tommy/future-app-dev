@@ -177,9 +177,69 @@ console.log('\n=== Section 4: detailed reminder account actions remain reachable
 {
   const REMINDER_SHEET_SRC = readFileSync('src/components/today/ReminderDetailSheet.tsx', 'utf8');
   const TODAY_SCREEN_SRC = readFileSync('src/screens/today/TodayScreen.tsx', 'utf8');
-  assert('ReminderDetailSheet.tsx mounts the real, full, unmodified SmartReminderCard (all account-choice controls included) when a topReminder is present', /topReminder \? <SmartReminderCard topReminder=\{topReminder\} \/> : null/.test(REMINDER_SHEET_SRC) || /<SmartReminderCard topReminder=\{topReminder\} \/>/.test(REMINDER_SHEET_SRC));
-  assert('TodayScreen.tsx opens ReminderDetailSheet from the Briefing\'s reminder tile tap (onPressReminderTile)', /onPressReminderTile=\{\(\) => setReminderSheetVisible\(true\)\}/.test(TODAY_SCREEN_SRC));
-  assert('TodayScreen.tsx mounts ReminderDetailSheet with the real topReminder and a working onClose', /<ReminderDetailSheet visible=\{reminderSheetVisible\} topReminder=\{topReminder\} onClose=\{\(\) => setReminderSheetVisible\(false\)\} \/>/.test(TODAY_SCREEN_SRC));
+  // Device-test correction round — onNavigateAway={onClose} added to this
+  // mount (see ReminderDetailSheet.tsx's own doc comment); still the
+  // real, full SmartReminderCard with all its account-choice controls.
+  // Final Pass 2D device-test correction — the conditional now gates on
+  // `displayedReminder` (ReminderDetailSheet's own pinned "what's currently
+  // being viewed" state) rather than the raw live topReminder prop
+  // directly — see this round's final report §1-§3 for why reacting to the
+  // live prop was the confirmed interaction-blocker root cause — and the
+  // mount gained a new onSettled prop. Still the real, full, unmodified
+  // SmartReminderCard with every account-choice control.
+  // WHY STALE (final Pass 2D device-test correction, native-Modal-lifecycle
+  // round): ReminderDetailSheet.tsx's own pinned displayedReminder state
+  // was replaced by useReducer(reduceReminderLifecycle, ...) — the sheet
+  // renders SmartReminderCard for the `reminder_detail` lifecycle state
+  // (state.reminder, not displayedReminder), and gained two more props
+  // (onRequestLoanRepayment/onRequestCreditCardRepayment) so it can REQUEST
+  // a repayment form rather than mounting a second native-Modal-owning
+  // sheet itself (this round's confirmed stacked-Modal fix — see
+  // pass-2d-keyboard-correction.test.ts §3 and
+  // pass-2d-interaction-lifecycle-correction.test.ts §2 for the full real-
+  // function proof). Still the real, full, unmodified SmartReminderCard
+  // component either way — only which lifecycle-state variable supplies
+  // its `topReminder` changed.
+  // WHY STALE AGAIN (Reminder-opening correction round): the confirmed
+  // blank-sheet defect (a competing external `visible`/`onClose` boolean
+  // racing this file's own reducer — see ReminderDetailSheet.tsx's own doc
+  // comment for the full trace) removed the external `onClose` prop
+  // entirely; `onNavigateAway` is now the local `handleForceClose`
+  // (`dispatch({type:'FORCE_CLOSE'})`) — same semantic (close the sheet
+  // before navigating to Cards), sourced locally instead of from a parent
+  // callback that no longer exists.
+  assert(
+    // WHY STALE: Reminder queue correction round replaced state-derived
+    // rendering with presentedState-derived rendering (blank-shell fix) and
+    // onSettled with onOutcome (session-deferred "Not yet" fix) — same real
+    // SmartReminderCard mount, updated wiring.
+    'ReminderDetailSheet.tsx mounts the real, full, unmodified SmartReminderCard (all account-choice controls included) when a reminder is being displayed',
+    /presentedState\.kind === 'reminder_detail' \? \(\s*<>\s*<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/.test(
+      REMINDER_SHEET_SRC
+    )
+  );
+  // WHY STALE: the confirmed blank-sheet defect (see ReminderDetailSheet.tsx's
+  // own doc comment) removed `reminderSheetVisible` entirely — the tile
+  // press now builds an atomic ReminderOpenRequest (gated on a live
+  // topReminder existing at all) instead of toggling a boolean.
+  assert(
+    'TodayScreen.tsx opens ReminderDetailSheet from the Briefing\'s reminder tile tap (onPressReminderTile), gated on a live topReminder and building a fresh atomic open request',
+    /onPressReminderTile=\{\(\) => \{[\s\S]{0,700}if \(!topReminder\) return;[\s\S]{0,300}reminderOpenRequestIdRef\.current \+= 1;[\s\S]{0,300}setReminderOpenRequest\(createReminderOpenRequest\(reminderOpenRequestIdRef\.current, topReminder\)\);/.test(
+      TODAY_SCREEN_SRC
+    )
+  );
+  // WHY STALE: this round added a required `today` prop (so
+  // ReminderDetailSheet's Done-tap handler can compute the next eligible
+  // reminder from the latest committed data — see this round's final
+  // report §5), which made the mount multi-line — and the Reminder-opening
+  // correction round replaced `visible`/`topReminder`/`onClose` with the
+  // single `openRequest` prop (the confirmed fix for the blank-sheet
+  // defect: no more externally-tracked visibility boolean to race the
+  // reducer).
+  assert(
+    'TodayScreen.tsx mounts ReminderDetailSheet with the atomic openRequest and today props',
+    /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\} \/>/.test(TODAY_SCREEN_SRC)
+  );
 }
 
 console.log('\n=== Section 5: all tile destinations remain authoritative — same handlers as Pass 2A (Structural) ===');

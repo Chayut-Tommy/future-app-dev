@@ -2,7 +2,12 @@ import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, use
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { isLatestBnplRepaymentTransaction, useAppState } from '../../state/AppStateContext';
+import {
+  isLatestBnplRepaymentTransaction,
+  isLatestLoanRepaymentTransaction,
+  isLatestRecurringOccurrenceTransaction,
+  useAppState,
+} from '../../state/AppStateContext';
 import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
@@ -111,6 +116,44 @@ function isBnplRepaymentTransaction(data: AppData, t: Transaction): boolean {
   return liability?.type === 'bnpl';
 }
 
+// Final Pass 2D device-test correction — the mortgage/personal-loan/
+// car-loan sibling of isBnplRepaymentTransaction, same predicate shape,
+// disambiguated by the linked liability's own type (never a separate flag
+// on the transaction — recurringOccurrenceKey's format is shared by both).
+const LOAN_REPAYMENT_LIABILITY_TYPES = ['mortgage', 'car_loan', 'personal_loan', 'other'];
+function isLoanRepaymentTransaction(data: AppData, t: Transaction): boolean {
+  if (!t.recurringItemId || !t.recurringOccurrenceKey) return false;
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  if (!item || !item.linkedLiabilityId) return false;
+  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+  return !!liability && LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type);
+}
+
+// Final Pass 2D device-test correction — a confirmed credit-card repayment
+// (isRepayment + creditCardId) never goes through the generic single-target
+// describeReversalTarget/deleteTransaction path either, for the exact same
+// reason a BNPL repayment doesn't: that path only reverses the transaction's
+// own appliedBalanceEffect (the funding side), never the second, card-side
+// effect confirmCreditCardRepaymentTransition also applied — silently
+// leaving the card's balance under-stated by the repayment amount forever.
+// No "latest only" restriction (mirrors reverseCreditCardRepaymentTransaction's
+// own contract): each credit-card repayment is an independent event.
+function isCreditCardRepaymentTransaction(t: Transaction): boolean {
+  return !!t.isRepayment && !!t.creditCardId;
+}
+
+// 2D-NARROW correction — an ordinary occurrence-tracked bill transaction:
+// recurringOccurrenceKey is stamped (so its Reminder occurrence can be
+// restored on reversal), but it is deliberately NOT BNPL or a mortgage/
+// personal-loan/car-loan repayment — both of those always have a linked
+// liability and are always caught by the two predicates above first. This
+// only matches ordinary confirmed bills, which never do.
+function isOrdinaryOccurrenceBillTransaction(data: AppData, t: Transaction): boolean {
+  if (!t.recurringItemId || !t.recurringOccurrenceKey) return false;
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  return !!item && !item.linkedLiabilityId;
+}
+
 // The base chip text before any disambiguation suffix — label, optional
 // provider, and balance. Two accounts only ever produce the identical
 // string here when their name, provider (including both blank), AND
@@ -183,7 +226,16 @@ export const QuickAddModal = forwardRef<
   { visible, onClose, editTransaction, initialType, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
   ref
 ) {
-  const { data, addTransaction, updateTransaction, deleteTransaction, reverseBnplRepayment } = useAppState();
+  const {
+    data,
+    addTransaction,
+    updateTransaction,
+    deleteTransaction,
+    reverseBnplRepayment,
+    reverseCreditCardRepayment,
+    reverseLoanRepayment,
+    reverseRecurringOccurrence,
+  } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [type, setType] = useState<'income' | 'expense'>('expense');
   const [amount, setAmount] = useState('');
@@ -544,6 +596,120 @@ export const QuickAddModal = forwardRef<
               const result = reverseBnplRepayment(editTransaction.id);
               if (!result.applied) {
                 Alert.alert('Could not reverse this repayment', "This repayment can no longer be safely reversed. You can still delete the record only, or update the BNPL plan if its recorded balance is incorrect.");
+                return;
+              }
+              onClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
+    // Final Pass 2D device-test correction — a confirmed credit-card
+    // repayment routes through its own dedicated atomic reversal for the
+    // same reason BNPL does above (see isCreditCardRepaymentTransaction's
+    // own doc comment for the exact defect this closes: the generic path
+    // silently under-states the card's balance on delete&reverse). No
+    // "latest only" restriction — each repayment is independent.
+    if (isCreditCardRepaymentTransaction(editTransaction)) {
+      Alert.alert(
+        'Delete this repayment?',
+        'This repayment updated both your payment source and card balance. Deleting it will reverse both — your payment source will go back up and what you owe on the card will go back up by the same amount.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          {
+            text: 'Delete & reverse',
+            style: 'destructive',
+            onPress: () => {
+              const result = reverseCreditCardRepayment(editTransaction.id);
+              if (!result.applied) {
+                Alert.alert('Could not reverse this repayment', 'This repayment could no longer be safely reversed. You can still delete the record only.');
+                return;
+              }
+              onClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
+    // Final Pass 2D device-test correction — a confirmed mortgage/personal-
+    // loan/car-loan repayment mirrors the BNPL branch above exactly,
+    // including the same "only the latest is safe to fully reverse"
+    // restriction and reasoning (see reverseLoanRepaymentTransaction's own
+    // doc comment).
+    if (isLoanRepaymentTransaction(data, editTransaction)) {
+      const isLatest = isLatestLoanRepaymentTransaction(data, editTransaction.id);
+      if (!isLatest) {
+        Alert.alert(
+          'Delete transaction?',
+          "Only the most recent repayment on this loan can be undone. Deleting this one will remove it from Transaction History, but won't change your recorded loan balance or payment source — update the loan's recorded balance directly if it's incorrect.",
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          ]
+        );
+        return;
+      }
+      const reversesBalance = typeof editTransaction.principalAmount === 'number' && editTransaction.principalAmount > 0;
+      Alert.alert(
+        'Delete this repayment?',
+        reversesBalance
+          ? 'This repayment updated both your payment source and recorded loan balance. Deleting it will reverse both — your payment source will go back up and your recorded loan balance will go back up by the same principal amount.'
+          : 'This repayment updated your payment source (your recorded loan balance was not changed by it). Deleting it will reverse your payment source.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          {
+            text: 'Delete & reverse',
+            style: 'destructive',
+            onPress: () => {
+              const result = reverseLoanRepayment(editTransaction.id);
+              if (!result.applied) {
+                Alert.alert('Could not reverse this repayment', 'This repayment can no longer be safely reversed. You can still delete the record only.');
+                return;
+              }
+              onClose();
+            },
+          },
+        ]
+      );
+      return;
+    }
+    // 2D-NARROW correction, Gate 3 — an ordinary occurrence-tracked bill
+    // mirrors the BNPL/loan branches above: only the latest confirmed
+    // occurrence on its RecurringItem is safe to fully reverse (an earlier
+    // one's due occurrence can't be reconstructed once a later occurrence
+    // has already moved nextDueDate forward). "Delete record only" stays
+    // safe and available regardless — it never touches a balance or the
+    // Reminder, so it can never desynchronise anything.
+    if (isOrdinaryOccurrenceBillTransaction(data, editTransaction)) {
+      const isLatest = isLatestRecurringOccurrenceTransaction(data, editTransaction.id);
+      if (!isLatest) {
+        Alert.alert(
+          'Delete transaction?',
+          "Only the most recent occurrence of this bill can be undone. Deleting this one will remove it from Transaction History, but won't change your payment source or restore its Reminder.",
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          ]
+        );
+        return;
+      }
+      Alert.alert(
+        'Delete this payment?',
+        'This payment updated your payment source and completed a bill Reminder. Deleting it will reverse both — your payment source will go back up and the Reminder will return to due.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          {
+            text: 'Delete & reverse',
+            style: 'destructive',
+            onPress: () => {
+              const result = reverseRecurringOccurrence(editTransaction.id);
+              if (!result.applied) {
+                Alert.alert('Could not reverse this payment', 'This payment could no longer be safely reversed. You can still delete the record only.');
                 return;
               }
               onClose();

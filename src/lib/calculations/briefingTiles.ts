@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeToSpendPresentation } from './safeToSpendPresentation';
 import { SmartReminder, SmartReminderKind } from './reminders';
 import { TodayBriefingEventRow } from './todayBriefing';
+import { creditCardDueTileValue } from './creditHealth';
 
 /**
  * Pass 2B correction §2/§3 — the Today Briefing's compact tile
@@ -56,6 +57,7 @@ const REMINDER_ICON: Record<SmartReminderKind, keyof typeof Ionicons.glyphMap> =
   bill_due_soon: 'calendar-outline',
   card_due_soon: 'card-outline',
   bnpl_repayment_due: 'bag-handle-outline',
+  loan_repayment_due: 'home-outline',
 };
 
 /** A short, fixed category word per reminder kind — never "overdue"
@@ -63,9 +65,20 @@ const REMINDER_ICON: Record<SmartReminderKind, keyof typeof Ionicons.glyphMap> =
  * exactly today (reminders.ts's own dueTodayBill branch deliberately
  * reuses kind: 'bill_overdue' but with "It's due today." body text, never
  * "late" wording — see that file's own comment on why "overdue" would be
- * inaccurate there). "due" is accurate for both. */
-function reminderTileStatus(kind: SmartReminderKind): string {
-  switch (kind) {
+ * inaccurate there). "due" is accurate for both.
+ *
+ * Reminder/credit-card wording correction round, Defect D — card_due_soon
+ * no longer returns a static "Card due soon" regardless of day count; it
+ * reads the reminder's own `creditCardDue` field (computed once by
+ * reminders.ts's cardDue branch, where `today` is already in scope) and
+ * formats it via creditHealth.ts's single shared, day-count-aware
+ * presentation helper — the same source of truth used by the Reminder
+ * detail's own heading, so the two surfaces can never disagree. Falls back
+ * to the previous static wording only in the defensive case where
+ * `creditCardDue` is absent (never expected from the current selector, but
+ * this keeps the function total rather than throwing). */
+function reminderTileStatus(reminder: SmartReminder): string {
+  switch (reminder.kind) {
     case 'salary_check':
       return 'Income check';
     case 'bill_overdue':
@@ -73,8 +86,10 @@ function reminderTileStatus(kind: SmartReminderKind): string {
     case 'bill_due_soon':
       return 'Bill due soon';
     case 'card_due_soon':
-      return 'Card due soon';
+      return reminder.creditCardDue ? creditCardDueTileValue(reminder.creditCardDue) : 'Card due soon';
     case 'bnpl_repayment_due':
+      return 'Repayment due';
+    case 'loan_repayment_due':
       return 'Repayment due';
   }
 }
@@ -85,14 +100,22 @@ function reminderTileStatus(kind: SmartReminderKind): string {
  * already draws (overdue/due-today checked ahead of the soon/upcoming
  * kinds) — not a new urgency rule, a short label for an existing one. */
 function reminderTileTone(kind: SmartReminderKind): BriefingTileTone {
-  return kind === 'bill_overdue' || kind === 'bnpl_repayment_due' ? 'attention' : 'normal';
+  return kind === 'bill_overdue' || kind === 'bnpl_repayment_due' || kind === 'loan_repayment_due' ? 'attention' : 'normal';
 }
 
+// Reminder/credit-card wording correction round, Defect C — the independent
+// Next-event tile (distinct from the Reminder tile above) previously showed
+// the ambiguous generic "Card" for a credit-card repayment event ("a debit
+// card cannot be due"). Now says "Credit card" — this is the ONLY entry
+// changed; every other event kind's label, and every other legitimate use
+// of the word "card" elsewhere in the app (Navilo Cards, Review card,
+// customer card names), is untouched. Accessibility copy (eventTile, below)
+// derives from this same `value`, so it follows automatically.
 const EVENT_KIND_LABEL: Record<TodayBriefingEventRow['kind'], string> = {
   income: 'Income',
   bill: 'Bill',
   mortgage: 'Mortgage',
-  credit_card: 'Card',
+  credit_card: 'Credit card',
   savings: 'Savings',
   goal: 'Goal',
   bnpl: 'Repayment',
@@ -106,7 +129,14 @@ function relativeDayLabel(daysUntil: number): string {
 }
 
 function aupTile(presentation: SafeToSpendPresentation): BriefingTile {
-  const value = presentation.amountVisible && presentation.displayAmount ? presentation.displayAmount : presentation.primaryCopy;
+  // Final Pass 2D device-test correction — falls back to the short,
+  // state-specific compactSummary (a few words, same register as the
+  // Reminder/Next tiles' own fixed category words), never the full
+  // primaryCopy sentence, which is what previously rendered at
+  // near-illegible auto-shrunk size in this same slot (the confirmed
+  // device-test defect). primaryCopy itself is unchanged and still used
+  // verbatim by SafeToSpendHero.tsx's own full-size card.
+  const value = presentation.amountVisible && presentation.displayAmount ? presentation.displayAmount : presentation.compactSummary;
   return {
     key: 'aup',
     kind: 'aup',
@@ -122,7 +152,7 @@ function aupTile(presentation: SafeToSpendPresentation): BriefingTile {
 function reminderTile(reminder: SmartReminder): BriefingTile {
   const tone = reminderTileTone(reminder.kind);
   const supportingLine = tone === 'attention' ? 'Action needed' : 'Tap to review';
-  const status = reminderTileStatus(reminder.kind);
+  const status = reminderTileStatus(reminder);
   return {
     key: `reminder-${reminder.id}`,
     kind: 'reminder',

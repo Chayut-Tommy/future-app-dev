@@ -36,6 +36,7 @@ export function KeyboardSheet({
   minSheetHeight,
   onRequestDismiss,
   fixedSheetHeight,
+  headerRight,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -84,6 +85,18 @@ export function KeyboardSheet({
    * internal screen change, avoiding a visible height jump when content is
    * swapped without a fresh Modal presentation. */
   minSheetHeight?: number;
+  /** Mortgage-repayment keyboard/dismissal correction — an optional control
+   * (typically a 44×44pt header Close button) rendered alongside `title`,
+   * OUTSIDE the scrollable content area, so it stays visible even while the
+   * keyboard is open and the content below it is scrolled. Every existing
+   * caller omits this and keeps today's title-only header byte-for-byte:
+   * `title` still renders as the sole content of the header row, at full
+   * width, exactly as it did as a lone Text node. A caller needing a
+   * permanently-reachable escape beyond the footer's own Cancel (e.g. a
+   * form whose Cancel/Save footer can still be scrolled past a tall
+   * keyboard-open content area on some viewports) supplies this instead of
+   * inventing a second, parallel dismiss mechanism. */
+  headerRight?: React.ReactNode;
   /** Host-delegated dismiss decision (correction pass, Defect 1 fix) — when
    * supplied, this component hands the ENTIRE dismiss decision to the host
    * instead of using its own isDirty/discardTitle/discardMessage-driven
@@ -309,10 +322,16 @@ export function KeyboardSheet({
           backgroundColor: colors.borderStrong,
           marginBottom: spacing.md,
         },
+        titleRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: spacing.md,
+        },
         title: {
           ...typography.heading,
           color: colors.textPrimary,
-          marginBottom: spacing.md,
+          flex: 1,
         },
         scrollArea: {
           flexGrow: 0,
@@ -345,7 +364,10 @@ export function KeyboardSheet({
           {...panResponder.panHandlers}
         >
           <View style={styles.grabber} />
-          <Text style={styles.title}>{title}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{title}</Text>
+            {headerRight}
+          </View>
           {fixedSheetHeight !== undefined ? (
             <View style={styles.fixedContentArea}>{children}</View>
           ) : (

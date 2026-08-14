@@ -140,8 +140,14 @@ console.log('\n=== 2. PaymentSource call-site audit (Structural, tied to shipped
     /paymentSource === 'cash' \|\| t\.paymentSource === undefined \|\| t\.paymentSource === 'everyday'/.test(MONTHLY_SUMMARY_SRC)
   );
   assert(
+    // 2D-NARROW correction — the filter itself (still credit_card only) is
+    // unchanged; only its formatting (now multi-line, and summing via the
+    // shared resolveTransactionCashflowAmount resolver instead of raw
+    // `t.amount`) changed as part of reverting the prior round's incorrect
+    // blanket recurringItemId exclusion. See monthlySummary.ts's own
+    // computeMonthToDateActivity doc comment for the full contract.
     '2b. computeMonthToDateActivity.creditCardSpend is unchanged (still credit_card only — everyday must never appear here)',
-    /const creditCardSpend = monthExpenses\.filter\(\(t\) => t\.paymentSource === 'credit_card'\)/.test(MONTHLY_SUMMARY_SRC)
+    /const creditCardSpend = monthExpenses\s*\n\s*\.filter\(\(t\) => t\.paymentSource === 'credit_card'\)/.test(MONTHLY_SUMMARY_SRC)
   );
   assert(
     "2c. computeMonthToDateActivity.otherSpend is unchanged (still loan/other only — everyday must never appear as 'Other funding')",
@@ -157,7 +163,7 @@ console.log('\n=== 2. PaymentSource call-site audit (Structural, tied to shipped
     // reconstructed inside the card component. The factual "Cash" label
     // itself now lives where the attribution actually happens.
     '2d. The Cash bucket\'s customer-facing label ("Cash") is attributed once, in computeThisMonthRecordedSummary itself — not reconstructed or duplicated inside ThisMonthCard.tsx',
-    /addToBucket\('cash', 'cash', 'Cash', validated\.cents\);/.test(MONTHLY_SUMMARY_SRC) && !/'Paid from money balances'/.test(THIS_MONTH_CARD_SRC)
+    /addToBucket\('cash', 'cash', 'Cash', resolvedCents\);/.test(MONTHLY_SUMMARY_SRC) && !/'Paid from money balances'/.test(THIS_MONTH_CARD_SRC)
   );
   assert(
     // The "derive, don't independently round" invariant this assertion
@@ -174,15 +180,39 @@ console.log('\n=== 2. PaymentSource call-site audit (Structural, tied to shipped
     "2f. safeToSpend.ts cashVariableSpendSoFar now also counts 'everyday' spend against a currently-included, currently-existing target account",
     /if \(t\.paymentSource === 'everyday' && t\.targetAssetId\) \{/.test(SAFE_TO_SPEND_SRC)
   );
+  // Device-test correction round — deliberately reversed. The prior
+  // assertion locked in a real double-counting defect: variableSpendSoFar
+  // (feeding remainingPool, Money screen's "available" figure, and Navilo
+  // Score's Spending Control factor) counted a CONFIRMED recurring bill's
+  // transaction on top of that same bill's cost already being baked into
+  // discretionaryPool via fixedCosts — the same dollar subtracted twice.
+  // The fix adds the exact same `!t.recurringItemId` exclusion
+  // monthlySummary.ts's loggedExpenses already used (that file's own
+  // comment explains the reasoning first), plus `!t.isRepayment` for the
+  // new credit-card repayment transaction shape (no RecurringItem to
+  // carry recurringItemId). This is a strengthened assertion, not a
+  // weakened one: paymentSource-based counting (the thing 2g originally
+  // protected — an 'everyday' expense still counts toward spend-so-far
+  // exactly like 'cash') is UNCHANGED; only the additional double-count
+  // exclusion is new.
   assert(
-    "2g. safeToSpend.ts's variableSpendSoFar / spendSoFarThisCycle (total activity, Navilo Score's Spending Control) is unfiltered by paymentSource — already counted 'everyday' correctly before this pass, untouched",
-    /const variableSpendSoFar = data\.transactions\s*\n\s*\.filter\(\s*\n\s*\(t\) => t\.type === 'expense' && new Date\(t\.date\) >= cycleStart && new Date\(t\.date\) <= today\s*\n\s*\)/.test(
+    "2g. safeToSpend.ts's variableSpendSoFar counts every payment source (including 'everyday') exactly as before, but now excludes recurringItemId-linked bill confirmations AND isRepayment credit-card repayments — both already counted via a fixed-cost RATE elsewhere in the same formula, so confirming either no longer double-subtracts",
+    /const variableSpendSoFar = data\.transactions\s*\n\s*\.filter\(\s*\n\s*\(t\) => t\.type === 'expense' && !t\.recurringItemId && !t\.isRepayment && new Date\(t\.date\) >= cycleStart && new Date\(t\.date\) <= today\s*\n\s*\)/.test(
       SAFE_TO_SPEND_SRC
     )
   );
+  // Device-test correction round — deliberately reversed. The prior
+  // assertion locked in a real, reported gap (an ordinary bill could only
+  // ever be confirmed from Cash or a credit card — a device test found no
+  // way to pay from an Everyday Account at all, unlike BNPL's own already-
+  // wider flow). runConfirmation's paymentSource parameter is now the
+  // same 'cash' | 'credit_card' | 'everyday' union confirmBnplRepayment
+  // already used — this is a strengthened assertion (proving the widening
+  // happened, matching BillPaymentSourcePicker's own real options), not a
+  // weakened one.
   assert(
-    "2h. SmartReminderCard.tsx (recurring bill/salary confirmation) narrows its own paymentSource parameter to exactly 'cash' | 'credit_card' — a confirmed recurring transaction can never be routed to 'everyday', unaffected by the paymentSource enum change",
-    /function runConfirmation\(paymentSource\?: 'cash' \| 'credit_card'\)/.test(SMART_REMINDER_SRC)
+    "2h. SmartReminderCard.tsx's runConfirmation now accepts 'cash' | 'credit_card' | 'everyday' (widened from cash/credit-card-only) so an ordinary bill can be paid from any eligible account BillPaymentSourcePicker offers — mirrors confirmBnplRepayment's own established paymentSource union",
+    /function runConfirmation\(paymentSource\?: 'cash' \| 'credit_card' \| 'everyday', targetAssetId\?: string, creditCardId\?: string\)/.test(SMART_REMINDER_SRC)
   );
   assert(
     // Correction round, 2026-08-10 — deliberately reversed. The prior

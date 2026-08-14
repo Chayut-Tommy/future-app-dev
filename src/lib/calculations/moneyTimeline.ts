@@ -4,6 +4,7 @@ import { computeSafeToSpend, cycleLengthDays } from './safeToSpend';
 import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { recurringOccurrencesInRange } from './recurringSchedule';
 import { projectBnplOccurrences } from './bnpl';
+import { isCardOccurrenceHandled } from './reminders';
 
 export type TimelineEventKind = 'income' | 'bill' | 'mortgage' | 'credit_card' | 'savings' | 'goal' | 'bnpl';
 
@@ -181,6 +182,19 @@ export function computeMoneyTimeline(data: AppData, today: Date = new Date(), ho
     const daysUntil = daysUntilDue(card.dueDay, today);
     if (daysUntil > horizonDays) continue;
     const dueDate = new Date(today.getTime() + daysUntil * 86400000);
+    // Final Pass 2D device-test correction, item 8 (canonical helper, §6
+    // round) — calls the SAME isCardOccurrenceHandled helper
+    // computeTopReminder's own cardDue branch calls (reminders.ts): a card
+    // whose CURRENT due occurrence was already marked handled via a
+    // Reminder-initiated repayment must not resurface as an independent
+    // Briefing/timeline event either. Previously this was a second,
+    // independently-written date-comparison expression duplicating the
+    // Reminder side's own check — now both layers call one shared, single-
+    // sourced function, so they can never silently diverge. Scoped to THIS
+    // occurrence only — next month's recomputed dueDate has a different
+    // date-key and reappears with no extra logic, exactly like the
+    // Reminder side.
+    if (isCardOccurrenceHandled(card, dueDate)) continue;
     events.push({
       id: `card-${card.id}`,
       date: dueDate,

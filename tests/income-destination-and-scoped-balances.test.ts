@@ -1303,9 +1303,27 @@ console.log('\n=== Section 16: no-eligible-destination recovery journey (structu
     !/onAddBalance=\{\(\) => navigation\.navigate\('Wealth'\)\}/.test(SMART_REMINDER_SRC)
   );
   assert(
-    'SmartReminderCard.tsx: addBalanceVisible resets whenever the displayed reminder identity changes and on dismiss() — never lingers open for a different/dismissed reminder',
+    // Final Pass 2D device-test correction (native-Modal-lifecycle round)
+    // — dismiss()'s trailing onSettled?.() call (added by an earlier round,
+    // see the prior comment this replaces) itself changed shape again this
+    // round: dismiss(latestData?: AppData) now accepts and forwards an
+    // optional freshest-data override (onSettled?.(latestData ?? data)) —
+    // required so ReminderDetailSheet's SETTLED transition always uses the
+    // LATEST committed data, never a stale render closure (this round's
+    // final report §5). The exact same addBalanceVisible/actionError
+    // resets this assertion has always verified are unchanged and still
+    // fully proven here; only the trailing call's own signature grew an
+    // argument.
+    // Reminder queue correction round — dismiss()/onSettled were replaced by
+    // resetLocalUiState() (shared cleanup) plus discriminated outcome
+    // reporters (deferReminder/acknowledgeReminder/reportCompleted/
+    // reportAlreadyResolved), each calling resetLocalUiState() before
+    // reporting via onOutcome — same net effect (addBalanceVisible reset on
+    // every genuine action), new mechanism.
+    'SmartReminderCard.tsx: addBalanceVisible resets whenever the displayed reminder identity changes and on every outcome-reporting action — never lingers open for a different/dismissed reminder',
     /setAwaitingIncomeDestination\(false\);\s*\n\s*setAddBalanceVisible\(false\);\s*\n\s*\}, \[reminder\?\.id\]\);/.test(SMART_REMINDER_SRC) &&
-      /setAwaitingIncomeDestination\(false\);\s*\n\s*setAddBalanceVisible\(false\);\s*\n\s*setActionError\(null\);\s*\n\s*\}/.test(SMART_REMINDER_SRC)
+      /function resetLocalUiState\(\) \{[\s\S]{0,300}?setAddBalanceVisible\(false\);[\s\S]{0,100}?setActionError\(null\);\s*\n\s*\}/.test(SMART_REMINDER_SRC) &&
+      /function deferReminder\(\)[\s\S]{0,200}?resetLocalUiState\(\);[\s\S]{0,100}?onOutcome\?\.\(\{ kind: 'deferred'/.test(SMART_REMINDER_SRC)
   );
 
   // AddWealthItemModal's own onlyLiquidCategories implementation, real

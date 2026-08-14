@@ -35,6 +35,111 @@ export function dueDateStatus(days: number): { tone: Tone; label: string } {
   return { tone: 'neutral', label: `Due in ${days} days` };
 }
 
+/**
+ * Reminder/credit-card wording correction round — the single, canonical,
+ * local-calendar-day-safe presentation for a credit card's due date, used
+ * by every surface that needs "due today"/"due tomorrow"/"due in N days"/
+ * "date passed" wording (the Briefing Reminder tile, ReminderDetailSheet's
+ * own card_due_soon copy, and CardsScreen's own badge — see this round's
+ * final report §8 for the confirmed defect this replaces: the Cards screen
+ * already correctly said "Due today" via `dueDateStatus` above, while
+ * reminders.ts's own card_due_soon branch independently wrote
+ * `Payment due ${shortDate(...)}.` with no "today"/"tomorrow" awareness at
+ * all, and briefingTiles.ts's own reminder tile showed a hard-coded
+ * "Card due soon" string regardless of the actual day count).
+ *
+ * Deliberately accepts `daysUntil` as a signed integer computed by the
+ * CALLER (never recomputed here, and never itself calling `daysUntilDue`)
+ * so this function stays a pure presentation mapping, reusable by any
+ * caller with its own already-computed day-count — including one with a
+ * genuinely negative value (a due date already in the past). Under the
+ * CURRENT `card_due_soon` selector (reminders.ts), `daysUntilDue` itself
+ * always rolls forward to the next upcoming occurrence and therefore never
+ * produces a negative day-count — so `'passed'` is not reachable from
+ * today's actual Reminder selector. This function still implements it
+ * (per this round's explicit requirement to support it "at minimum"),
+ * documented here as an honest distinction between what this pure function
+ * CAN classify and what the current caller actually ever feeds it —
+ * verified by direct source read, not assumed.
+ */
+export type CreditCardDuePresentationState = 'passed' | 'today' | 'tomorrow' | 'soon' | 'invalid';
+
+export interface CreditCardDuePresentation {
+  state: CreditCardDuePresentationState;
+  /** The exact signed day-count this was classified from — NaN when
+   * state === 'invalid'. */
+  daysUntil: number;
+  /** The exact due Date this presentation describes — null when
+   * state === 'invalid'. */
+  dueDate: Date | null;
+}
+
+function shortCalendarDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+export function computeCreditCardDuePresentation(daysUntil: number, dueDate: Date | null): CreditCardDuePresentation {
+  if (dueDate === null || !Number.isFinite(daysUntil)) return { state: 'invalid', daysUntil: NaN, dueDate: null };
+  if (daysUntil < 0) return { state: 'passed', daysUntil, dueDate };
+  if (daysUntil === 0) return { state: 'today', daysUntil, dueDate };
+  if (daysUntil === 1) return { state: 'tomorrow', daysUntil, dueDate };
+  return { state: 'soon', daysUntil, dueDate };
+}
+
+/**
+ * The Briefing Reminder tile's own short value for a card_due_soon
+ * reminder — e.g. "Credit card due today". Never the generic "Card" word
+ * alone (that word is reserved for the independent Next-event tile fix,
+ * briefingTiles.ts's own EVENT_KIND_LABEL — a different, unrelated tile).
+ */
+export function creditCardDueTileValue(presentation: CreditCardDuePresentation): string {
+  switch (presentation.state) {
+    case 'passed':
+      return 'Credit card payment date passed';
+    case 'today':
+      return 'Credit card due today';
+    case 'tomorrow':
+      return 'Credit card due tomorrow';
+    case 'soon':
+      return `Credit card due in ${presentation.daysUntil} days`;
+    case 'invalid':
+      return 'Credit card payment coming up';
+  }
+}
+
+/** The Reminder detail's own heading + factual due-date body line for a
+ * card_due_soon reminder. `cardLabel` is the customer's own card name
+ * (e.g. "Cba"), never a generic placeholder. */
+export function creditCardDuePresentationCopy(presentation: CreditCardDuePresentation, cardLabel: string): { heading: string; dueLine: string } {
+  switch (presentation.state) {
+    case 'passed':
+      return {
+        heading: `The recorded payment date for ${cardLabel} has passed`,
+        dueLine: `Recorded due date ${shortCalendarDate(presentation.dueDate!)}.`,
+      };
+    case 'today':
+      return {
+        heading: `Your ${cardLabel} payment is due today`,
+        dueLine: `Payment due today · ${shortCalendarDate(presentation.dueDate!)}.`,
+      };
+    case 'tomorrow':
+      return {
+        heading: `Your ${cardLabel} payment is due tomorrow`,
+        dueLine: `Payment due tomorrow · ${shortCalendarDate(presentation.dueDate!)}.`,
+      };
+    case 'soon':
+      return {
+        heading: `Your ${cardLabel} payment is coming up`,
+        dueLine: `Payment due ${shortCalendarDate(presentation.dueDate!)}.`,
+      };
+    case 'invalid':
+      return {
+        heading: `Your ${cardLabel} payment is coming up`,
+        dueLine: 'No valid due date is currently recorded.',
+      };
+  }
+}
+
 export interface CreditAggregate {
   totalLimit: number;
   totalUsed: number;

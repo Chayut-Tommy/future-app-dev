@@ -433,7 +433,15 @@ export type ConfirmRecurringOccurrenceResult =
   | { applied: true; data: AppData }
   | {
       applied: false;
-      reason: 'not_found' | 'stale' | 'invalid_date' | 'invalid_amount' | 'invalid_input' | 'invalid_source' | 'balance_target_missing';
+      reason:
+        | 'not_found'
+        | 'stale'
+        | 'invalid_date'
+        | 'invalid_amount'
+        | 'invalid_input'
+        | 'invalid_source'
+        | 'balance_target_missing'
+        | 'insufficient_source_balance';
     };
 
 /** B2.0C — the context action's return shape, separate from the pure
@@ -450,6 +458,16 @@ export type ConfirmRecurringOccurrenceResult =
 export type ConfirmationCommitResult = {
   transition: ConfirmRecurringOccurrenceResult;
   persistence: Promise<void>;
+  /** Reminder queue correction round — additive field mirroring
+   * confirmLoanRepayment/confirmCreditCardRepayment's own established
+   * `transactionId` contract, so SmartReminderCard's mutation-success paths
+   * can report a `ReminderReviewOutcome` of kind 'completed' carrying the
+   * real id (never a synthesized one). The transactionId this file already
+   * generates internally for every confirmation attempt (see
+   * confirmRecurringOccurrence's own comment) — present even when the
+   * transition did not apply, since it's generated before the transition
+   * runs; callers should only rely on it when `transition.applied` is true. */
+  transactionId: string;
 };
 
 /** Days in `month` (1-12) of `year`, via Date.UTC so it never depends on the
@@ -548,13 +566,26 @@ export function confirmRecurringOccurrenceTransition(
     recurringItemId: string;
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
-    /** Income only — correction round, 2026-08-10. The specific Cash/
+    /** Two independent uses, matching Transaction.targetAssetId's own
+     * doc comment exactly:
+     * (1) Income only — correction round, 2026-08-10. The specific Cash/
      * Everyday/Savings asset this confirmed income is credited to, chosen
      * explicitly by the user via the shared IncomeDestinationPicker (never
-     * a caller-side default). `paymentSource` remains the expense-only
-     * concept it always was; this is deliberately a separate field, not an
-     * overload, so the two never get confused. */
+     * a caller-side default).
+     * (2) Expense with paymentSource === 'everyday' only (device-test
+     * correction round) — the specific Everyday Account this bill payment
+     * debits, chosen via the shared BillPaymentSourcePicker. Required
+     * whenever paymentSource is 'everyday', exactly like creditCardId is
+     * required for 'credit_card'. */
     targetAssetId?: string;
+    /** Expense with paymentSource === 'credit_card' only (device-test
+     * correction round) — the specific card this bill is charged to,
+     * chosen explicitly via BillPaymentSourcePicker. Previously this
+     * transition silently used `data.creditCards[0]` regardless of which
+     * card (if any) the user actually has multiple of — a real defect a
+     * device test surfaced. Required whenever paymentSource is
+     * 'credit_card'; never defaulted. */
+    creditCardId?: string;
     transactionId: string;
     date: string;
   }
@@ -584,17 +615,59 @@ export function confirmRecurringOccurrenceTransition(
   if (!validatedAmount.valid) return { applied: false, reason: 'invalid_amount' };
 
   if (item.type === 'income' && input.paymentSource !== undefined) return { applied: false, reason: 'invalid_input' };
-  if (item.type === 'expense' && input.paymentSource !== 'cash' && input.paymentSource !== 'credit_card') {
+  if (
+    item.type === 'expense' &&
+    input.paymentSource !== 'cash' &&
+    input.paymentSource !== 'credit_card' &&
+    input.paymentSource !== 'everyday'
+  ) {
     return { applied: false, reason: 'invalid_source' };
   }
 
   let creditCardId: string | undefined;
-  if (item.type === 'expense' && input.paymentSource === 'cash' && !data.assets.some((a) => a.type === 'cash')) {
-    return { applied: false, reason: 'balance_target_missing' };
+  let expenseTargetAssetId: string | undefined;
+  // Final narrow Pass 2D correction — a Cash/Everyday funding source must
+  // have ENOUGH recorded balance to cover the bill in full before this
+  // transition ever applies, mirroring the same sufficiency check
+  // confirmBnplRepaymentTransition / confirmCreditCardRepaymentTransition /
+  // confirmLoanRepaymentTransition already established (reused here, not
+  // reinvented). Previously this branch only checked that a Cash asset
+  // EXISTED, never that it held enough — applyEffectDelta's own floor-at-0
+  // would then silently absorb the shortfall, leaving the recorded
+  // transaction amount (the full bill) disagreeing with what actually left
+  // the account. A named credit card is a LIABILITY source, not a balance
+  // that floors, so this check is deliberately scoped to cash/everyday
+  // only — see the 'credit_card' branch below, unchanged.
+  if (item.type === 'expense' && input.paymentSource === 'cash') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return { applied: false, reason: 'balance_target_missing' };
+    const cashCents = toBalanceCentsAllowingZero(cashAsset.currentValue);
+    if (cashCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (cashCents < validatedAmount.cents) return { applied: false, reason: 'insufficient_source_balance' };
   }
+  // Device-test correction round — 'everyday' is now a real bill-payment
+  // source (previously only reachable for BNPL): same routed-spending
+  // contract computeBalanceEffect's own 'everyday' branch already requires
+  // — targetAssetId must identify one specific, currently-existing
+  // Everyday Account, never a default lookup.
+  if (item.type === 'expense' && input.paymentSource === 'everyday') {
+    const account = data.assets.find((a) => a.id === input.targetAssetId && a.type === 'everyday');
+    if (!account) return { applied: false, reason: 'balance_target_missing' };
+    // Final narrow Pass 2D correction — same sufficiency check as cash
+    // above, reused for the same reason.
+    const accountCents = toBalanceCentsAllowingZero(account.currentValue);
+    if (accountCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (accountCents < validatedAmount.cents) return { applied: false, reason: 'insufficient_source_balance' };
+    expenseTargetAssetId = account.id;
+  }
+  // Device-test correction round — creditCardId is now caller-supplied
+  // (via BillPaymentSourcePicker), never `data.creditCards[0]`. A caller
+  // that omits it, or names a card that no longer exists, is rejected the
+  // same way an everyday account with no matching id is.
   if (item.type === 'expense' && input.paymentSource === 'credit_card') {
-    creditCardId = data.creditCards[0]?.id;
-    if (!creditCardId) return { applied: false, reason: 'balance_target_missing' };
+    const card = data.creditCards.find((c) => c.id === input.creditCardId);
+    if (!card) return { applied: false, reason: 'balance_target_missing' };
+    creditCardId = card.id;
   }
 
   // Correction round, 2026-08-10 — income must always name an explicit,
@@ -623,6 +696,17 @@ export function confirmRecurringOccurrenceTransition(
       ? data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === item.label.toLowerCase())?.id ?? 'cat-other-income'
       : 'cat-other-expense';
 
+  // Final narrow Pass 2D correction — an ordinary confirmed EXPENSE
+  // (bill) occurrence now gets the same stable, durable occurrence
+  // identity BNPL/loan repayments already have — reused verbatim, not a
+  // new mechanism (see Transaction.recurringOccurrenceKey's own doc
+  // comment for the shared format/disambiguation contract). This is what
+  // lets a full reversal restore the exact Reminder occurrence it
+  // completed. Deliberately scoped to expense only — income (salary)
+  // confirmation reversal-restoration is unchanged and out of this
+  // round's authorised scope.
+  const occurrenceKey = item.type === 'expense' ? `${item.id}:${item.nextDueDate}` : undefined;
+
   const transactionInput: Omit<Transaction, 'id'> = {
     type: item.type,
     amount: validatedAmount.cents / 100,
@@ -640,8 +724,9 @@ export function confirmRecurringOccurrenceTransition(
     note: item.label,
     paymentSource: input.paymentSource,
     creditCardId,
-    targetAssetId: item.type === 'income' ? input.targetAssetId : undefined,
+    targetAssetId: item.type === 'income' ? input.targetAssetId : expenseTargetAssetId,
     recurringItemId: item.id,
+    recurringOccurrenceKey: occurrenceKey,
     balanceEffect: 'update',
   };
 
@@ -1782,36 +1867,60 @@ export type ReverseBnplRepaymentResult =
  * The exact due-date a transaction's `recurringOccurrenceKey` encodes —
  * sliced by the transaction's own `recurringItemId` prefix length rather
  * than split on ':' (an ISO timestamp's own time portion contains colons).
- * `undefined` for any transaction that isn't a BNPL repayment (no key, or
- * no recurringItemId to derive the prefix length from).
+ * `undefined` for any transaction with no such key, or no recurringItemId
+ * to derive the prefix length from. Shared by BOTH BNPL and loan
+ * (mortgage/personal-loan/car-loan) repayments — final Pass 2D device-test
+ * correction — since `recurringOccurrenceKey`'s format is identical for
+ * both; which one a given transaction is gets disambiguated elsewhere (via
+ * its linked liability's own `type`), never by this helper.
  */
-function bnplOccurrenceDueDate(t: Transaction): string | undefined {
+function occurrenceKeyDueDate(t: Transaction): string | undefined {
   if (!t.recurringOccurrenceKey || !t.recurringItemId) return undefined;
   return t.recurringOccurrenceKey.slice(t.recurringItemId.length + 1);
 }
 
 /**
  * True only when `transactionId` is the chronologically LATEST confirmed
- * BNPL repayment for its plan (compares every sibling transaction sharing
- * the same `recurringItemId` by their own encoded occurrence due-date,
- * never by array/insertion order or by `date` — see
- * reverseBnplRepaymentTransaction's own doc comment for why). Exported so
- * the UI (QuickAddModal's delete confirmation) can decide which dialog
- * variant to show BEFORE calling the reversal — reusing this exact
- * derivation rather than a second, potentially-drifting reimplementation.
- * `false` for anything that isn't a BNPL repayment transaction at all.
+ * repayment sharing its own `recurringItemId` (compares every sibling
+ * transaction with the same `recurringItemId` by their own encoded
+ * occurrence due-date, never by array/insertion order or by `date`) — the
+ * general form both `isLatestBnplRepaymentTransaction` and
+ * `isLatestLoanRepaymentTransaction` delegate to (final Pass 2D device-test
+ * correction; previously BNPL-only, generalised rather than duplicated).
+ * `false` for anything with no `recurringOccurrenceKey` at all.
  */
-export function isLatestBnplRepaymentTransaction(data: AppData, transactionId: string): boolean {
+function isLatestOccurrenceKeyTransaction(data: AppData, transactionId: string): boolean {
   const t = data.transactions.find((x) => x.id === transactionId);
   if (!t) return false;
-  const dueDate = bnplOccurrenceDueDate(t);
+  const dueDate = occurrenceKeyDueDate(t);
   if (!dueDate || !isValidCanonicalDate(dueDate)) return false;
   const siblingDueDates = data.transactions
     .filter((x) => x.recurringItemId === t.recurringItemId && !!x.recurringOccurrenceKey)
-    .map((x) => bnplOccurrenceDueDate(x))
+    .map((x) => occurrenceKeyDueDate(x))
     .filter((d): d is string => !!d);
   const latest = siblingDueDates.reduce((max, key) => (new Date(key).getTime() > new Date(max).getTime() ? key : max), dueDate);
   return new Date(latest).getTime() === new Date(dueDate).getTime();
+}
+
+/**
+ * Exported so the UI (QuickAddModal's delete confirmation) can decide which
+ * dialog variant to show BEFORE calling the reversal — reusing this exact
+ * derivation rather than a second, potentially-drifting reimplementation.
+ * `false` for anything that isn't a BNPL repayment transaction at all (see
+ * `isBnplRepaymentTransaction` in QuickAddModal.tsx for that check).
+ */
+export function isLatestBnplRepaymentTransaction(data: AppData, transactionId: string): boolean {
+  return isLatestOccurrenceKeyTransaction(data, transactionId);
+}
+
+/**
+ * Loan (mortgage/personal-loan/car-loan) sibling of
+ * isLatestBnplRepaymentTransaction — same contract, same shared derivation.
+ * `false` for anything that isn't a loan repayment transaction at all (see
+ * `isLoanRepaymentTransaction` in QuickAddModal.tsx for that check).
+ */
+export function isLatestLoanRepaymentTransaction(data: AppData, transactionId: string): boolean {
+  return isLatestOccurrenceKeyTransaction(data, transactionId);
 }
 
 export function reverseBnplRepaymentTransaction(data: AppData, transactionId: string): ReverseBnplRepaymentResult {
@@ -1824,7 +1933,7 @@ export function reverseBnplRepaymentTransaction(data: AppData, transactionId: st
   const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
   if (!liability || liability.type !== 'bnpl') return { applied: false, reason: 'missing_liability' };
 
-  const restoredDueDate = bnplOccurrenceDueDate(t);
+  const restoredDueDate = occurrenceKeyDueDate(t);
   if (!restoredDueDate || !isValidCanonicalDate(restoredDueDate)) return { applied: false, reason: 'not_a_bnpl_repayment' };
 
   if (!isLatestBnplRepaymentTransaction(data, transactionId)) return { applied: false, reason: 'not_latest' };
@@ -1845,6 +1954,590 @@ export function reverseBnplRepaymentTransaction(data: AppData, transactionId: st
   });
 
   return { applied: true, data: finalData };
+}
+
+export interface ConfirmCreditCardRepaymentInput {
+  creditCardId: string;
+  /** Dollars, strictly positive — validated via moneyAmountToCents, the
+   * same exact-cent validator every other confirmed money amount in this
+   * file uses. Zero, negative, NaN, or more than 2 decimal places are all
+   * rejected as 'invalid_amount', never silently coerced. */
+  amount: number;
+  paymentSource: 'cash' | 'everyday';
+  /** Required when paymentSource === 'everyday' — mirrors
+   * confirmBnplRepaymentTransition's own 'everyday' contract exactly: one
+   * specific, currently-existing Everyday Account, never a default. */
+  targetAssetId?: string;
+  /** Staleness guard, same shape as expectedNextDueDate elsewhere in this
+   * file — the card's currentBalance the caller last observed. A second,
+   * rapid confirmation (double-tap) reads dataRef.current fresh and sees
+   * the first call's already-reduced balance, so this mismatches and the
+   * second call is safely rejected as 'stale' rather than applying twice. */
+  expectedCardBalance: number;
+  /** Final Pass 2D device-test correction — set ONLY by the caller that
+   * initiated this repayment from a specific `card_due_soon` Reminder
+   * occurrence (the reminder's own `occurrenceDate`, truncated to a
+   * `YYYY-MM-DD` date-key). When present, a successful confirmation stamps
+   * `CreditCard.handledReminderOccurrenceDate` with this exact value, and
+   * `Transaction.reminderOccurrenceCompleted` with the same value (so a
+   * later reversal can restore it) — see both fields' own doc comments.
+   * Absent for any repayment recorded without that specific Reminder
+   * context, which never touches occurrence-handled state at all: this is
+   * the whole mechanism that keeps "a repayment entered somewhere other
+   * than the due Reminder" from silently completing an unrelated
+   * occurrence — there is simply nothing to mark handled unless the caller
+   * explicitly names one. */
+  reminderOccurrenceDate?: string;
+  transactionId: string;
+  date: string;
+}
+
+export type ConfirmCreditCardRepaymentResult =
+  | { applied: true; data: AppData }
+  | {
+      applied: false;
+      reason:
+        | 'not_found'
+        | 'stale'
+        | 'invalid_amount'
+        | 'invalid_date'
+        | 'invalid_source'
+        | 'balance_target_missing'
+        | 'insufficient_source_balance'
+        | 'exceeds_balance';
+    };
+
+/**
+ * Atomic credit-card repayment — device-test correction round. "Mark as
+ * paid" previously only opened the generic Edit Credit Card form (a raw,
+ * untracked balance overwrite, no transaction, no source-account effect —
+ * see AddCreditCardModal.tsx). This is the dedicated, transaction-backed
+ * repayment transition CreditCardRepaymentSheet.tsx calls instead: one
+ * committed state change moving money from a real funding account to the
+ * card, symmetric with confirmBnplRepaymentTransition's own two-target
+ * shape (same applyNewTransaction + second applyEffectDelta pattern,
+ * reused, not reinvented).
+ *
+ * Overpayment cap (final Pass 2D device-test correction — supersedes this
+ * function's own original decision, which deliberately allowed an
+ * uncapped overpayment): this dedicated MVP repayment flow must never
+ * create a negative ("in credit") card balance, per an explicit product
+ * decision. `applyEffectDelta`'s 'credit_card' branch itself still never
+ * floors (unchanged — a card CAN legitimately go negative via other,
+ * separately-accepted paths, e.g. the generic Edit Credit Card form), so
+ * this is enforced here, as a pre-validation on `paymentCents` against the
+ * card's own current balance, not by changing the shared effect engine.
+ *
+ * Occurrence-completion (final Pass 2D device-test correction — supersedes
+ * this function's own original scope note, which is now out of date): a
+ * successful repayment initiated from a specific `card_due_soon` Reminder
+ * occurrence (`input.reminderOccurrenceDate` present) marks that exact
+ * occurrence handled on the card (`CreditCard.handledReminderOccurrenceDate`)
+ * and stamps the transaction (`Transaction.reminderOccurrenceCompleted`) so
+ * a later full reversal can restore it — see both fields' own doc
+ * comments. A repayment recorded without that context (the field absent)
+ * never touches occurrence-handled state — see `reminderOccurrenceDate`'s
+ * own doc comment for why this is safe by construction rather than an
+ * unresolved ambiguity. Whether a PARTIAL payment should be treated
+ * differently from a full one for occurrence-completion purposes was
+ * explicitly decided this round: ANY successful repayment initiated from
+ * the Reminder — full or partial — clears that occurrence, because a
+ * partial payment is still a factual, completed action the customer took;
+ * Navilo has no authoritative statement-balance data to judge whether it
+ * was "enough," and the below-minimum warning (UI layer,
+ * CreditCardRepaymentSheet.tsx) is the mechanism for surfacing that
+ * concern before confirmation, not a silent non-completion afterward.
+ */
+export function confirmCreditCardRepaymentTransition(data: AppData, input: ConfirmCreditCardRepaymentInput): ConfirmCreditCardRepaymentResult {
+  const card = data.creditCards.find((c) => c.id === input.creditCardId);
+  if (!card) return { applied: false, reason: 'not_found' };
+  if (card.currentBalance !== input.expectedCardBalance) return { applied: false, reason: 'stale' };
+  if (!isValidISOTimestamp(input.date)) return { applied: false, reason: 'invalid_date' };
+
+  const validatedAmount = moneyAmountToCents(input.amount);
+  if (!validatedAmount.valid) return { applied: false, reason: 'invalid_amount' };
+  const paymentCents = validatedAmount.cents;
+
+  const balanceCents = toBalanceCentsAllowingZero(card.currentBalance);
+  if (balanceCents === undefined) return { applied: false, reason: 'invalid_amount' };
+  if (paymentCents > balanceCents) return { applied: false, reason: 'exceeds_balance' };
+
+  let targetAssetId: string | undefined;
+  if (input.paymentSource === 'cash') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return { applied: false, reason: 'balance_target_missing' };
+    const cashCents = toBalanceCentsAllowingZero(cashAsset.currentValue);
+    if (cashCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (cashCents < paymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+  } else if (input.paymentSource === 'everyday') {
+    if (!input.targetAssetId) return { applied: false, reason: 'invalid_source' };
+    const account = data.assets.find((a) => a.id === input.targetAssetId && a.type === 'everyday');
+    if (!account) return { applied: false, reason: 'balance_target_missing' };
+    const accountCents = toBalanceCentsAllowingZero(account.currentValue);
+    if (accountCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (accountCents < paymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+    targetAssetId = account.id;
+  } else {
+    return { applied: false, reason: 'invalid_source' };
+  }
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const transactionInput: Omit<Transaction, 'id'> = {
+    type: 'expense',
+    amount: paymentCents / 100,
+    // "Debt repayments" — the existing, real category (defaultCategories.ts),
+    // never a fabricated new one; an honest label if this transaction is
+    // ever viewed in Transactions/Spending Insights.
+    categoryId: 'cat-debt',
+    date: input.date,
+    note: `${card.label} repayment`,
+    paymentSource: input.paymentSource,
+    targetAssetId,
+    // The DESTINATION card — see Transaction.creditCardId's own doc
+    // comment for why a repayment reuses this field for the opposite
+    // role a card-funded purchase uses it for (paymentSource distinguishes
+    // the two: 'credit_card' means charged-to, isRepayment+creditCardId
+    // means repaid-to).
+    creditCardId: card.id,
+    balanceEffect: 'update',
+    isRepayment: true,
+    reminderOccurrenceCompleted: input.reminderOccurrenceDate,
+  };
+
+  const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
+  const appended = withTransaction.transactions.find((t) => t.id === input.transactionId);
+  if (!appended || appended.appliedBalanceEffect === undefined) {
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+
+  // The second, card-side effect — reuses the exact same
+  // applyEffectDelta('credit_card', ...) branch a card-funded PURCHASE
+  // already uses (computeBalanceEffect's own 'credit_card' branch), just
+  // with the opposite sign: a repayment DECREASES what's owed, a purchase
+  // increases it. upsertCreditCardLiability (inside applyEffectDelta)
+  // keeps the mirrored Liability record in sync automatically, exactly as
+  // it already does for every other credit-card balance mutation.
+  const { data: withCardReduced } = applyEffectDelta(
+    withTransaction,
+    { targetKind: 'credit_card', targetId: card.id, delta: -(paymentCents / 100) },
+    1
+  );
+
+  // Occurrence-completion stamp — only when this repayment was initiated
+  // from a specific Reminder occurrence (see reminderOccurrenceDate's own
+  // doc comment). Applied to the card's LATEST record inside
+  // withCardReduced (post-upsertCreditCardLiability), never a stale
+  // reference to `card` captured before the effect above.
+  let withOccurrenceHandled = withCardReduced;
+  if (input.reminderOccurrenceDate) {
+    withOccurrenceHandled = {
+      ...withCardReduced,
+      creditCards: withCardReduced.creditCards.map((c) =>
+        c.id === card.id ? { ...c, handledReminderOccurrenceDate: input.reminderOccurrenceDate } : c
+      ),
+    };
+  }
+
+  const finalData = upsertNetWorthHistory(withOccurrenceHandled);
+  return { applied: true, data: finalData };
+}
+
+export type ReverseCreditCardRepaymentResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'not_found' | 'not_a_credit_card_repayment' | 'missing_card' };
+
+/**
+ * Atomic reversal — mirrors reverseBnplRepaymentTransaction's own
+ * contract: the generic applyTransactionDelete only ever reverses a
+ * transaction's own single-target appliedBalanceEffect (the funding-asset
+ * side here), which would silently leave the card's balance under-stated
+ * by the same amount confirmCreditCardRepaymentTransition's second effect
+ * applied. This restores BOTH sides atomically instead — the funding side
+ * via the transaction's own stored appliedBalanceEffect snapshot (same
+ * post-floor-exact convention every other reversal in this file uses),
+ * and the card side via t.creditCardId (the repayment's DESTINATION,
+ * stored precisely so this lookup never has to guess) plus t.amount (the
+ * exact cents originally moved). No "latest only" restriction (unlike
+ * BNPL): an ordinary credit card has no repayment schedule/occurrence
+ * chain whose consistency a specific reversal could break — each
+ * repayment is an independent event, safe to reverse on its own
+ * regardless of any other repayment made before or after it.
+ */
+export function reverseCreditCardRepaymentTransaction(data: AppData, transactionId: string): ReverseCreditCardRepaymentResult {
+  const t = data.transactions.find((x) => x.id === transactionId);
+  if (!t) return { applied: false, reason: 'not_found' };
+  if (!t.isRepayment || !t.creditCardId) return { applied: false, reason: 'not_a_credit_card_repayment' };
+
+  const card = data.creditCards.find((c) => c.id === t.creditCardId);
+  if (!card) return { applied: false, reason: 'missing_card' };
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const { data: withSourceReversed } = applyEffectDelta(data, t.appliedBalanceEffect, -1);
+  const { data: withCardRestored } = applyEffectDelta(
+    withSourceReversed,
+    { targetKind: 'credit_card', targetId: card.id, delta: t.amount },
+    1
+  );
+
+  // Restore the Reminder occurrence this repayment completed — only when
+  // it actually completed one (t.reminderOccurrenceCompleted set), and only
+  // when the card's stamp still matches this exact transaction's value
+  // (never clobbering a DIFFERENT, later completion that may have already
+  // superseded it — "unless another valid completion already covers it").
+  let withOccurrenceRestored = withCardRestored;
+  if (t.reminderOccurrenceCompleted) {
+    withOccurrenceRestored = {
+      ...withCardRestored,
+      creditCards: withCardRestored.creditCards.map((c) =>
+        c.id === card.id && c.handledReminderOccurrenceDate === t.reminderOccurrenceCompleted
+          ? { ...c, handledReminderOccurrenceDate: undefined }
+          : c
+      ),
+    };
+  }
+
+  const finalData: AppData = upsertNetWorthHistory({
+    ...withOccurrenceRestored,
+    transactions: withOccurrenceRestored.transactions.filter((x) => x.id !== transactionId),
+  });
+
+  return { applied: true, data: finalData };
+}
+
+/** Liability types this round's dedicated repayment flow covers — every
+ * amortising-loan type EXCEPT credit_card (its own separate, already-built
+ * engine above) and bnpl (its own separate, already-built engine). */
+const LOAN_REPAYMENT_LIABILITY_TYPES: LiabilityType[] = ['mortgage', 'car_loan', 'personal_loan', 'other'];
+
+export interface ConfirmLoanRepaymentInput {
+  recurringItemId: string;
+  liabilityId: string;
+  expectedNextDueDate: string;
+  /** Dollars, strictly positive — the TOTAL amount actually paid, validated
+   * via the same moneyAmountToCents every other confirmed money amount in
+   * this file uses. */
+  amount: number;
+  paymentSource: 'cash' | 'everyday';
+  targetAssetId?: string;
+  /** Whether the customer opted in to "Update my recorded loan balance" —
+   * see this input's own `newBalance` field and confirmLoanRepaymentTransition's
+   * doc comment for the full contract. */
+  updateBalance: boolean;
+  /** Required, and only meaningful, when updateBalance is true — the
+   * recorded balance AFTER this payment, as entered by the customer. Never
+   * inferred from a rate/amortisation schedule. */
+  newBalance?: number;
+  /** Staleness guard for the liability's own recorded balance — mirrors
+   * `expectedCardBalance` in ConfirmCreditCardRepaymentInput exactly. */
+  expectedCurrentBalance: number;
+  transactionId: string;
+  date: string;
+}
+
+export type ConfirmLoanRepaymentResult =
+  | { applied: true; data: AppData; principalAmount?: number }
+  | {
+      applied: false;
+      reason:
+        | 'not_found'
+        | 'missing_liability'
+        | 'wrong_type'
+        | 'stale'
+        | 'stale_balance'
+        | 'already_confirmed'
+        | 'invalid_date'
+        | 'invalid_amount'
+        | 'invalid_balance'
+        | 'invalid_principal'
+        | 'invalid_source'
+        | 'balance_target_missing'
+        | 'insufficient_source_balance';
+    };
+
+/**
+ * The atomic mortgage/personal-loan/car-loan repayment confirmation —
+ * final Pass 2D device-test correction, item 2. Mirrors
+ * confirmBnplRepaymentTransition's own shape closely (same "validate fully
+ * before mutating," same reused `recurringOccurrenceKey` duplicate-
+ * confirmation ledger check, same two-target atomic effect pattern), but
+ * is a SEPARATE function — never merged into one undifferentiated
+ * mutation with BNPL/credit-card repayment, per this round's explicit
+ * instruction, because the three have genuinely different accounting
+ * contracts (BNPL always reduces its liability by the full effective
+ * payment; a credit-card repayment always reduces its liability by the
+ * full payment; a loan repayment's liability effect is OPTIONAL and, when
+ * elected, is a customer-ENTERED principal figure, never derived from the
+ * payment amount itself).
+ *
+ * Occurrence identity/completion reuses the exact same mechanism ordinary
+ * bills already have — this liability's one linked RecurringItem
+ * (`item.linkedLiabilityId`, enforced 1:1 by `upsertLinkedRecurringItem`)
+ * advances its own `nextDueDate` on confirmation, exactly like
+ * confirmRecurringOccurrenceTransition already does for a plain bill. This
+ * is a genuinely small extension of existing Reminder-completion state,
+ * not a new persistence framework — the one addition, `recurringOccurrenceKey`
+ * (borrowed unmodified from BNPL), exists solely so a reversal can restore
+ * the exact due-date that was confirmed, the same way BNPL's own reversal
+ * already does.
+ *
+ * Balance-update contract: when `input.updateBalance` is false, this
+ * behaves exactly like an ordinary confirmed bill — the funding account is
+ * debited, a transaction is recorded, and `Liability.currentBalance` is
+ * left completely untouched (no principal/interest split is invented).
+ * When true, `input.newBalance` must be a real number between 0 and the
+ * liability's current recorded balance (a repayment can never legitimately
+ * INCREASE what's owed in this MVP flow — no capitalised-interest contract
+ * exists anywhere in this codebase to justify allowing that); the derived
+ * principal (`previousBalance - newBalance`) must itself be between $0 and
+ * the total amount paid (rejected as 'invalid_principal' otherwise — a
+ * loan repayment can never reduce the liability by MORE than was actually
+ * paid). The derived principal is the only KNOWN split ever recorded
+ * (`Transaction.principalAmount`); the remaining payment (if any) is never
+ * separately typed/stored as "interest" — it is simply `amount - principalAmount`,
+ * derivable by any consumer that needs it, so nothing is inferred that
+ * wasn't entered.
+ */
+export function confirmLoanRepaymentTransition(data: AppData, input: ConfirmLoanRepaymentInput): ConfirmLoanRepaymentResult {
+  const item = data.recurringItems.find((r) => r.id === input.recurringItemId);
+  if (!item) return { applied: false, reason: 'not_found' };
+
+  const liability = data.liabilities.find((l) => l.id === input.liabilityId);
+  if (!liability || item.linkedLiabilityId !== liability.id) return { applied: false, reason: 'missing_liability' };
+  if (!LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type)) return { applied: false, reason: 'wrong_type' };
+
+  if (!isValidCanonicalDate(item.nextDueDate) || !isValidCanonicalDate(input.expectedNextDueDate)) {
+    return { applied: false, reason: 'invalid_date' };
+  }
+  if (item.nextDueDate !== input.expectedNextDueDate) return { applied: false, reason: 'stale' };
+  if (!isValidISOTimestamp(input.date)) return { applied: false, reason: 'invalid_date' };
+  if (liability.currentBalance !== input.expectedCurrentBalance) return { applied: false, reason: 'stale_balance' };
+
+  const occurrenceKey = `${item.id}:${item.nextDueDate}`;
+  if (data.transactions.some((t) => t.recurringOccurrenceKey === occurrenceKey)) {
+    return { applied: false, reason: 'already_confirmed' };
+  }
+
+  const validatedAmount = moneyAmountToCents(input.amount);
+  if (!validatedAmount.valid) return { applied: false, reason: 'invalid_amount' };
+  const paymentCents = validatedAmount.cents;
+
+  let principalCents: number | undefined;
+  if (input.updateBalance) {
+    if (typeof input.newBalance !== 'number' || !Number.isFinite(input.newBalance) || input.newBalance < 0) {
+      return { applied: false, reason: 'invalid_balance' };
+    }
+    const oldBalanceCents = Math.round(liability.currentBalance * 100);
+    const newBalanceCents = Math.round(input.newBalance * 100);
+    // Never allow an ordinary repayment to increase the recorded balance —
+    // no capitalised-interest contract is separately accepted anywhere in
+    // this codebase (Agent investigation, this round: no principal/interest
+    // split concept exists against any real tracked liability at all).
+    if (newBalanceCents > oldBalanceCents) return { applied: false, reason: 'invalid_balance' };
+    principalCents = oldBalanceCents - newBalanceCents;
+    if (principalCents < 0 || principalCents > paymentCents) return { applied: false, reason: 'invalid_principal' };
+  }
+
+  let targetAssetId: string | undefined;
+  if (input.paymentSource === 'cash') {
+    const cashAsset = data.assets.find((a) => a.type === 'cash');
+    if (!cashAsset) return { applied: false, reason: 'balance_target_missing' };
+    const cashCents = toBalanceCentsAllowingZero(cashAsset.currentValue);
+    if (cashCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (cashCents < paymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+  } else if (input.paymentSource === 'everyday') {
+    if (!input.targetAssetId) return { applied: false, reason: 'invalid_source' };
+    const account = data.assets.find((a) => a.id === input.targetAssetId && a.type === 'everyday');
+    if (!account) return { applied: false, reason: 'balance_target_missing' };
+    const accountCents = toBalanceCentsAllowingZero(account.currentValue);
+    if (accountCents === undefined) return { applied: false, reason: 'balance_target_missing' };
+    if (accountCents < paymentCents) return { applied: false, reason: 'insufficient_source_balance' };
+    targetAssetId = account.id;
+  } else {
+    return { applied: false, reason: 'invalid_source' };
+  }
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const transactionInput: Omit<Transaction, 'id'> = {
+    type: 'expense',
+    amount: paymentCents / 100,
+    categoryId: 'cat-debt',
+    date: input.date,
+    note: `${liability.label} repayment`,
+    paymentSource: input.paymentSource,
+    targetAssetId,
+    recurringItemId: item.id,
+    recurringOccurrenceKey: occurrenceKey,
+    balanceEffect: 'update',
+    principalAmount: principalCents !== undefined ? principalCents / 100 : undefined,
+    isLoanRepayment: true,
+  };
+
+  const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
+  const appended = withTransaction.transactions.find((t) => t.id === input.transactionId);
+  if (!appended || appended.appliedBalanceEffect === undefined) {
+    return { applied: false, reason: 'balance_target_missing' };
+  }
+
+  // The second, liability-side effect — applied only when a known
+  // principal reduction exists (a $0 known-interest-only payment correctly
+  // applies no effect at all, since there is nothing to reduce). Reuses the
+  // exact same applyEffectDelta('liability', ...) primitive BNPL's own
+  // second effect uses, never a re-implementation of its floor/actualDelta
+  // logic. `principalCents` was already validated <= the liability's own
+  // current balance above, so this floor is mathematically guaranteed not
+  // to bind.
+  let withLiabilityMaybeReduced = withTransaction;
+  if (principalCents !== undefined && principalCents > 0) {
+    const { data: reduced } = applyEffectDelta(
+      withTransaction,
+      { targetKind: 'liability', targetId: liability.id, delta: -(principalCents / 100) },
+      1
+    );
+    withLiabilityMaybeReduced = reduced;
+  }
+
+  const advance = advanceRecurringItemSchedule(item);
+  const scheduleAnchorDay = resolveScheduleAnchorDay(item, advance);
+  const updatedItem: RecurringItem = { ...item, nextDueDate: advance.nextDueDate, scheduleAnchorDay };
+
+  const finalData: AppData = upsertNetWorthHistory({
+    ...withLiabilityMaybeReduced,
+    recurringItems: withLiabilityMaybeReduced.recurringItems.map((r) => (r.id === item.id ? updatedItem : r)),
+  });
+
+  return { applied: true, data: finalData, principalAmount: principalCents !== undefined ? principalCents / 100 : undefined };
+}
+
+export type ReverseLoanRepaymentResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'not_found' | 'not_a_loan_repayment' | 'missing_liability' | 'not_latest' };
+
+/**
+ * Atomic reversal — mirrors reverseBnplRepaymentTransaction's own contract
+ * exactly, including the same "only the latest confirmed repayment on this
+ * liability is safe to fully reverse" restriction and the same reasoning
+ * (an earlier repayment's principal can't be reconstructed once a later
+ * repayment has already moved the schedule/balance forward from it).
+ * Restores the funding side via the transaction's own stored
+ * appliedBalanceEffect snapshot, the liability side via
+ * `t.principalAmount` (only when it was actually known/applied — a
+ * repayment recorded without updating the balance has nothing to restore
+ * there, exactly mirroring how it had nothing to reduce), and the
+ * Reminder occurrence via `RecurringItem.nextDueDate` (restored to the
+ * exact due-date `t.recurringOccurrenceKey` encodes) — satisfying "restore
+ * the associated current Reminder when appropriate... and leave future
+ * recurring occurrences intact" (there are none here to disturb: this is
+ * the only occurrence being restored).
+ */
+export function reverseLoanRepaymentTransaction(data: AppData, transactionId: string): ReverseLoanRepaymentResult {
+  const t = data.transactions.find((x) => x.id === transactionId);
+  if (!t) return { applied: false, reason: 'not_found' };
+  if (!t.recurringOccurrenceKey || !t.recurringItemId) return { applied: false, reason: 'not_a_loan_repayment' };
+
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  if (!item || !item.linkedLiabilityId) return { applied: false, reason: 'missing_liability' };
+  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+  if (!liability || !LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type)) {
+    return { applied: false, reason: 'missing_liability' };
+  }
+
+  const restoredDueDate = occurrenceKeyDueDate(t);
+  if (!restoredDueDate || !isValidCanonicalDate(restoredDueDate)) return { applied: false, reason: 'not_a_loan_repayment' };
+
+  if (!isLatestLoanRepaymentTransaction(data, transactionId)) return { applied: false, reason: 'not_latest' };
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const { data: withSourceReversed } = applyEffectDelta(data, t.appliedBalanceEffect, -1);
+  let withLiabilityRestored = withSourceReversed;
+  if (typeof t.principalAmount === 'number' && t.principalAmount > 0) {
+    const { data: restored } = applyEffectDelta(
+      withSourceReversed,
+      { targetKind: 'liability', targetId: liability.id, delta: t.principalAmount },
+      1
+    );
+    withLiabilityRestored = restored;
+  }
+
+  const restoredItem: RecurringItem = { ...item, nextDueDate: restoredDueDate };
+  const finalData: AppData = upsertNetWorthHistory({
+    ...withLiabilityRestored,
+    recurringItems: withLiabilityRestored.recurringItems.map((r) => (r.id === item.id ? restoredItem : r)),
+    transactions: withLiabilityRestored.transactions.filter((x) => x.id !== transactionId),
+  });
+
+  return { applied: true, data: finalData };
+}
+
+export type ReverseRecurringOccurrenceResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'not_found' | 'not_a_recurring_occurrence' | 'not_latest' };
+
+/**
+ * Final narrow Pass 2D correction, item 3 — an ordinary confirmed bill
+ * occurrence never had a dedicated reversal before this: the generic
+ * `applyTransactionDelete` only ever reverses the transaction's own
+ * `appliedBalanceEffect` (the funding side), never restoring
+ * `RecurringItem.nextDueDate` — so a full "Delete & reverse" left the
+ * schedule advanced forever, and the Reminder for that occurrence never
+ * came back. This closes that gap using the exact same reused pattern
+ * BNPL/loan repayment reversal already established: a stable
+ * `recurringOccurrenceKey` (now stamped by confirmRecurringOccurrenceTransition
+ * for expense confirmations only — see that function's own doc comment),
+ * the SAME shared `isLatestOccurrenceKeyTransaction` "only the latest is
+ * safe to restore" guard (so a later, still-standing completion is never
+ * silently overwritten), and the SAME shared `occurrenceKeyDueDate`
+ * extraction.
+ *
+ * Deliberately REJECTS (`not_a_recurring_occurrence`) whenever the linked
+ * RecurringItem has a `linkedLiabilityId` — that is always BNPL's or a
+ * loan's own domain (their dedicated reversal functions additionally
+ * restore a liability-side effect this function knows nothing about);
+ * this function only ever reverses a plain bill's single funding-side
+ * effect, exactly like the generic path it replaces for this one case.
+ *
+ * A transaction with no `recurringOccurrenceKey` at all (either a manual
+ * transaction, or a bill confirmed by an older build before this field
+ * existed on ordinary bills) is safely rejected the same way — such a
+ * transaction keeps using the unmodified generic `applyTransactionDelete`
+ * path exactly as it always has; this function is purely additive, never
+ * a replacement for that existing, still-correct behaviour.
+ */
+export function reverseRecurringOccurrenceTransaction(data: AppData, transactionId: string): ReverseRecurringOccurrenceResult {
+  const t = data.transactions.find((x) => x.id === transactionId);
+  if (!t) return { applied: false, reason: 'not_found' };
+  if (!t.recurringOccurrenceKey || !t.recurringItemId) return { applied: false, reason: 'not_a_recurring_occurrence' };
+
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  if (!item) return { applied: false, reason: 'not_a_recurring_occurrence' };
+  if (item.linkedLiabilityId) return { applied: false, reason: 'not_a_recurring_occurrence' };
+
+  const restoredDueDate = occurrenceKeyDueDate(t);
+  if (!restoredDueDate || !isValidCanonicalDate(restoredDueDate)) return { applied: false, reason: 'not_a_recurring_occurrence' };
+
+  if (!isLatestRecurringOccurrenceTransaction(data, transactionId)) return { applied: false, reason: 'not_latest' };
+
+  // --- success path only from here; nothing above this line ever mutates. ---
+  const reverted =
+    t.balanceEffect === undefined ? legacyApplyTransactionEffect(data, t, -1) : applyEffectDelta(data, t.appliedBalanceEffect, -1).data;
+
+  const restoredItem: RecurringItem = { ...item, nextDueDate: restoredDueDate };
+  const finalData: AppData = upsertNetWorthHistory({
+    ...reverted,
+    recurringItems: reverted.recurringItems.map((r) => (r.id === item.id ? restoredItem : r)),
+    transactions: reverted.transactions.filter((x) => x.id !== transactionId),
+  });
+
+  return { applied: true, data: finalData };
+}
+
+/**
+ * Ordinary-bill sibling of isLatestBnplRepaymentTransaction/
+ * isLatestLoanRepaymentTransaction — same shared derivation, same
+ * contract. `false` for anything that isn't a recurring-occurrence
+ * transaction at all.
+ */
+export function isLatestRecurringOccurrenceTransaction(data: AppData, transactionId: string): boolean {
+  return isLatestOccurrenceKeyTransaction(data, transactionId);
 }
 
 interface AppStateContextValue {
@@ -1897,6 +2590,7 @@ interface AppStateContextValue {
     expectedNextDueDate: string;
     paymentSource?: PaymentSource;
     targetAssetId?: string;
+    creditCardId?: string;
   }) => ConfirmationCommitResult;
   /** B2.4 mid-cycle recurring-income initialisation — creates a brand-new
    * monthly income source together with exactly one backfilled transaction
@@ -2010,15 +2704,49 @@ interface AppStateContextValue {
   /** Atomic BNPL repayment confirmation — see confirmBnplRepaymentTransition's
    * own doc comment. transactionId/date are generated exactly once here,
    * never inside the pure transition, mirroring confirmRecurringOccurrence's
-   * own established contract. */
+   * own established contract. Reminder queue correction round — additively
+   * returns transactionId, mirroring confirmLoanRepayment/
+   * confirmCreditCardRepayment's own established contract. */
   confirmBnplRepayment: (
     input: Omit<ConfirmBnplRepaymentInput, 'transactionId' | 'date'>
-  ) => { transition: ConfirmBnplRepaymentResult; persistence: Promise<void> };
+  ) => { transition: ConfirmBnplRepaymentResult; persistence: Promise<void>; transactionId: string };
   /** Correction pass — atomic reversal of the latest confirmed BNPL
    * repayment transaction. See reverseBnplRepaymentTransaction's own doc
    * comment for the full contract. Reads dataRef.current, same rationale
    * as confirmBnplRepayment above; one persist() call. */
   reverseBnplRepayment: (transactionId: string) => ReverseBnplRepaymentResult;
+  /** Atomic credit-card repayment confirmation — device-test correction
+   * round. See confirmCreditCardRepaymentTransition's own doc comment.
+   * transactionId/date generated exactly once here, mirroring
+   * confirmBnplRepayment's own established contract. */
+  confirmCreditCardRepayment: (
+    input: Omit<ConfirmCreditCardRepaymentInput, 'transactionId' | 'date'>
+  ) => { transition: ConfirmCreditCardRepaymentResult; persistence: Promise<void>; transactionId: string };
+  /** Atomic reversal of a confirmed credit-card repayment transaction. See
+   * reverseCreditCardRepaymentTransaction's own doc comment. Reads
+   * dataRef.current, same rationale as confirmCreditCardRepayment above;
+   * one persist() call. */
+  reverseCreditCardRepayment: (transactionId: string) => ReverseCreditCardRepaymentResult;
+  /** Atomic mortgage/personal-loan/car-loan repayment confirmation — final
+   * Pass 2D device-test correction. See confirmLoanRepaymentTransition's
+   * own doc comment. transactionId/date generated exactly once here,
+   * mirroring confirmBnplRepayment/confirmCreditCardRepayment's own
+   * established contract. */
+  confirmLoanRepayment: (
+    input: Omit<ConfirmLoanRepaymentInput, 'transactionId' | 'date'>
+  ) => { transition: ConfirmLoanRepaymentResult; persistence: Promise<void>; transactionId: string };
+  /** Atomic reversal of a confirmed loan repayment transaction. See
+   * reverseLoanRepaymentTransaction's own doc comment. Reads
+   * dataRef.current, same rationale as confirmLoanRepayment above; one
+   * persist() call. */
+  reverseLoanRepayment: (transactionId: string) => ReverseLoanRepaymentResult;
+  /** 2D-NARROW correction — atomic reversal of an ordinary occurrence-tracked
+   * bill transaction, restoring its exact handled Reminder occurrence when
+   * safe. See reverseRecurringOccurrenceTransaction's own doc comment for
+   * the full contract (rejects BNPL/loan transactions, which route through
+   * their own dedicated reverse functions above). Reads dataRef.current,
+   * same rationale as reverseLoanRepayment above; one persist() call. */
+  reverseRecurringOccurrence: (transactionId: string) => ReverseRecurringOccurrenceResult;
   addCreditCard: (c: Omit<CreditCard, 'id'>) => void;
   updateCreditCard: (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => void;
   deleteCreditCard: (id: string) => void;
@@ -2224,13 +2952,14 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       expectedNextDueDate: string;
       paymentSource?: PaymentSource;
       targetAssetId?: string;
+      creditCardId?: string;
     }): ConfirmationCommitResult => {
       const transactionId = generateId();
       const date = new Date().toISOString();
       const transition = confirmRecurringOccurrenceTransition(dataRef.current, { ...input, transactionId, date });
-      if (!transition.applied) return { transition, persistence: Promise.resolve() };
+      if (!transition.applied) return { transition, persistence: Promise.resolve(), transactionId };
       const persistence = persist(transition.data);
-      return { transition, persistence };
+      return { transition, persistence, transactionId };
     },
     [persist]
   );
@@ -2435,13 +3164,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // date exactly once here, and only calls persist() when the transition
   // actually applied — a rejected result never touches storage.
   const confirmBnplRepayment = useCallback(
-    (input: Omit<ConfirmBnplRepaymentInput, 'transactionId' | 'date'>): { transition: ConfirmBnplRepaymentResult; persistence: Promise<void> } => {
+    (input: Omit<ConfirmBnplRepaymentInput, 'transactionId' | 'date'>): { transition: ConfirmBnplRepaymentResult; persistence: Promise<void>; transactionId: string } => {
       const transactionId = generateId();
       const date = new Date().toISOString();
       const transition = confirmBnplRepaymentTransition(dataRef.current, { ...input, transactionId, date });
-      if (!transition.applied) return { transition, persistence: Promise.resolve() };
+      if (!transition.applied) return { transition, persistence: Promise.resolve(), transactionId };
       const persistence = persist(transition.data);
-      return { transition, persistence };
+      return { transition, persistence, transactionId };
     },
     [persist]
   );
@@ -2451,6 +3180,83 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const reverseBnplRepayment = useCallback(
     (transactionId: string): ReverseBnplRepaymentResult => {
       const result = reverseBnplRepaymentTransaction(dataRef.current, transactionId);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  // Device-test correction round — mirrors confirmBnplRepayment's own
+  // contract exactly: reads dataRef.current fresh, transactionId/date
+  // generated exactly once here, one persist() call, only on the success
+  // path.
+  const confirmCreditCardRepayment = useCallback(
+    (
+      input: Omit<ConfirmCreditCardRepaymentInput, 'transactionId' | 'date'>
+    ): { transition: ConfirmCreditCardRepaymentResult; persistence: Promise<void>; transactionId: string } => {
+      const transactionId = generateId();
+      const date = new Date().toISOString();
+      const transition = confirmCreditCardRepaymentTransition(dataRef.current, { ...input, transactionId, date });
+      if (!transition.applied) return { transition, persistence: Promise.resolve(), transactionId };
+      const persistence = persist(transition.data);
+      // Final Pass 2D device-test correction (native-Modal-lifecycle round)
+      // — also returns the transactionId this call itself generated, so a
+      // caller's own interaction-lifecycle state machine can carry the REAL
+      // id in its 'completed' result (never a synthetic/placeholder one),
+      // without needing a second lookup. Purely additive — every existing
+      // caller destructuring only `{ transition }` is unaffected.
+      return { transition, persistence, transactionId };
+    },
+    [persist]
+  );
+
+  // Mirrors reverseBnplRepayment's own contract: reads dataRef.current,
+  // one persist() call, only on the success path.
+  const reverseCreditCardRepayment = useCallback(
+    (transactionId: string): ReverseCreditCardRepaymentResult => {
+      const result = reverseCreditCardRepaymentTransaction(dataRef.current, transactionId);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  // Final Pass 2D device-test correction — mirrors confirmBnplRepayment's
+  // own contract exactly: reads dataRef.current fresh, transactionId/date
+  // generated exactly once here, one persist() call, only on the success
+  // path.
+  const confirmLoanRepayment = useCallback(
+    (
+      input: Omit<ConfirmLoanRepaymentInput, 'transactionId' | 'date'>
+    ): { transition: ConfirmLoanRepaymentResult; persistence: Promise<void>; transactionId: string } => {
+      const transactionId = generateId();
+      const date = new Date().toISOString();
+      const transition = confirmLoanRepaymentTransition(dataRef.current, { ...input, transactionId, date });
+      if (!transition.applied) return { transition, persistence: Promise.resolve(), transactionId };
+      const persistence = persist(transition.data);
+      // Final Pass 2D device-test correction (native-Modal-lifecycle round)
+      // — see confirmCreditCardRepayment's identical own comment above.
+      return { transition, persistence, transactionId };
+    },
+    [persist]
+  );
+
+  // Mirrors reverseBnplRepayment/reverseCreditCardRepayment's own contract:
+  // reads dataRef.current, one persist() call, only on the success path.
+  const reverseLoanRepayment = useCallback(
+    (transactionId: string): ReverseLoanRepaymentResult => {
+      const result = reverseLoanRepaymentTransaction(dataRef.current, transactionId);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+
+  // 2D-NARROW correction — mirrors reverseLoanRepayment's own contract:
+  // reads dataRef.current, one persist() call, only on the success path.
+  const reverseRecurringOccurrence = useCallback(
+    (transactionId: string): ReverseRecurringOccurrenceResult => {
+      const result = reverseRecurringOccurrenceTransaction(dataRef.current, transactionId);
       if (result.applied) persist(result.data);
       return result;
     },
@@ -2626,6 +3432,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       saveBnplPlan,
       confirmBnplRepayment,
       reverseBnplRepayment,
+      confirmCreditCardRepayment,
+      reverseCreditCardRepayment,
+      confirmLoanRepayment,
+      reverseLoanRepayment,
+      reverseRecurringOccurrence,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,
@@ -2669,6 +3480,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       saveBnplPlan,
       confirmBnplRepayment,
       reverseBnplRepayment,
+      confirmCreditCardRepayment,
+      reverseCreditCardRepayment,
+      confirmLoanRepayment,
+      reverseLoanRepayment,
+      reverseRecurringOccurrence,
       completeOnboarding,
       addCreditCard,
       updateCreditCard,

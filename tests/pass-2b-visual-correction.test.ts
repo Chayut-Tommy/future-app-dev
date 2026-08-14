@@ -52,7 +52,7 @@ function baseData(): AppData {
   return d;
 }
 
-const UNMEASURED: SectionFocusMeasurements = { 'financial-learning': null, score: null, journey: null };
+const UNMEASURED: SectionFocusMeasurements = { 'financial-learning': null, score: null, journey: null, goals: null, safety_net: null, saving: null, learning: null };
 
 console.log('=== Section 1: one Today Journey tap reaches the expanded complete Journey (real functions) ===');
 {
@@ -326,20 +326,59 @@ console.log('\n=== Section 5: Pass 2A AUP, reminder, and event behaviour remain 
   // most one short supporting line, never confirmation copy" (this round's
   // explicit instruction), and supportingCopy is longer confirmation-style
   // copy (still read verbatim by the full SafeToSpendHero screen,
-  // unaffected by this pass). heading/primaryCopy/displayAmount/
-  // amountVisible are still read verbatim, unrecomputed.
+  // unaffected by this pass). heading/displayAmount/amountVisible are still
+  // read verbatim, unrecomputed.
+  //
+  // Final Pass 2D device-test correction — this assertion originally also
+  // required `presentation.primaryCopy` to appear in aupTile(), since the
+  // tile fell back to that full sentence whenever no amount was visible.
+  // That fallback was the confirmed device-test defect (the full "Your
+  // planned bills, savings and goals are..." sentence rendering at
+  // near-illegible auto-shrunk size in the compact tile) — the fix
+  // deliberately stops reading primaryCopy there at all, replacing it with
+  // a new short, state-specific `presentation.compactSummary` field
+  // instead (primaryCopy itself is untouched and still read verbatim by
+  // the full-size SafeToSpendHero screen — only this ONE compact-tile call
+  // site changed). This is a strengthening, not a weakening: it proves the
+  // long sentence no longer reaches the compact tile at all.
   assert(
-    'briefingTiles.ts aupTile() still reads presentation.heading/primaryCopy/displayAmount/amountVisible/tone verbatim — no recomputation of the AUP presentation contract',
+    'briefingTiles.ts aupTile() still reads presentation.heading/displayAmount/amountVisible/tone verbatim, and now falls back to compactSummary (never primaryCopy) — no recomputation of the AUP presentation contract',
     /presentation\.heading/.test(BRIEFING_TILES_SRC) &&
-      /presentation\.primaryCopy/.test(BRIEFING_TILES_SRC) &&
+      /presentation\.compactSummary/.test(BRIEFING_TILES_SRC) &&
+      !/: presentation\.primaryCopy/.test(BRIEFING_TILES_SRC) &&
       /presentation\.displayAmount/.test(BRIEFING_TILES_SRC) &&
       /presentation\.amountVisible/.test(BRIEFING_TILES_SRC) &&
       /presentation\.tone/.test(BRIEFING_TILES_SRC)
   );
   assert('TodayBriefingCard.tsx no longer reads presentation.supportingCopy — that longer confirmation-style copy stays out of the compact tile by design, still shown verbatim by SafeToSpendHero', !/presentation\.supportingCopy/.test(BRIEFING_CARD_SRC) && !/presentation\.supportingCopy/.test(BRIEFING_TILES_SRC));
+  // Device-test correction round — onNavigateAway={onClose} added to this
+  // mount (see ReminderDetailSheet.tsx's own doc comment); still reached
+  // only via ReminderDetailSheet, never embedded back into the hero. Final
+  // Pass 2D device-test correction — the reminder value passed is now
+  // `displayedReminder` (ReminderDetailSheet's own pinned state, not the
+  // raw live topReminder prop — see this round's final report §1-§3), plus
+  // a new onSettled prop; the underlying claim (still SmartReminderCard,
+  // still never embedded back into the hero) is unchanged and still proven.
+  // WHY STALE (final Pass 2D device-test correction, native-Modal-lifecycle
+  // round): displayedReminder itself was replaced by
+  // useReducer(reduceReminderLifecycle, ...) — state.reminder is the
+  // pinned value now — and two more props were added
+  // (onRequestLoanRepayment/onRequestCreditCardRepayment) so this mount can
+  // request a repayment form instead of a second component mounting its
+  // own native Modal. Still SmartReminderCard, still never embedded back
+  // into the hero.
+  // WHY STALE AGAIN (Reminder-opening correction round): the confirmed
+  // blank-sheet defect (a competing external `visible`/`onClose` boolean
+  // racing this file's own reducer — see ReminderDetailSheet.tsx's own doc
+  // comment) removed the external `onClose` prop entirely; `onNavigateAway`
+  // is now the local `handleForceClose` — same semantic, sourced locally.
   assert(
-    'SmartReminderCard is still mounted with the same topReminder prop, unchanged from Pass 2A/2B — now inside ReminderDetailSheet (reached by tapping the compact Reminder tile) rather than embedded inline in the hero',
-    /<SmartReminderCard topReminder=\{topReminder\} \/>/.test(REMINDER_SHEET_SRC) && !/SmartReminderCard/.test(BRIEFING_CARD_SRC)
+    // WHY STALE: Reminder queue correction round renamed onSettled to
+    // onOutcome and switched to presentedState (blank-shell close fix) —
+    // same real mount, unchanged placement.
+    'SmartReminderCard is still mounted with a live reminder value (plus onNavigateAway and onOutcome), unchanged from Pass 2A/2B — inside ReminderDetailSheet (reached by tapping the compact Reminder tile) rather than embedded inline in the hero',
+    /<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/.test(REMINDER_SHEET_SRC) &&
+      !/SmartReminderCard/.test(BRIEFING_CARD_SRC)
   );
 }
 

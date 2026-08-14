@@ -304,10 +304,25 @@ console.log('\n=== Section 12: local date boundary (real import) ===');
 }
 
 // ============================================================================
-// Section 13 — confirmed BNPL repayment counted once, under its real
-// recorded paymentSource (real import)
+// Section 13 — a confirmed BNPL repayment is EXCLUDED from This Month's
+// recorded spending entirely (real import)
+//
+// Final Pass 2D device-test correction — this section originally proved a
+// confirmed BNPL repayment was counted ONCE under its real paymentSource
+// bucket (a repayment-vs-double-count concern this file's own earlier
+// round addressed). That was itself a real defect this later round's audit
+// found: computeThisMonthRecordedSummary had no `recurringItemId`/
+// `isRepayment` exclusion at all, unlike monthlySummary.ts's own
+// loggedExpenses filter — so "counted once" was actually "counted once
+// where it should have been counted zero times" (its cost is already
+// reflected as a recurring-rate commitment elsewhere, exactly the same
+// reasoning that already excludes an ordinary confirmed bill). This is a
+// strengthening, not a weakening: the repayment is now proven to be
+// excluded from spendingCents/spendingSources entirely, consistent with
+// every other repayment type (credit-card, loan) and with
+// computeMonthToDateActivity's own matching fix this same round.
 // ============================================================================
-console.log('\n=== Section 13: confirmed BNPL repayment counted once (real import) ===');
+console.log('\n=== Section 13: confirmed BNPL repayment excluded from This Month spending (real import) ===');
 {
   const createInput: SaveBnplPlanInput = {
     mode: 'create',
@@ -331,8 +346,9 @@ console.log('\n=== Section 13: confirmed BNPL repayment counted once (real impor
   assert('Repayment confirmation applies', repaid.applied);
   if (repaid.applied) {
     const summaryAfterRepayment = computeThisMonthRecordedSummary(repaid.data, d('2026-08-10'));
-    assert('The confirmed repayment now counts exactly once, under its real recorded paymentSource (cash)', summaryAfterRepayment.spendingSources.find((s) => s.kind === 'cash')!.amountCents === summaryAfterRepayment.spendingCents);
-    assert('Exactly one expense transaction exists after the repayment', repaid.data.transactions.filter((t) => t.type === 'expense').length === 1);
+    assert('The confirmed repayment is EXCLUDED from spendingCents entirely (its cost is already a recurring-rate commitment elsewhere)', summaryAfterRepayment.spendingCents === 0);
+    assert('The confirmed repayment produces no spending-source row at all', summaryAfterRepayment.spendingSources.length === 0);
+    assert('Exactly one expense transaction exists after the repayment (excluded from the SUMMARY, not from the transaction ledger itself)', repaid.data.transactions.filter((t) => t.type === 'expense').length === 1);
   }
 }
 

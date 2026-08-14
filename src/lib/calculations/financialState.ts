@@ -153,15 +153,44 @@ export interface FinancialStateActionSpec {
   label: string;
 }
 
-/** The only actions ever shown for a non-standard state (PRD ask: no debt-
- * specific or savings-specific actions — those read as Navilo prescribing
- * a strategy). Every surface that renders action buttons for
- * cashflow_focus/financial_rebuild must use exactly this list. */
+/** The only actions ever shown for the Cashflow Focus state (PRD ask: no
+ * debt- or savings-specific action — those read as Navilo prescribing a
+ * strategy). Device-test correction round — previously also used for
+ * Financial Rebuild, which was a defect: none of these three (adding
+ * income/bills, reviewing spending) is actually relevant to a NEGATIVE-NET-
+ * WORTH state; the two states now use distinct action sets. Every surface
+ * that renders action buttons for cashflow_focus must use exactly this
+ * list. computeFinancialState itself and its thresholds are unchanged by
+ * this correction — only which actions each existing state maps to. */
 export const FINANCIAL_STATE_ACTIONS: FinancialStateActionSpec[] = [
   { key: 'income', label: 'Add income' },
   { key: 'bills', label: 'Add bills' },
   { key: 'spending', label: 'Review spending' },
 ];
+
+export interface FinancialRebuildActionSpec {
+  key: 'reviewNetWorth' | 'goal';
+  label: string;
+}
+
+/** The only actions ever shown for the Financial Rebuild state (device-test
+ * correction round) — deliberately two, not three ("Prefer two clear
+ * actions rather than three cramped actions"), and both genuinely relevant
+ * to a negative-net-worth state: reviewing the actual net worth picture,
+ * and either starting or continuing goal-based progress. Still no debt- or
+ * savings-specific action, same reasoning as FINANCIAL_STATE_ACTIONS
+ * above. The second action's label is resolved by
+ * resolveFinancialRebuildGoalActionLabel below (depends on whether an
+ * active goal currently exists) — this array intentionally omits it. */
+export const FINANCIAL_REBUILD_PRIMARY_ACTION: FinancialRebuildActionSpec = { key: 'reviewNetWorth', label: 'Review net worth' };
+
+/** "Add a goal" when the user has no active goal yet, "Review goals"
+ * once they do — never re-derived inline by a screen, so Today's card and
+ * any other future consumer can never disagree about which label applies
+ * for the same underlying state. */
+export function resolveFinancialRebuildGoalActionLabel(hasActiveGoal: boolean): string {
+  return hasActiveGoal ? 'Review goals' : 'Add a goal';
+}
 
 export interface FinancialStateCopy {
   label: string;

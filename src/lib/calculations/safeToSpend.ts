@@ -365,9 +365,24 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
 
   // Transactions the user logs are treated as variable/discretionary spend —
   // fixed expenses are already accounted for via recurring items above.
+  // Correction pass — excludes transactions whose cost is ALREADY counted
+  // via a monthly RATE elsewhere in this same formula: a confirmed
+  // recurring bill (`recurringItemId` set — its cost lives in
+  // `fixedCosts`/`discretionaryPool` above) or a confirmed credit-card
+  // repayment (`isRepayment` set — its cost lives in
+  // `resolveExpectedMonthlyRepayment`'s contribution to `fixedCosts` via
+  // `computeFixedCosts`). Without this, confirming either one double-
+  // subtracted the same dollar from `remainingPool`: once via the rate
+  // baked into `discretionaryPool`, and again via this transaction total.
+  // Mirrors `monthlySummary.ts`'s `loggedExpenses` exclusion exactly (the
+  // same reasoning, stated there first) — `cycleRemainingPool`/"Available
+  // Until Payday" itself never had this bug (it is balance-based, not
+  // transaction-summed; see its own doc comment), so this fix is scoped to
+  // `remainingPool` and its consumers (Money screen's available figure,
+  // Navilo Score's Spending Control factor) only.
   const variableSpendSoFar = data.transactions
     .filter(
-      (t) => t.type === 'expense' && new Date(t.date) >= cycleStart && new Date(t.date) <= today
+      (t) => t.type === 'expense' && !t.recurringItemId && !t.isRepayment && new Date(t.date) >= cycleStart && new Date(t.date) <= today
     )
     .reduce((sum, t) => sum + t.amount, 0);
 
@@ -382,6 +397,7 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   const cashVariableSpendSoFar = data.transactions
     .filter((t) => {
       if (t.type !== 'expense') return false;
+      if (t.recurringItemId || t.isRepayment) return false;
       const d = new Date(t.date);
       if (d < cycleStart || d > today) return false;
       if (t.paymentSource === 'cash' || t.paymentSource === undefined) return cashAssetIsIncluded;
@@ -488,9 +504,21 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   // Today's spend, isolated, so Safe to Spend can react to it directly
   // rather than only moving the number tomorrow (PRD ask: "Lulu should
   // feel alive"). Comparing against the allowance with today's spend
-  // added back gives a fair "before vs. after" for the day.
+  // added back gives a fair "before vs. after" for the day. Final Pass 2D
+  // device-test correction — excludes a confirmed recurring bill/BNPL/loan
+  // repayment (recurringItemId) or a confirmed credit-card repayment
+  // (isRepayment), mirroring variableSpendSoFar's own established exclusion
+  // above: paying off a card or a loan installment today is not the kind
+  // of discretionary spend this "today's plan vs. actual" messaging is
+  // meant to react to.
   const todaysSpend = data.transactions
-    .filter((t) => t.type === 'expense' && startOfDay(new Date(t.date)).getTime() === startOfDay(today).getTime())
+    .filter(
+      (t) =>
+        t.type === 'expense' &&
+        !t.recurringItemId &&
+        !t.isRepayment &&
+        startOfDay(new Date(t.date)).getTime() === startOfDay(today).getTime()
+    )
     .reduce((sum, t) => sum + t.amount, 0);
   const plannedDailyAllowance = daysRemaining > 0 ? (cycleRemainingPool + todaysSpend) / daysRemaining : 0;
 

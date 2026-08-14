@@ -165,7 +165,11 @@ console.log('\n=== Section 3: Milestones vs Money Path — genuinely distinct au
 console.log('\n=== Section 4: Score/Journey focus-request mechanism is completely unchanged by this pass, and a Today Journey tap lands on Milestones specifically (Structural regression) ===');
 {
   assert('sectionFocus.ts was not touched — same import line, same computeSectionFocusFulfillment call site DiscoverScreen.tsx already used', /import \{ SectionFocusRequest, parseSectionFocusRequest, computeSectionFocusFulfillment \} from '\.\.\/\.\.\/lib\/calculations\/sectionFocus';/.test(DISCOVER_SCREEN_SRC));
-  assert('attemptSectionFocus still appears exactly 4 times (route-params effect + one onLayout per focusable section) — the durable pending/fulfil contract is untouched', (DISCOVER_SCREEN_SRC.match(/attemptSectionFocus\(\);/g) || []).length === 4);
+  // Pass 2D — four new focusable sections (goals, safety_net, and the
+  // Saving/Learning Explore categories) each gained their own onLayout
+  // re-attempt, growing the count from 4 to 8 — the mechanism itself
+  // (every onLayout re-attempts the one pending request) is untouched.
+  assert('attemptSectionFocus still appears exactly 8 times (route-params effect + one onLayout per focusable section) — the durable pending/fulfil contract is untouched', (DISCOVER_SCREEN_SRC.match(/attemptSectionFocus\(\);/g) || []).length === 8);
   assert('the request is still only cleared (setParams) inside the fulfilled branch, never an "else, give up" branch', /if \(!result\.fulfilled\) return;/.test(DISCOVER_SCREEN_SRC) && DISCOVER_SCREEN_SRC.indexOf('navigation.setParams(') > DISCOVER_SCREEN_SRC.indexOf('if (!result.fulfilled) return;'));
   assert(
     'all three focusable section headers (score/journey/financial-learning) still render unconditionally — never gated behind a data-dependent ternary — so a pending request always eventually reaches its onLayout',
@@ -175,7 +179,16 @@ console.log('\n=== Section 4: Score/Journey focus-request mechanism is completel
       return idx !== -1 && !/\?\s*\(\s*$/.test(before.trim()) && !/&&\s*\(\s*$/.test(before.trim());
     })
   );
-  assert('TodayScreen.tsx still stamps every Grow focus navigation with a fresh, monotonically increasing requestId — repeated intentional taps still create new valid requests', /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) && (TODAY_SCREEN_SRC.match(/focusRequestIdRef\.current \+= 1;/g) || []).length === 3);
+  // Pass 2D — the three near-identical navigate() call sites were
+  // consolidated into one shared navigateToGrow(scrollTo) helper (see
+  // tests/pass-2b-correction.test.ts for its own dedicated coverage), so
+  // the increment now appears once in source, not three times — every
+  // caller still routes through it, so a fresh requestId is still stamped
+  // on every single Grow-focus navigation.
+  assert(
+    'TodayScreen.tsx still stamps every Grow focus navigation with a fresh, monotonically increasing requestId (via the shared navigateToGrow helper) — repeated intentional taps still create new valid requests',
+    /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) && /focusRequestIdRef\.current \+= 1;/.test(TODAY_SCREEN_SRC)
+  );
   assert('a newer request always overwrites the pending ref outright (never queued) — rapid repeated navigation cannot create duplicate/conflicting focus actions', /pendingSectionFocusRef\.current = parsed;/.test(DISCOVER_SCREEN_SRC));
   assert('shouldOpenScoreSheet still drives setScoreSheetVisible(true) as part of fulfilling the focus request — the Today Score chip still reaches the exact full Score destination in one tap', /if \(result\.shouldOpenScoreSheet\) setScoreSheetVisible\(true\);/.test(DISCOVER_SCREEN_SRC));
   assert(
@@ -372,9 +385,13 @@ console.log('\n=== Section 13: prohibited Score wording corrected — dailyInsig
     'dailyInsight.ts no longer imports or calls luluScoreBand — the prohibited "You\'re doing incredibly well with your finances." wording (luluScoreBand\'s top-band label, the confirmed physical-device defect) has no caller left (its own doc comment legitimately mentions luluScoreBand by name in prose, explaining the removal, which is not an import/call)',
     !/import \{[^}]*luluScoreBand/.test(DAILY_INSIGHT_SRC) && !/luluScoreBand\(/.test(DAILY_INSIGHT_SRC)
   );
+  // Pass 2D — buildInsightPool's entries each gained a `source` tag (see
+  // that function's own doc comment) so todayContextualInsight.ts can pick
+  // a specific entry by identity; the wording itself is byte-identical,
+  // only ", source: 'scoreBand'" was appended before the closing brace.
   assert(
     'the score-band pool entry now uses the same factual, recorded-data pattern scoreChipPresentation already uses elsewhere ("...based on what you\'ve recorded."), for every score band — never a complete-wellbeing/judgment claim',
-    /text: `Your \$\{brand\.scoreName\} is \$\{luluScore\.score\}\/100 based on what you've recorded\.` \}/.test(DAILY_INSIGHT_SRC)
+    /text: `Your \$\{brand\.scoreName\} is \$\{luluScore\.score\}\/100 based on what you've recorded\.`, source: 'scoreBand' \}/.test(DAILY_INSIGHT_SRC)
   );
   assert('the pool entry is still gated on !luluScore.locked — no authoritative number is ever shown when the score is unavailable/incomplete-to-locked', /if \(!luluScore\.locked\) \{/.test(DAILY_INSIGHT_SRC));
   assert('no second, separate Score insight rule was added — buildInsightPool still calls computeLuluScore exactly once and pushes exactly one score-related pool entry', (DAILY_INSIGHT_SRC.match(/computeLuluScore\(data\)/g) || []).length === 1 && (DAILY_INSIGHT_SRC.match(/icon: 'trending-up'/g) || []).length === 1);

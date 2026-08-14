@@ -85,6 +85,21 @@ export interface SafeToSpendPresentation {
   /** What tapping this presentation's primary row should do — see
    * SafeToSpendPresentationAction's own doc comment. */
   action: SafeToSpendPresentationAction;
+  /** Final Pass 2D device-test correction — a SHORT (a few words, never a
+   * full sentence), state-specific label for the Today Briefing's compact
+   * AUP tile's primary-value slot, used ONLY when `amountVisible` is false
+   * (i.e. `displayAmount` isn't available to show instead). Deliberately a
+   * SEPARATE field from `primaryCopy`, which stays the full explanatory
+   * sentence every other consumer (SafeToSpendHero.tsx's own full-size
+   * card) already renders unchanged — this field exists so the compact
+   * tile never has to choose between showing nothing and rendering that
+   * full sentence into a slot sized for a dollar amount (the confirmed
+   * device-test defect: "Your planned bills, savings and goals are..."
+   * rendered at near-illegible auto-shrunk size). Never itself
+   * authoritative/precise — purely a short status word/phrase, same
+   * register as the Reminder/Next tiles' own fixed category words (e.g.
+   * "Bill due", "Card due soon"). */
+  compactSummary: string;
 }
 
 const AUP_ACTION: SafeToSpendPresentationAction = { kind: 'focus_money_section', section: 'aup' };
@@ -128,6 +143,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Unavailable',
       };
     case 'unavailable_other_data':
       return {
@@ -139,6 +155,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Unavailable',
       };
     case 'no_known_payday': {
       const hasIncludedBalance = safeToSpend.includedMoneyBalance > 0;
@@ -153,6 +170,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(hasIncludedBalance ? safeToSpend.includedMoneyBalance : null),
         amountIsAvailableMoney: true,
         action: AUP_ACTION,
+        compactSummary: 'Add a balance',
       };
     }
     case 'missing_balance':
@@ -166,6 +184,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Select a balance',
       };
     case 'recorded_overspend': {
       const recordedOverspendAmount = -safeToSpend.cycleRemainingPool;
@@ -178,6 +197,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Overspent',
       };
     }
     case 'commitments_exceed_cash':
@@ -192,6 +212,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Over budget',
       };
     case 'goals_underfunded':
       return {
@@ -205,6 +226,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(null),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        compactSummary: 'Goals underfunded',
       };
     case 'normal':
     default:
@@ -217,6 +239,10 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         ...resolveAmount(Math.max(0, safeToSpend.cycleRemainingPool)),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
+        // Never actually rendered (amountVisible is always true here), but
+        // populated defensively rather than left empty — see this field's
+        // own doc comment.
+        compactSummary: 'Available',
       };
   }
 }

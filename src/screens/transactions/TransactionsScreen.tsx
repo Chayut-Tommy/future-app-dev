@@ -10,7 +10,8 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { Button } from '../../components/shared/Button';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
-import { Transaction } from '../../types/models';
+import { resolveTransactionAggregateSpendingAmount } from '../../lib/calculations/repaymentAccounting';
+import { AppData, Transaction } from '../../types/models';
 import { brand } from '../../lib/brand';
 
 interface MonthGroup {
@@ -22,7 +23,36 @@ interface MonthGroup {
   net: number;
 }
 
-function groupByMonth(transactions: Transaction[]): MonthGroup[] {
+/** 2D-NARROW correction, Gate 5 — a clarifying line for a repayment-type
+ * transaction's row, so it stays visible and understandable even where it's
+ * excluded wholly or partly from the month's spending header (see
+ * repaymentAccounting.ts's own doc comment for the underlying accounting
+ * contract this describes). Returns null for an ordinary bill/income/ad-hoc
+ * transaction — no badge, no change from existing presentation. The row's
+ * own amount is always the transaction's full recorded payment (the real
+ * money that moved) — this only explains how much, if any, of it counts as
+ * spending; it never re-labels the amount field itself. */
+function repaymentBadge(data: AppData, t: Transaction): string | null {
+  if (t.isRepayment) return 'Repayment — not counted as spending';
+  if (t.isLoanRepayment) {
+    if (t.principalAmount === undefined) return 'Balance not updated — split unknown';
+    if (t.principalAmount === 0) return 'All interest — no change to recorded balance';
+    const interest = Math.max(0, t.amount - t.principalAmount);
+    if (interest === 0) return `$${Math.round(t.principalAmount).toLocaleString()} to principal — no interest`;
+    return `$${Math.round(t.principalAmount).toLocaleString()} principal, $${Math.round(interest).toLocaleString()} interest`;
+  }
+  if (t.recurringItemId) {
+    const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+    if (item?.linkedLiabilityId) {
+      const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+      if (liability?.type === 'bnpl') return 'Repayment — not counted as spending';
+    }
+  }
+  return null;
+}
+
+function groupByMonth(data: AppData): MonthGroup[] {
+  const transactions = data.transactions;
   const map = new Map<string, Transaction[]>();
   transactions.forEach((t) => {
     const d = new Date(t.date);
@@ -35,7 +65,25 @@ function groupByMonth(transactions: Transaction[]): MonthGroup[] {
     .map(([key, txns]) => {
       const sorted = [...txns].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       const income = txns.filter((t) => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-      const expenses = txns.filter((t) => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+      // Final three-measure accounting correction — the month HEADER total
+      // is an AGGREGATE-SPENDING presentation ("this month you spent $X"),
+      // so it uses resolveTransactionAggregateSpendingAmount, the SAME
+      // resolver monthlySummary.ts's computeMonthToDateActivity uses for
+      // This Month's own "Spent" figure — never the cashflow resolver
+      // (reserved for Financial State's Recorded Cashflow alone). An
+      // ordinary bill counts in full (proven correct by the device test), a
+      // credit-card/BNPL repayment resolves to $0, a loan repayment
+      // resolves to its known interest/fees portion (or the full amount
+      // when interest-only), and an UNKNOWN-split loan repayment resolves
+      // to $0 here specifically — real cash left the account, but Navilo
+      // cannot identify any of it as an expense, so it must never inflate
+      // this "spending" header (see repaymentAccounting.ts's module header
+      // for the full three-measure contract). The individual transaction
+      // ROW for that payment is completely unaffected — it still shows the
+      // full amount paid, labelled "Balance not updated — split unknown"
+      // (repaymentBadge below) — only this month total's composition
+      // changed.
+      const expenses = txns.filter((t) => t.type === 'expense').reduce((sum, t) => sum + resolveTransactionAggregateSpendingAmount(data, t), 0);
       const [y, m] = key.split('-').map(Number);
       const label = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
       return { key, label, transactions: sorted, income, expenses, net: income - expenses };
@@ -71,7 +119,7 @@ export function TransactionsScreen() {
     if (t.recurringItemId) return recurringItemsMap.get(t.recurringItemId)?.label ?? null;
     return null;
   }
-  const monthGroups = useMemo(() => groupByMonth(data.transactions), [data.transactions]);
+  const monthGroups = useMemo(() => groupByMonth(data), [data]);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set(monthGroups[0] ? [monthGroups[0].key] : []));
   const insights = useMemo(() => computeSpendingInsights(data), [data]);
 
@@ -134,6 +182,7 @@ export function TransactionsScreen() {
         categoryChip: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         categoryChipText: { ...typography.micro, fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
         txnDate: { ...typography.micro, color: colors.textMuted },
+        txnBadge: { ...typography.micro, fontSize: 11, color: colors.textSecondary, fontStyle: 'italic', marginTop: 1 },
         rowAmount: { ...typography.heading, fontSize: 14, marginRight: 6 },
         insightsTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm },
         insightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.sm },
@@ -229,6 +278,7 @@ export function TransactionsScreen() {
                   {group.transactions.map((item) => {
                     const category = categoryMap.get(item.categoryId);
                     const displayLabel = transactionDisplayLabel(item);
+                    const badge = repaymentBadge(data, item);
                     return (
                       <TouchableOpacity
                         key={item.id}
@@ -247,6 +297,7 @@ export function TransactionsScreen() {
                             </View>
                             <Text style={styles.txnDate}>{new Date(item.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</Text>
                           </View>
+                          {badge ? <Text style={styles.txnBadge}>{badge}</Text> : null}
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Text style={[styles.rowAmount, { color: item.type === 'income' ? colors.success : colors.danger }]}>

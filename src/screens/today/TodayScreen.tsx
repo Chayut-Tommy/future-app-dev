@@ -13,11 +13,8 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
-import { SavingsCoachCard } from '../../components/health/SavingsCoachCard';
 import { LuluCheckInCard } from '../../components/today/LuluCheckInCard';
-import { LuluRecommendationCard } from '../../components/today/LuluRecommendationCard';
 import { FinancialStateCard } from '../../components/today/FinancialStateCard';
-import { SavingFactsCard } from '../../components/today/SavingFactsCard';
 import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
@@ -30,16 +27,16 @@ import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
-import { findOpportunities, OpportunityAction } from '../../lib/calculations/opportunities';
 import { useFinancialState } from '../../lib/calculations/financialState';
 import { computeAchievements } from '../../lib/calculations/achievements';
-import { pickDailyInsight } from '../../lib/calculations/dailyInsight';
+import { pickTodayContextualInsight } from '../../lib/calculations/todayContextualInsight';
 import { timeAwareGreeting, computeCheckInLine } from '../../lib/calculations/greeting';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
 import { computeMoneyTimeline } from '../../lib/calculations/moneyTimeline';
 import { computeTopReminder } from '../../lib/calculations/reminders';
+import { ReminderOpenRequest, createReminderOpenRequest } from '../../lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
 import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
 import { computeJourneySnapshot } from '../../lib/calculations/journeySnapshot';
@@ -48,8 +45,6 @@ import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
 import { brand } from '../../lib/brand';
-
-const QUICK_CONTRIBUTE_AMOUNTS = [100, 200, 500];
 
 // Confetti + trophy tier reserved for the genuinely big moments (PRD ask) —
 // everything else newly-unlocked still gets the existing Journey sheet.
@@ -73,7 +68,20 @@ export function TodayScreen() {
   // tile; hosts the exact existing SmartReminderCard (its full question,
   // disclosure copy, and account-choice controls) in ReminderDetailSheet,
   // never inline inside the hero.
-  const [reminderSheetVisible, setReminderSheetVisible] = useState(false);
+  //
+  // Reminder-opening correction round — replaces the former
+  // `reminderSheetVisible` boolean, which competed with
+  // ReminderDetailSheet's own reducer as a second, independently-tracked
+  // source of "is the sheet visible" (the confirmed root cause of the
+  // blank-sheet device-test defect — see ReminderDetailSheet.tsx's own doc
+  // comment for the full effect-ordering trace). This screen now only ever
+  // SENDS an atomic open request; it never tracks or needs to know whether
+  // the sheet is currently showing — ReminderDetailSheet owns that
+  // entirely via isReminderLifecycleVisible(state). Mirrors the same
+  // monotonic-requestId pattern this screen's own focusRequestIdRef
+  // already established for AUP/timeline navigation.
+  const reminderOpenRequestIdRef = useRef(0);
+  const [reminderOpenRequest, setReminderOpenRequest] = useState<ReminderOpenRequest | null>(null);
 
   // Round 6 correction — the single live local-date value this screen's
   // month heading and relative-day labels derive from; see
@@ -84,8 +92,6 @@ export function TodayScreen() {
   const greeting = useMemo(() => timeAwareGreeting(data.user.name, t), [data.user.name, t]);
   const monthLabel = useMemo(() => currentDate.toLocaleDateString(undefined, { month: 'long' }), [currentDate]);
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
-  const opportunities = useMemo(() => findOpportunities(data), [data]);
-  const topOpportunity = opportunities[0] ?? null;
   const financialState = useFinancialState(data);
 
   // Today Briefing (Pass 2A) — every input computed exactly once here and
@@ -106,37 +112,39 @@ export function TodayScreen() {
   // achievement rules, only formats what's already there.
   const scoreChipPresentation = useMemo(() => selectScoreChipPresentation(luluScore), [luluScore]);
 
-  // Cash/savings shortcuts should update the user's existing savings
-  // account rather than silently creating a duplicate one (PRD ask) —
-  // adding a genuinely separate account is still possible from Wealth's
-  // own "+ Add" affordance, which is explicit and intentional.
-  function openSavingsFlow() {
-    const existingSavings = data.assets.find((a) => a.type === 'savings') ?? data.assets.find((a) => a.type === 'cash');
-    setWealthModalEditAsset(existingSavings ?? null);
-    setWealthModalPresetType(existingSavings ? undefined : 'savings');
-    setWealthModalVisible(true);
-  }
-
-  function closeWealthModal() {
-    setWealthModalVisible(false);
-    setWealthModalEditAsset(null);
-    setWealthModalPresetType(undefined);
-  }
-
+  // Device-test correction round — Financial Rebuild's own two actions
+  // read the exact same active-goal predicate primaryActiveGoal (below)
+  // will also use for the goal-snapshot section, so "does the user have
+  // an active goal" can never disagree between the two.
+  const hasActiveGoal = data.goals.some((g) => g.status === 'active');
   const financialStateActions = {
     income: () => setIncomeModalVisible(true),
     bills: () => navigation.navigate('Money'),
     spending: () => navigation.navigate('Transactions'),
+    // Financial Rebuild only — the existing Wealth tab route (net worth is
+    // shown there, no new/duplicate destination).
+    reviewNetWorth: () => navigation.navigate('Wealth'),
+    // Financial Rebuild only — existing Goals route when a goal already
+    // exists, the existing AddGoalModal when it doesn't.
+    goal: () => (hasActiveGoal ? navigation.navigate('Goals') : setGoalModalVisible(true)),
   };
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const journeySnapshot = useMemo(() => computeJourneySnapshot(achievements), [achievements]);
-  // Pass 2B correction §4 — never offer a daily insight that merely
-  // restates the exact milestone Journey already shows as "Next" directly
-  // above it; compared by achievement id (structured identity), never by
-  // parsing or diffing rendered text. Every other insight in the pool
-  // (goal impact, savings interest, score band) remains fully eligible.
-  const dailyInsight = useMemo(() => pickDailyInsight(data, undefined, journeySnapshot.next?.id ?? null), [data, journeySnapshot.next]);
+  // Pass 2D — Today's single contextual-insight slot (final hierarchy §6).
+  // Only computed/shown when the financial state is standard — a non-
+  // standard state (cashflow tight / rebuilding) takes override priority
+  // over this slot entirely (see the JSX below), the same mutual-
+  // exclusivity the pre-Pass-2D FinancialStateCard/LuluRecommendationCard
+  // pairing already had. Still deduplicated against Journey's own "next
+  // milestone" via the exact same achievement-id comparison Pass 2B
+  // established (journeySnapshot.next?.id) — see
+  // todayContextualInsight.ts's own doc comment for why milestone/score
+  // entries are never eligible for this slot at all, by construction.
+  const contextualInsight = useMemo(
+    () => (financialState.key === 'standard' ? pickTodayContextualInsight(data, journeySnapshot.next?.id ?? null) : null),
+    [financialState.key, data, journeySnapshot.next]
+  );
 
   // Real, in-session signal for "the user just did something" — not a
   // fabricated claim (PRD ask: Lulu's check-in line must stay honest about
@@ -158,8 +166,13 @@ export function TodayScreen() {
     () => computeCheckInLine({ firstOpenedAt: data.user.firstOpenedAt, actedThisSession }),
     [data.user.firstOpenedAt, actedThisSession]
   );
-  const checkInInsight = checkInLine.insightOverride ? { icon: 'sparkles' as const, text: checkInLine.insightOverride } : dailyInsight;
-  const activeGoals = data.goals.filter((g) => g.status === 'active');
+  // Pass 2D — the single active-goal snapshot (final hierarchy §3). The
+  // exact same source and order Grow's own "Your goals" list already
+  // reads (data.goals, creation order, no new ranking rule) — just the
+  // first one, since Today now shows one compact snapshot rather than the
+  // full list. Full multi-goal management (reorder, priority, all goals)
+  // remains exclusively in Grow, unchanged.
+  const primaryActiveGoal = data.goals.find((g) => g.status === 'active') ?? null;
   // Derived live from data.goals by id, not a snapshot taken at tap-time —
   // otherwise a contribution that completes a goal wouldn't be reflected
   // in the already-open sheet (PRD bug report: "still behaves like active"
@@ -266,9 +279,18 @@ export function TodayScreen() {
   // section, whose own per-state CTA already owns the actual recovery
   // journey) — this switch exists so that ownership is genuinely read from
   // the presentation, not merely declared on its type and then ignored.
+  //
+  // Final Pass 2D device-test correction, §9 — stamps a fresh
+  // scrollToRequestId (reusing the exact same monotonic counter Grow's own
+  // focus requests already use below — a single shared sequence is safe
+  // since Money and Grow each compare requestId only within their own
+  // pending-focus module) so a repeat tap on the AUP tile is always a
+  // genuine, detectable navigation change, never silently swallowed by
+  // React Navigation treating identical params as unchanged.
   function handleBriefingAupPress() {
     if (safeToSpendPresentation.action.kind === 'focus_money_section') {
-      navigation.navigate('Money', { scrollTo: safeToSpendPresentation.action.section });
+      focusRequestIdRef.current += 1;
+      navigation.navigate('Money', { scrollTo: safeToSpendPresentation.action.section, scrollToRequestId: focusRequestIdRef.current });
     }
   }
 
@@ -286,44 +308,29 @@ export function TodayScreen() {
   // same section would navigate with an identical params object and React
   // Navigation would treat it as no change, silently swallowing the repeat
   // tap. The id makes every intentional tap a genuine, detectable change,
-  // even back-to-back taps on the exact same section.
+  // even back-to-back taps on the exact same section. Pass 2D reuses this
+  // exact same counter/mechanism for the new contextual-insight and goal-
+  // snapshot destinations — no second, parallel navigation system.
   const focusRequestIdRef = useRef(0);
-  function handleScoreChipPress() {
+  function navigateToGrow(scrollTo: string) {
     focusRequestIdRef.current += 1;
-    navigation.navigate('Grow', { scrollTo: 'score', scrollToRequestId: focusRequestIdRef.current });
+    navigation.navigate('Grow', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
+  }
+  function handleScoreChipPress() {
+    navigateToGrow('score');
   }
   function handleJourneyPress() {
-    focusRequestIdRef.current += 1;
-    navigation.navigate('Grow', { scrollTo: 'journey', scrollToRequestId: focusRequestIdRef.current });
+    navigateToGrow('journey');
   }
-
-  function handleOpportunityAction(action: OpportunityAction) {
-    switch (action) {
-      case 'add_asset':
-        if (topOpportunity?.investingRelated) {
-          setWealthModalEditAsset(null);
-          setWealthModalPresetType('etf');
-          setWealthModalVisible(true);
-        } else {
-          openSavingsFlow();
-        }
-        break;
-      case 'add_goal':
-        setGoalModalVisible(true);
-        break;
-      case 'review_spending':
-        navigation.navigate('Transactions');
-        break;
-      case 'manage_cards':
-        navigation.navigate('Cards');
-        break;
-      case 'open_discover':
-        navigation.navigate('Grow');
-        break;
-      case 'open_wealth':
-        navigation.navigate('Wealth');
-        break;
-    }
+  // Pass 2D — the one contextual insight's own destination, computed by
+  // pickTodayContextualInsight (see that module's own doc comment for the
+  // three-source priority this reuses). 'transactions' routes to the exact
+  // same screen the retired LuluRecommendationCard's review_spending action
+  // already used for this identical goalImpact entry.
+  function handleContextualInsightPress() {
+    if (!contextualInsight) return;
+    if (contextualInsight.destination.kind === 'grow_focus') navigateToGrow(contextualInsight.destination.target);
+    else navigation.navigate('Transactions');
   }
 
   const styles = useMemo(
@@ -353,25 +360,8 @@ export function TodayScreen() {
         sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm, marginTop: spacing.sm },
         sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
         sectionLink: { ...typography.micro, color: colors.accent, fontWeight: '700' },
-        // Visually secondary — smaller, muted, wraps naturally (no
-        // numberOfLines) — placed once above the goal list, not repeated
-        // per row (Stream A follow-up §5).
-        goalsProgressHint: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, lineHeight: 16 },
-        goalRow: { marginBottom: spacing.lg },
-        goalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-        goalName: { ...typography.body, fontSize: 13, color: colors.textPrimary },
-        goalPercent: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
-        quickContributeRow: { flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm },
-        quickButton: {
-          flex: 1,
-          alignItems: 'center',
-          paddingVertical: 8,
-          borderRadius: radius.control,
-          backgroundColor: colors.accentSoft,
-        },
-        quickButtonOther: { backgroundColor: colors.surfaceMuted },
-        quickButtonText: { ...typography.micro, fontSize: 11, color: colors.accentStrong, fontWeight: '700' },
-        quickButtonTextOther: { color: colors.textSecondary },
+        goalName: { ...typography.body, fontSize: 15, color: colors.textPrimary, fontWeight: '700', marginBottom: 6 },
+        goalAmount: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 6 },
       }),
     [colors, spacing, typography, radius, glow, cardShadow, insets.top]
   );
@@ -395,16 +385,20 @@ export function TodayScreen() {
         <Text style={styles.brand}>{brand.name.toUpperCase()}</Text>
       </View>
 
-      {/* 1. Greeting — the emotional handshake, kept outside the card so it
-          doesn't read like dashboard content (PRD ask). */}
+      {/* 1. Greeting and settings — the emotional handshake, kept outside
+          the card so it doesn't read like dashboard content (PRD ask).
+          Settings access is the floating overlay button above; the AI and
+          Add controls are mounted at the navigator level (FloatingLuluButton
+          / the global + button), not owned by this screen. No financial-
+          health claim is ever added here — greeting wording is unchanged
+          from the accepted Pass 2A-2C copy (timeAwareGreeting). */}
       <Text style={styles.greeting}>{greeting}</Text>
 
-      {/* 1.25 Your Today Briefing (Pass 2A, extended Pass 2B) — a compact
-          Score chip, the leading Available Until Payday/Available Money
-          reading, the existing top Smart Reminder when eligible, and up to
-          two independent upcoming-event rows. Immediately below the
-          greeting, ahead of the guided checklist, so it's the first
-          substantive content a returning user sees. */}
+      {/* 2. Your Today Briefing (Pass 2A, extended Pass 2B) — unchanged:
+          eligibility, priority, the three-financial-item cap (Score
+          excluded from that cap), responsive one/two/three-item layouts,
+          reminder actions, AUP/event destinations, palette behaviour, and
+          every calculation are all exactly as Pass 2A-2C shipped them. */}
       <TodayBriefingCard
         today={currentDate}
         scoreChip={scoreChipPresentation}
@@ -413,129 +407,91 @@ export function TodayScreen() {
         topReminder={topReminder}
         onPressScoreChip={handleScoreChipPress}
         onPressAup={handleBriefingAupPress}
-        onPressEventRow={() => navigation.navigate('Money', { scrollTo: 'timeline' })}
-        onPressReminderTile={() => setReminderSheetVisible(true)}
+        onPressEventRow={() => {
+          // Final Pass 2D device-test correction, §9 — same requestId fix
+          // as handleBriefingAupPress above: this destination shares the
+          // identical underlying pending-focus mechanism in MoneyScreen.tsx
+          // (moneySectionFocus.ts), so it needed the identical correction.
+          focusRequestIdRef.current += 1;
+          navigation.navigate('Money', { scrollTo: 'timeline', scrollToRequestId: focusRequestIdRef.current });
+        }}
+        onPressReminderTile={() => {
+          // Reminder-opening correction round — captures the exact
+          // currently-selected topReminder synchronously, at press time;
+          // if none exists right now, no request is issued and no sheet
+          // opens at all (never a blank shell). requestId is strictly
+          // monotonic, so a stray duplicate/rapid-repeat press can be
+          // deterministically deduped downstream (ReminderDetailSheet.tsx).
+          if (!topReminder) return;
+          reminderOpenRequestIdRef.current += 1;
+          setReminderOpenRequest(createReminderOpenRequest(reminderOpenRequestIdRef.current, topReminder));
+        }}
       />
 
-      {/* 1.3 Your Journey snapshot (Pass 2B) — replaces the long Today
-          Journey timeline; placed immediately after Your Today Briefing per
-          the canonical Briefing hierarchy. The full timeline remains
-          reachable in Grow via onPress. */}
+      {/* 3. Your Journey snapshot (Pass 2B) — unchanged: completed count,
+          next milestone, progress, one-tap routing to Grow with automatic
+          Milestones selection and expansion, milestone persistence and
+          celebrations. Immediately after Briefing, preserving the exact
+          Pass 2B-accepted ordering (Briefing -> Journey snapshot). Correction
+          pass — This Month (4) now follows immediately: the conditional
+          recovery/first-run affordances that used to sit here (locked-Score
+          unlock, money-picture checklist) moved to the trailing,
+          non-canonical block after the contextual insight slot (6), so
+          nothing but the six canonical sections themselves can ever
+          interleave this Journey -> This Month -> Goal snapshot sequence. */}
       <TodayJourneySnapshotCard snapshot={journeySnapshot} onPress={handleJourneyPress} />
 
-      {/* 1.5 Guided first-run checklist — a brand-new user otherwise only
-          sees a bare "Add income" prompt (PRD bug report). Real completion
-          state, not a fabricated onboarding flow. */}
-      <MoneyPictureChecklistCard />
-
-      {/* 2. Lulu Daily Check-in — a short AI message (PRD ask). Pass 2B: no
-          longer also carries the Score presentation — see
-          LuluCheckInCard.tsx's own doc comment for why that was un-merged
-          into the new compact Score chip above. */}
-      <LuluCheckInCard topLine={checkInLine.topLine} insight={checkInInsight} />
-      {luluScore.locked ? (
-        <UnlockPromptCard
-          icon={UNLOCK_COPY.lulu_score.icon}
-          title={UNLOCK_COPY.lulu_score.title}
-          body={UNLOCK_COPY.lulu_score.body}
-          actionLabel={UNLOCK_COPY.lulu_score.actionLabel}
-          onAction={() => setIncomeModalVisible(true)}
-        />
-      ) : null}
-
-      {/* 4.5 "X so far" — a live month-to-date pulse check, external header
-          for consistency with every other Today section (PRD bug report:
-          the title used to live inside the card, unlike everywhere else). */}
+      {/* 4. This Month — unchanged: transaction inclusion/exclusion,
+          month-to-date boundaries, exact cents, income/spending/net
+          totals, payment-source breakdown, flip behaviour, and the
+          Transaction History route are all exactly as before this pass. */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{monthLabel} so far</Text>
       </View>
       <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
 
-      {/* 5. Key recommendation — one thing at a time, Lulu talking, not a
-          checklist (PRD ask). Comes after Journey: celebrate first, then
-          suggest the next step. A non-standard financial state (Cashflow
-          Focus / Financial Rebuild) takes over this slot instead — "your
-          cashflow is tight" or "your position is rebuilding," never a
-          checklist of things going wrong. */}
-      {financialState.key !== 'standard' ? (
-        <FinancialStateCard state={financialState} actions={financialStateActions} />
-      ) : topOpportunity ? (
-        <LuluRecommendationCard
-          opportunity={topOpportunity}
-          onAction={handleOpportunityAction}
-          onLearn={() => {
-            focusRequestIdRef.current += 1;
-            navigation.navigate('Grow', { scrollTo: 'financial-learning', scrollToRequestId: focusRequestIdRef.current });
-          }}
-        />
-      ) : null}
-
-      {/* 6. Savings Account Coach, with rotating educational facts underneath. */}
+      {/* 5. Compact goal snapshot (Pass 2D) — exactly one active-goal
+          summary, or one clear empty action; replaces the previous
+          full-list-with-inline-quick-contribute-buttons presentation. The
+          same existing goal source/order (data.goals, unsorted, first
+          active) and the same existing GoalDetailSheet destination (richer
+          contribution/progress-update controls live there already, so
+          nothing accepted is lost — only the long inline Today treatment
+          is gone). Achieved/archived goals are never shown here (status
+          filter is 'active' only, the exact same filter Grow's own list
+          already used). */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{t('today.savingsCoach')}</Text>
+        <Text style={styles.sectionTitle}>Your goal</Text>
       </View>
-      <SavingsCoachCard />
-      <SavingFactsCard />
-
-      {/* 7. Goals progress — editable right here, no navigation required.
-          People think in dollars, not percentages, so quick-contribute
-          uses fixed amounts + a free-text "Other" that opens the full
-          goal detail sheet. */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{t('today.goalsProgress')}</Text>
-      </View>
-      {activeGoals.length > 0 ? (
-        <SectionCard>
-          <Text style={styles.goalsProgressHint}>Updates progress only — no money is moved.</Text>
-          {activeGoals.map((g) => {
-            const pct = g.targetAmount ? Math.min(1, g.currentAmount / g.targetAmount) : 0;
-            return (
-              <View key={g.id} style={styles.goalRow}>
-                {/* The name+percent+bar area is the tappable "card" — a
-                    sibling of the quick-contribute row below, never a
-                    parent of it, so the two never produce a conflicting
-                    nested-touchable tap (regression-protection review,
-                    Stream A §3, same pattern already proven for This
-                    Month's card + sibling info icon). Resolved by stable
-                    goal id (g.id), never name/position. */}
-                <TouchableOpacity
-                  onPress={() => setContributeGoalId(g.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${g.name}${g.targetAmount ? `, ${Math.round(pct * 100)} percent complete` : ''}`}
-                  accessibilityHint="Opens goal details"
-                >
-                  <View style={styles.goalHeaderRow}>
-                    <Text style={styles.goalName}>{g.name}</Text>
-                    {g.targetAmount ? <Text style={styles.goalPercent}>{Math.round(pct * 100)}%</Text> : null}
-                  </View>
-                  <ProgressBar progress={pct} />
-                </TouchableOpacity>
+      {primaryActiveGoal ? (
+        (() => {
+          const g = primaryActiveGoal;
+          const pct = g.targetAmount ? Math.min(1, g.currentAmount / g.targetAmount) : 0;
+          return (
+            <TouchableOpacity
+              onPress={() => setContributeGoalId(g.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`${g.name}${
+                g.targetAmount ? `, ${Math.round(pct * 100)} percent of $${Math.round(g.targetAmount).toLocaleString()}` : ', no target set yet'
+              }`}
+              accessibilityHint="Opens goal details"
+            >
+              <SectionCard>
+                <Text style={styles.goalName}>{g.name}</Text>
                 {g.targetAmount ? (
-                  <View style={styles.quickContributeRow}>
-                    {QUICK_CONTRIBUTE_AMOUNTS.map((amount) => (
-                      <TouchableOpacity
-                        key={amount}
-                        style={styles.quickButton}
-                        onPress={() => {
-                          const newAmount = g.currentAmount + amount;
-                          const wasComplete = g.targetAmount !== null && g.currentAmount >= g.targetAmount;
-                          const isNowComplete = g.targetAmount !== null && newAmount >= g.targetAmount;
-                          updateGoal(g.id, { currentAmount: newAmount, status: isNowComplete ? 'completed' : g.status });
-                          celebrate(isNowComplete && !wasComplete ? buildGoalMilestoneCelebration(g.name) : buildSavingCelebration(amount, g.name));
-                        }}
-                      >
-                        <Text style={styles.quickButtonText}>+${amount}</Text>
-                      </TouchableOpacity>
-                    ))}
-                    <TouchableOpacity style={[styles.quickButton, styles.quickButtonOther]} onPress={() => setContributeGoalId(g.id)}>
-                      <Text style={[styles.quickButtonText, styles.quickButtonTextOther]}>Other</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
-        </SectionCard>
+                  <>
+                    <ProgressBar progress={pct} />
+                    <Text style={styles.goalAmount}>
+                      {Math.round(pct * 100)}% • ${Math.round(g.currentAmount).toLocaleString()} of ${Math.round(g.targetAmount).toLocaleString()}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={styles.goalAmount}>No target set yet</Text>
+                )}
+              </SectionCard>
+            </TouchableOpacity>
+          );
+        })()
       ) : (
         <UnlockPromptCard
           icon={UNLOCK_COPY.goal_tracking.icon}
@@ -546,12 +502,56 @@ export function TodayScreen() {
         />
       )}
 
+      {/* 6. Contextual insight — zero or one only (Pass 2D). A non-standard
+          financial state (cashflow tight / rebuilding) takes override
+          priority over this slot — the same established, unmodified
+          computeFinancialState signal and FinancialStateCard presentation
+          Today already used, just repositioned into this final slot rather
+          than an earlier "recommendation" position. Otherwise, at most one
+          of the three established insight sources (emergency savings,
+          savings-rate, or an existing factual daily insight) renders via
+          the existing LuluCheckInCard presentation — nothing shows here at
+          all when neither applies, so no empty gap is left. */}
+      {financialState.key !== 'standard' ? (
+        <FinancialStateCard state={financialState} actions={financialStateActions} hasActiveGoal={hasActiveGoal} />
+      ) : contextualInsight ? (
+        <TouchableOpacity onPress={handleContextualInsightPress} activeOpacity={0.8} accessibilityRole="button" accessibilityHint="Opens the related section">
+          <LuluCheckInCard topLine={checkInLine.topLine} insight={contextualInsight} />
+        </TouchableOpacity>
+      ) : null}
+
+      {/* Correction pass — recovery/first-run affordances (locked Score,
+          incomplete first-run money picture) are genuinely necessary
+          capabilities (see UnlockPromptCard.tsx/MoneyPictureChecklistCard.tsx's
+          own doc comments) but are NOT one of the six canonical routine
+          sections above and must never be interleaved between them — an
+          earlier version of this pass placed them between Journey and This
+          Month, which broke the Journey -> This Month -> Goal snapshot
+          adjacency the six-section contract requires. Moved here, after
+          the single contextual-insight slot, alongside the pre-existing
+          ProfileNudgeCard/LoanBalanceReminderCard trailing cards this
+          screen already used for exactly this kind of occasional,
+          self-hiding, non-canonical content — the same established
+          pattern, not a new one. Each of the four cards below renders
+          nothing (and leaves no gap) when its own condition doesn't apply;
+          none of their calculations, actions, or persistence changed —
+          only their position on the page. */}
       <View style={{ marginTop: spacing.lg }}>
+        {luluScore.locked ? (
+          <UnlockPromptCard
+            icon={UNLOCK_COPY.lulu_score.icon}
+            title={UNLOCK_COPY.lulu_score.title}
+            body={UNLOCK_COPY.lulu_score.body}
+            actionLabel={UNLOCK_COPY.lulu_score.actionLabel}
+            onAction={() => setIncomeModalVisible(true)}
+          />
+        ) : null}
+        <MoneyPictureChecklistCard />
         <ProfileNudgeCard />
         <LoanBalanceReminderCard />
       </View>
 
-      <ReminderDetailSheet visible={reminderSheetVisible} topReminder={topReminder} onClose={() => setReminderSheetVisible(false)} />
+      <ReminderDetailSheet openRequest={reminderOpenRequest} today={currentDate} />
       <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <AddWealthItemModal
@@ -559,7 +559,11 @@ export function TodayScreen() {
         kind="asset"
         editAsset={wealthModalEditAsset}
         presetAssetType={wealthModalPresetType}
-        onClose={closeWealthModal}
+        onClose={() => {
+          setWealthModalVisible(false);
+          setWealthModalEditAsset(null);
+          setWealthModalPresetType(undefined);
+        }}
       />
       <GoalDetailSheet goal={contributeGoal} onClose={() => setContributeGoalId(null)} onCreateAnother={() => setGoalModalVisible(true)} />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />

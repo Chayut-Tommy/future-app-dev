@@ -36,6 +36,7 @@ import { MoneyTimelineCard } from '../../components/money/MoneyTimelineCard';
 import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculations/debtCoach';
 import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
+import { parseMoneySectionFocusRequest, computeMoneySectionFocusFulfillment, MoneySectionFocusRequest } from '../../lib/calculations/moneySectionFocus';
 import { RecurringItem, LiabilityType } from '../../types/models';
 import { brand } from '../../lib/brand';
 
@@ -181,40 +182,47 @@ export function MoneyScreen() {
     [data.transactions]
   );
 
-  // Pass 2A section-focused navigation — supports layout-not-ready (a
-  // section's onLayout may not have fired yet on the very first frame after
-  // a tab switch, so this retries across a few animation frames rather than
-  // giving up immediately), repeated identical focus requests (achieved by
-  // always clearing scrollTo via setParams once handled, so navigating to
-  // the same target again is a genuine undefined→value transition next
-  // time), and an empty-state fallback (if a section's ref is still
-  // unmeasured after the retry budget — e.g. it never mounted — this clears
-  // the param and leaves the screen exactly where existing tab/Back
-  // behaviour already puts it, rather than leaving a stale request queued
-  // or crashing on a null offset).
+  // Final Pass 2D device-test correction, §9 — reliable targeted AUP/timeline
+  // navigation. Replaces the previous finite-requestAnimationFrame-retry
+  // effect (30 frames, no requestId), confirmed as the root cause of "Money
+  // remains at the previously saved scroll position" (this round's final
+  // report §9): that effect could give up before this screen's own scroll
+  // container had genuinely mounted/measured after a cross-tab navigation
+  // transition, AND had no requestId, so a second identical tap on the same
+  // Briefing tile navigated with byte-identical params — React Navigation
+  // treats that as no change, so the effect never even re-fired for the
+  // repeat tap. Now uses the exact same measured, pending/requestId focus
+  // pattern already proven by Grow's own sectionFocus.ts/DiscoverScreen.tsx
+  // (adapted here as moneySectionFocus.ts, a distinct module — see its own
+  // doc comment for why). A request stays pending — never abandoned by a
+  // frame budget — until its target section's own onLayout genuinely
+  // measures it, however long that takes; every request carries a fresh,
+  // caller-stamped requestId (see TodayScreen.tsx's handleBriefingAupPress/
+  // onPressEventRow), so a repeat tap on the same target is always a
+  // genuine, detectable change. An ordinary manual tap on the Money bottom
+  // tab carries neither scrollTo nor scrollToRequestId, so
+  // parseMoneySectionFocusRequest correctly returns null and this
+  // mechanism does nothing — the customer's existing scroll position is
+  // left exactly where it was, per this round's explicit required
+  // distinction between targeted and ordinary tab navigation.
+  const pendingMoneyFocusRef = useRef<MoneySectionFocusRequest | null>(null);
+  function attemptMoneySectionFocus() {
+    const result = computeMoneySectionFocusFulfillment(pendingMoneyFocusRef.current, {
+      aup: aupSectionY.current,
+      timeline: whatHappensNextSectionY.current,
+    });
+    if (!result.fulfilled) return; // still pending — retried by that section's own onLayout below
+    tabScrollRefs.Money.current?.scrollTo({ y: result.scrollY!, animated: true });
+    pendingMoneyFocusRef.current = null;
+    navigation.setParams({ scrollTo: undefined, scrollToRequestId: undefined });
+  }
   useEffect(() => {
-    const target = route.params?.scrollTo;
-    if (target !== 'aup' && target !== 'timeline') return;
-    const targetRef = target === 'aup' ? aupSectionY : whatHappensNextSectionY;
-    let cancelled = false;
-    let frameId: number | null = null;
-    function attempt(retriesLeft: number) {
-      if (cancelled) return;
-      if (targetRef.current !== null) {
-        tabScrollRefs.Money.current?.scrollTo({ y: targetRef.current, animated: true });
-        navigation.setParams({ scrollTo: undefined });
-      } else if (retriesLeft > 0) {
-        frameId = requestAnimationFrame(() => attempt(retriesLeft - 1));
-      } else {
-        navigation.setParams({ scrollTo: undefined });
-      }
-    }
-    attempt(30);
-    return () => {
-      cancelled = true;
-      if (frameId !== null) cancelAnimationFrame(frameId);
-    };
-  }, [route.params?.scrollTo, navigation]);
+    const parsed = parseMoneySectionFocusRequest(route.params?.scrollTo, route.params?.scrollToRequestId);
+    if (!parsed) return;
+    pendingMoneyFocusRef.current = parsed;
+    attemptMoneySectionFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.scrollTo, route.params?.scrollToRequestId]);
 
   function openAddBill() {
     setEditBill(null);
@@ -502,7 +510,12 @@ export function MoneyScreen() {
 
   return (
     <Screen title="Money" scrollRef={tabScrollRefs.Money}>
-      <View onLayout={(e) => (aupSectionY.current = e.nativeEvent.layout.y)}>
+      <View
+        onLayout={(e) => {
+          aupSectionY.current = e.nativeEvent.layout.y;
+          attemptMoneySectionFocus();
+        }}
+      >
         <SafeToSpendHero
           safeToSpend={safeToSpend}
           hasActiveGoals={hasActiveGoals}
@@ -554,7 +567,13 @@ export function MoneyScreen() {
         </>
       ) : null}
 
-      <View style={styles.sectionHeader} onLayout={(e) => (whatHappensNextSectionY.current = e.nativeEvent.layout.y)}>
+      <View
+        style={styles.sectionHeader}
+        onLayout={(e) => {
+          whatHappensNextSectionY.current = e.nativeEvent.layout.y;
+          attemptMoneySectionFocus();
+        }}
+      >
         <Text style={styles.sectionTitle}>What happens next</Text>
         <TouchableOpacity onPress={openAddBill} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={styles.link}>+ Add bill</Text>

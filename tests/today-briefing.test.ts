@@ -608,17 +608,50 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     !/SmartReminderCard/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
-    'SmartReminderCard is mounted in exactly one place across the whole Today pipeline — ReminderDetailSheet.tsx, with a real topReminder, never duplicated',
+    'SmartReminderCard is mounted in exactly one place across the whole Today pipeline — ReminderDetailSheet.tsx, with a real reminder value, never duplicated',
     (() => {
       const sheetSrc = readFileSync('src/components/today/ReminderDetailSheet.tsx', 'utf8');
-      return (sheetSrc.match(/<SmartReminderCard topReminder=\{topReminder\} \/>/g) || []).length === 1 && !/<SmartReminderCard/.test(TODAY_SCREEN_SRC);
+      // Device-test correction round — onNavigateAway={onClose} added
+      // (see ReminderDetailSheet.tsx's own doc comment); the "exactly one
+      // mount, never duplicated onto TodayScreen" claim is unaffected.
+      // Final Pass 2D device-test correction (native-Modal-lifecycle round)
+      // — the mounted reminder value is now `state.reminder` (this sheet's
+      // own useReducer-driven pinned state, replacing the prior round's
+      // displayedReminder — see this round's final report §1-§3), plus two
+      // more props (onRequestLoanRepayment/onRequestCreditCardRepayment);
+      // "exactly one mount, never duplicated" is still exactly what this
+      // assertion proves.
+      // WHY STALE AGAIN (Reminder-opening correction round): the confirmed
+      // blank-sheet defect (a competing external `visible`/`onClose`
+      // boolean racing this file's own reducer — see ReminderDetailSheet.tsx's
+      // own doc comment) removed the external `onClose` prop entirely;
+      // `onNavigateAway` is now the local `handleForceClose`.
+      // WHY STALE YET AGAIN (Reminder queue correction round): onSettled
+      // renamed to onOutcome (session-deferred "Not yet" fix), and the
+      // mounted reminder value is now `presentedState.reminder` (blank-shell
+      // close fix — see ReminderDetailSheet.tsx's own doc comment); "exactly
+      // one mount, never duplicated" is still exactly what this proves.
+      return (
+        (sheetSrc.match(/<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/g) || [])
+          .length === 1 && !/<SmartReminderCard/.test(TODAY_SCREEN_SRC)
+      );
     })()
   );
+  // WHY STALE (Reminder-opening correction round): `reminderSheetVisible`
+  // — a boolean competing with ReminderDetailSheet's own reducer as a
+  // second source of "is the sheet visible" — was the CONFIRMED root
+  // cause of the blank-sheet device-test defect this round fixes (see
+  // ReminderDetailSheet.tsx's own doc comment for the full trace). It is
+  // removed entirely: TodayScreen now only ever builds an atomic
+  // ReminderOpenRequest (gated on a live topReminder existing at press
+  // time) and never tracks whether the sheet is currently showing.
   assert(
-    'TodayScreen.tsx owns reminderSheetVisible and mounts exactly one ReminderDetailSheet, opened by the Briefing tile\'s onPressReminderTile',
-    /const \[reminderSheetVisible, setReminderSheetVisible\] = useState\(false\);/.test(TODAY_SCREEN_SRC) &&
-      /onPressReminderTile=\{\(\) => setReminderSheetVisible\(true\)\}/.test(TODAY_SCREEN_SRC) &&
-      /<ReminderDetailSheet visible=\{reminderSheetVisible\} topReminder=\{topReminder\} onClose=\{\(\) => setReminderSheetVisible\(false\)\} \/>/.test(TODAY_SCREEN_SRC)
+    'TodayScreen.tsx sends an atomic ReminderOpenRequest and mounts exactly one ReminderDetailSheet, opened by the Briefing tile\'s onPressReminderTile',
+    /const \[reminderOpenRequest, setReminderOpenRequest\] = useState<ReminderOpenRequest \| null>\(null\);/.test(TODAY_SCREEN_SRC) &&
+      /onPressReminderTile=\{\(\) => \{[\s\S]{0,700}if \(!topReminder\) return;[\s\S]{0,300}setReminderOpenRequest\(createReminderOpenRequest\(reminderOpenRequestIdRef\.current, topReminder\)\);/.test(
+        TODAY_SCREEN_SRC
+      ) &&
+      /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\} \/>/.test(TODAY_SCREEN_SRC)
   );
   // CANONICAL TILE ORDER (correction pass, this round): AUP tile -> Smart
   // Reminder tile -> event tiles — now enforced by selectBriefingTiles
@@ -636,13 +669,29 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
       /\{formatBriefingDateContext\(today\)\}/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
+    // Final Pass 2D device-test correction, §9 — both destinations now also
+    // stamp a fresh scrollToRequestId (the confirmed fix for "repeated
+    // targeted AUP navigation" — see this round's final report §9). The
+    // underlying claim (onPressAup is the presentation-action-driven
+    // handler; onPressEventRow still targets the timeline section) is
+    // unchanged and still proven.
     'onPressAup is now the presentation-action-driven handler, not a hard-coded navigate() literal inline; onPressEventRow still targets the timeline section',
-    /onPressAup=\{handleBriefingAupPress\}/.test(TODAY_SCREEN_SRC) && /onPressEventRow=\{\(\) => navigation\.navigate\('Money', \{ scrollTo: 'timeline' \}\)\}/.test(TODAY_SCREEN_SRC)
+    /onPressAup=\{handleBriefingAupPress\}/.test(TODAY_SCREEN_SRC) &&
+      /onPressEventRow=\{\(\) => \{[\s\S]{0,500}navigation\.navigate\('Money', \{ scrollTo: 'timeline', scrollToRequestId: focusRequestIdRef\.current \}\);/.test(
+        TODAY_SCREEN_SRC
+      )
   );
   assert(
+    // Final Pass 2D device-test correction, §9 — the navigate call now also
+    // stamps scrollToRequestId from the same shared monotonic counter
+    // Grow's own focus requests use; the underlying claim (genuinely reads
+    // safeToSpendPresentation.action, still navigates to Money's existing
+    // AUP section) is unchanged and still proven.
     'handleBriefingAupPress genuinely reads safeToSpendPresentation.action (action ownership is real, not decorative) and still navigates to Money\'s existing AUP section — no duplicate setup route introduced',
     /if \(safeToSpendPresentation\.action\.kind === 'focus_money_section'\) \{/.test(TODAY_SCREEN_SRC) &&
-      /navigation\.navigate\('Money', \{ scrollTo: safeToSpendPresentation\.action\.section \}\);/.test(TODAY_SCREEN_SRC)
+      /navigation\.navigate\('Money', \{ scrollTo: safeToSpendPresentation\.action\.section, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(
+        TODAY_SCREEN_SRC
+      )
   );
 
   assert(
@@ -655,9 +704,26 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
       (SMART_REMINDER_CARD_SRC.match(/<SectionCard>/g) || []).length === 1 &&
       /actionRow: \{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing\.sm \}/.test(SMART_REMINDER_CARD_SRC)
   );
+  // WHY dismiss()'s own needle changed: the ORIGINAL claim here was scoped
+  // to the Pass 2B mount-relocation correction (moving SmartReminderCard
+  // out of the inline Briefing row) — true at the time, and still true of
+  // that specific change. The final Pass 2D device-test correction (native-
+  // Modal-lifecycle round, a separate, later, explicitly authorized change)
+  // DID intentionally give dismiss() a new optional latestData parameter,
+  // so ReminderDetailSheet's SETTLED transition always receives the
+  // freshest committed AppData rather than a stale render closure (this
+  // round's final report §5) — see SmartReminderCard.tsx's own dismiss()
+  // doc comment. The other six functions remain untouched by either round.
   assert(
-    'every one of SmartReminderCard\'s confirm/dismiss/action functions (runConfirmation, runBnplConfirmation, confirmSalary, confirmSalaryToDestination, confirmBillPaid, confirmBnplEveryday, dismiss) is untouched by this correction — none of their bodies were edited, only the outer wrapper',
-    ['function dismiss()', 'function runConfirmation(', 'function runBnplConfirmation(', 'function confirmSalary()', 'function confirmSalaryToDestination(', 'function confirmBillPaid(', 'function confirmBnplEveryday('].every((needle) =>
+    // WHY STALE: Reminder queue correction round replaced the single
+    // ambiguous dismiss(latestData?: AppData) with discriminated outcome
+    // reporters (deferReminder/acknowledgeReminder/reportCompleted/
+    // reportAlreadyResolved) — the confirmed fix for the Not-yet-terminates-
+    // the-review device-test defect (dismiss()'s own local dismissedIds Set
+    // conflicting with the reducer's correct re-selection of an unchanged
+    // top reminder). The other six confirm/action functions are unchanged.
+    'every one of SmartReminderCard\'s confirm/action/outcome functions (runConfirmation, runBnplConfirmation, confirmSalary, confirmSalaryToDestination, confirmBillPaid, confirmBnplEveryday, deferReminder, acknowledgeReminder, reportCompleted, reportAlreadyResolved) exists with its current signature',
+    ['function deferReminder()', 'function acknowledgeReminder()', 'function reportCompleted(transactionId: string, latestData: AppData)', 'function reportAlreadyResolved()', 'function runConfirmation(', 'function runBnplConfirmation(', 'function confirmSalary()', 'function confirmSalaryToDestination(', 'function confirmBillPaid(', 'function confirmBnplEveryday('].every((needle) =>
       SMART_REMINDER_CARD_SRC.includes(needle)
     )
   );
@@ -667,30 +733,68 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     /const aupSectionY = useRef<number \| null>\(null\);/.test(MONEY_SCREEN_SRC) && /const whatHappensNextSectionY = useRef<number \| null>\(null\);/.test(MONEY_SCREEN_SRC)
   );
   assert(
-    'MoneyScreen.tsx wires onLayout on both the AUP wrapper and the What happens next section header',
-    /onLayout=\{\(e\) => \(aupSectionY\.current = e\.nativeEvent\.layout\.y\)\}/.test(MONEY_SCREEN_SRC) &&
-      /onLayout=\{\(e\) => \(whatHappensNextSectionY\.current = e\.nativeEvent\.layout\.y\)\}/.test(MONEY_SCREEN_SRC)
+    // Final Pass 2D device-test correction, §9 — each onLayout now also
+    // calls attemptMoneySectionFocus() (the new measured-retry mechanism);
+    // the underlying claim (onLayout wired on both target sections) is
+    // unchanged and still proven.
+    'MoneyScreen.tsx wires onLayout on both the AUP wrapper and the What happens next section header, each also attempting the pending focus request',
+    /aupSectionY\.current = e\.nativeEvent\.layout\.y;\s*\n\s*attemptMoneySectionFocus\(\);/.test(MONEY_SCREEN_SRC) &&
+      /whatHappensNextSectionY\.current = e\.nativeEvent\.layout\.y;\s*\n\s*attemptMoneySectionFocus\(\);/.test(MONEY_SCREEN_SRC)
   );
   assert(
-    'MoneyScreen.tsx retries via requestAnimationFrame when the target ref is not yet measured (layout-not-ready handling), never assumes a static pixel offset',
-    /requestAnimationFrame\(\(\) => attempt\(retriesLeft - 1\)\)/.test(MONEY_SCREEN_SRC) && !/scrollTo\(\{\s*y:\s*\d/.test(MONEY_SCREEN_SRC)
+    // Final Pass 2D device-test correction, §9 — supersedes this
+    // assertion's original protection. The finite requestAnimationFrame
+    // retry budget this originally verified is EXACTLY what this round's
+    // final report (§9) confirmed as the root cause of "Money remains at
+    // the previously saved scroll position": a request could be silently
+    // abandoned before the screen's own scroll container had genuinely
+    // measured after a cross-tab transition. The explicit requirement this
+    // round ("do not use... finite retry budgets that silently discard the
+    // request") forbids restoring it. The stronger replacement: a pending
+    // request is retried ONLY by a target section's own genuine onLayout
+    // event (computeMoneySectionFocusFulfillment), never abandoned by a
+    // frame count, and never a hard-coded/static pixel offset (the
+    // measured y is always read live from the ref).
+    'MoneyScreen.tsx retries a pending focus request only via a target section\'s own genuine onLayout event (never a finite requestAnimationFrame budget that could abandon the request), and never assumes a static pixel offset',
+    !/requestAnimationFrame\(/.test(MONEY_SCREEN_SRC) &&
+      !/scrollTo\(\{\s*y:\s*\d/.test(MONEY_SCREEN_SRC) &&
+      /computeMoneySectionFocusFulfillment\(pendingMoneyFocusRef\.current, \{/.test(MONEY_SCREEN_SRC)
   );
   assert(
-    'MoneyScreen.tsx clears scrollTo via navigation.setParams once handled — the mechanism that makes a repeated identical focus request work',
-    /navigation\.setParams\(\{ scrollTo: undefined \}\)/.test(MONEY_SCREEN_SRC)
+    // Final Pass 2D device-test correction, §9 — also clears
+    // scrollToRequestId (the new field this round adds); the underlying
+    // claim (clearing scrollTo once handled, so a repeat identical request
+    // works) is unchanged and still proven — now via requestId instead of
+    // relying on scrollTo alone.
+    'MoneyScreen.tsx clears scrollTo (and scrollToRequestId) via navigation.setParams once handled — the mechanism that makes a repeated identical focus request work',
+    /navigation\.setParams\(\{ scrollTo: undefined, scrollToRequestId: undefined \}\);/.test(MONEY_SCREEN_SRC)
   );
   assert(
-    'MoneyScreen.tsx also clears the param on the empty-state fallback path (ref never measured after the retry budget)',
+    // Final Pass 2D device-test correction, §9 — supersedes this
+    // assertion's original protection. The "empty-state fallback that
+    // clears the param after a fixed retry budget" behaviour this
+    // originally verified no longer exists BY DESIGN: giving up on an
+    // unmeasured target was itself part of the confirmed defect (§9's
+    // explicit "no finite retry budgets that silently discard the
+    // request" requirement). There is now exactly ONE clear point —
+    // successful fulfilment inside attemptMoneySectionFocus — proven by
+    // the assertion above; there is no second, fallback clear path to
+    // prove here, and asserting one would reintroduce the exact behaviour
+    // this correction removes.
+    'MoneyScreen.tsx has no empty-state/give-up fallback clear path — clearing scrollTo/scrollToRequestId happens ONLY on successful fulfilment (attemptMoneySectionFocus), by design',
     (() => {
-      const start = MONEY_SCREEN_SRC.indexOf('function attempt(retriesLeft: number)');
-      const end = MONEY_SCREEN_SRC.indexOf('function openAddBill()');
-      const block = MONEY_SCREEN_SRC.slice(start, end);
-      return (block.match(/navigation\.setParams\(\{ scrollTo: undefined \}\);/g) || []).length === 2;
+      const matches = MONEY_SCREEN_SRC.match(/navigation\.setParams\(\{ scrollTo: undefined, scrollToRequestId: undefined \}\);/g) || [];
+      return matches.length === 1;
     })()
   );
   assert(
+    // Final Pass 2D device-test correction, §9 — the scrollTo call now
+    // reads the measured y from the fulfilment result (result.scrollY!)
+    // rather than the target ref directly; the underlying claim (scrolls
+    // the existing tabScrollRefs.Money ScrollView, never a new/duplicate
+    // scroll surface) is unchanged and still proven.
     'MoneyScreen.tsx scrolls the existing tabScrollRefs.Money ScrollView, never a new/duplicate scroll surface',
-    /tabScrollRefs\.Money\.current\?\.scrollTo\(\{ y: targetRef\.current, animated: true \}\);/.test(MONEY_SCREEN_SRC)
+    /tabScrollRefs\.Money\.current\?\.scrollTo\(\{ y: result\.scrollY!, animated: true \}\);/.test(MONEY_SCREEN_SRC)
   );
 }
 

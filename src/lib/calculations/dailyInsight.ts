@@ -9,6 +9,16 @@ import { brand } from '../brand';
 export interface DailyInsight {
   icon: keyof typeof Ionicons.glyphMap;
   text: string;
+  /** Pass 2D — a structured tag identifying which pool entry this is,
+   * added purely so a second consumer (todayContextualInsight.ts) can
+   * pick a specific entry out of the same pool by identity rather than by
+   * re-deriving or duplicating the text/condition that produced it. Purely
+   * additive: pickDailyInsight's own rotation behaviour below is
+   * completely unchanged by this field's presence. 'emergencyFund' is never
+   * produced by buildInsightPool below — it exists only so
+   * todayContextualInsight.ts's own, separate emergency-savings entry can
+   * share this same DailyInsight shape. */
+  source: 'goalImpact' | 'milestone' | 'savingsInterest' | 'scoreBand' | 'emergencyFund';
 }
 
 /**
@@ -34,13 +44,18 @@ export interface DailyInsight {
  * entry (goal impact, savings-interest, score-band) is untouched and always
  * eligible — this exclusion is narrowly scoped to the one entry that can
  * actually duplicate Journey's content.
+ *
+ * Pass 2D — exported (was module-private) so todayContextualInsight.ts can
+ * select a specific entry by its `source` tag (see DailyInsight's own doc
+ * comment) rather than re-deriving the same condition a second time. The
+ * function's own logic/conditions/text are completely unchanged.
  */
-function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string | null): DailyInsight[] {
+export function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string | null): DailyInsight[] {
   const pool: DailyInsight[] = [];
 
   const goalImpact = buildGoalImpactOpportunity(data);
   if (goalImpact) {
-    pool.push({ icon: goalImpact.icon, text: goalImpact.body });
+    pool.push({ icon: goalImpact.icon, text: goalImpact.body, source: 'goalImpact' });
   }
 
   const nextMilestone = getNextMilestone(data);
@@ -48,6 +63,7 @@ function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string |
     pool.push({
       icon: 'flag',
       text: `You're only $${Math.round(nextMilestone.remaining).toLocaleString()} away from unlocking "${nextMilestone.achievement.title}".`,
+      source: 'milestone',
     });
   }
 
@@ -61,6 +77,7 @@ function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string |
         pool.push({
           icon: 'sparkles',
           text: `The interest on your savings could be improved by approximately $${Math.round(diff).toLocaleString()}/year.`,
+          source: 'savingsInterest',
         });
       }
     }
@@ -76,7 +93,7 @@ function buildInsightPool(data: AppData, excludeMilestoneAchievementId: string |
   // simply no longer its caller.
   const luluScore = computeLuluScore(data);
   if (!luluScore.locked) {
-    pool.push({ icon: 'trending-up', text: `Your ${brand.scoreName} is ${luluScore.score}/100 based on what you've recorded.` });
+    pool.push({ icon: 'trending-up', text: `Your ${brand.scoreName} is ${luluScore.score}/100 based on what you've recorded.`, source: 'scoreBand' });
   }
 
   return pool;

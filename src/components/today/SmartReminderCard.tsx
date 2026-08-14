@@ -6,11 +6,14 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { SmartReminder } from '../../lib/calculations/reminders';
-import { AddCreditCardModal } from '../credit/AddCreditCardModal';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { moneyAmountToCents } from '../../lib/calculations/money';
 import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
 import { IncomeDestinationPicker } from '../shared/IncomeDestinationPicker';
+import { resolveEligibleBillPaymentSources, BillPaymentSourceOption } from '../../lib/calculations/billPaymentSources';
+import { BillPaymentSourcePicker } from '../shared/BillPaymentSourcePicker';
+import { AppData } from '../../types/models';
+import { occurrenceKeyOf, ReminderReviewOutcome } from '../../lib/calculations/reminderInteractionLifecycle';
 
 // Financial-disclosure formatter (regression-protection review, B2.0B
 // recurring-money precision correction §6) — deliberately NOT the app-wide
@@ -33,9 +36,19 @@ function formatDisclosureAmount(cents: number): string {
  * Smart reminder — one focused "did this happen?" question at a time (PRD
  * ask: salary/bill confirmations). Never assumes money moved on its own:
  * every state change here only happens after the user explicitly confirms.
- * Session-scoped dismissal only (resets on next app open) — there's no
- * persisted "seen" list, so this intentionally stays lightweight rather
- * than growing a parallel notification-history feature.
+ *
+ * Reminder queue correction round — this component no longer keeps its own
+ * local `dismissedIds` session-scoped hide-list. That local Set was the
+ * confirmed root cause of a device-test defect: when the user tapped "Not
+ * yet" (no mutation), ReminderDetailSheet's reducer correctly re-selected
+ * the SAME top-ranked reminder (nothing outranked it in the underlying
+ * data), but this component's own `dismissedIds` still contained that
+ * reminder's id, so it rendered nothing while the native sheet stayed open
+ * — the customer could only escape via Close, terminating the whole review.
+ * This component now reports what happened via `onOutcome` (a
+ * ReminderReviewOutcome — completed/deferred/acknowledged) and trusts its
+ * host (ReminderDetailSheet) to own ALL session-exclusion state and re-rank
+ * using the canonical selector — see that file's own doc comment.
  *
  * Confirmation itself is delegated to AppStateContext's
  * confirmRecurringOccurrence — the combined B2.0B transition (transaction +
@@ -61,11 +74,52 @@ function formatDisclosureAmount(cents: number): string {
  * that don't fit the available width now wrap onto additional rows inside
  * their own container instead of extending past it.
  */
-export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder | null }) {
+export function SmartReminderCard({
+  topReminder,
+  onNavigateAway,
+  onOutcome,
+  onRequestLoanRepayment,
+  onRequestCreditCardRepayment,
+}: {
+  topReminder: SmartReminder | null;
+  /** Device-test correction round — called immediately before navigating
+   * away to another screen (Cards) or opening a full-screen destination,
+   * so a host that renders this inside a Modal (ReminderDetailSheet) can
+   * close itself first. Never called for confirmations that keep the user
+   * on Today (those already correctly report via this component's own
+   * outcome reporters). Optional — a host with no sheet to close simply
+   * omits it. */
+  onNavigateAway?: () => void;
+  /** Reminder queue correction round — replaces the previous single,
+   * ambiguous `onSettled` signal (which could not tell "customer confirmed
+   * completion" apart from "customer said Not yet"/"Got it" — the confirmed
+   * root cause of a device-test defect, see this component's own top-of-
+   * file doc comment). Fires once per genuine action: an ordinary
+   * confirmation applying ('completed', carrying the real transactionId and
+   * the mutation's own freshest AppData — never a stale render closure), or
+   * "Not yet"/"Got it" ('deferred'/'acknowledged', carrying only this
+   * occurrence's stable key). The host owns deciding what happens next —
+   * see ReminderDetailSheet.tsx's own doc comment. Optional — a host with
+   * nothing to advance (none currently) simply omits it. */
+  onOutcome?: (outcome: ReminderReviewOutcome) => void;
+  /** Final Pass 2D device-test correction (native-Modal-lifecycle round) —
+   * replaces the previous local repaymentSheetVisible/loanRepaymentSheetVisible
+   * state + nested LoanRepaymentSheet/CreditCardRepaymentSheet mounts (each
+   * its own native Modal, stacked underneath ReminderDetailSheet's own —
+   * the confirmed native-Modal-stacking risk this round's report
+   * addresses). "Record payment" now simply requests the transition;
+   * ReminderDetailSheet (the single native-Modal owner) decides whether to
+   * honour it, since it alone knows the liability/recurringItem/card are
+   * genuinely resolvable for the currently pinned occurrence. Optional — a
+   * host with no repayment form to open (none currently) simply omits it,
+   * and the reminder falls back to deferReminder() exactly as before when no
+   * card/liability was resolvable. */
+  onRequestLoanRepayment?: () => void;
+  onRequestCreditCardRepayment?: () => void;
+}) {
   const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography } = useTheme();
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [awaitingSource, setAwaitingSource] = useState(false);
   // Correction pass, §2 — BNPL confirmation's Everyday Account choice needs
   // a second step (which specific account), unlike Cash/Credit card which
@@ -88,17 +142,17 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
   // untouched, and reuses the real asset-creation form scoped to Cash/
   // Everyday/Savings via onlyLiquidCategories (never a duplicate form).
   const [addBalanceVisible, setAddBalanceVisible] = useState(false);
-  const [markPaidCardVisible, setMarkPaidCardVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Pass 2A — topReminder is now computed once by the caller (TodayScreen's
   // own useMemo(() => computeTopReminder(data, today), [data, today])) and
   // shared with the Today Briefing's own dedup logic, rather than this
-  // component independently recomputing it. Only the session-scoped
-  // dismissal filter stays local — dismissal is this card's own concern,
-  // not something a caller's raw reminder value should ever encode.
-  const reminder = useMemo(() => (topReminder && !dismissedIds.has(topReminder.id) ? topReminder : null), [topReminder, dismissedIds]);
+  // component independently recomputing it. Reminder queue correction round
+  // — this component no longer applies its own session-scoped hide filter
+  // (see this file's own top-of-file doc comment for why): `reminder` is
+  // simply the caller's own value, trusted as-is.
+  const reminder = topReminder;
 
   // Both are scoped to one specific reminder — if the displayed reminder
   // identity changes (resolved elsewhere, superseded, or this card moved
@@ -118,6 +172,12 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
   // (e.g. via the destination picker's own "Add a money balance" route)
   // appears the moment the user returns.
   const eligibleIncomeDestinations = useMemo(() => resolveEligibleIncomeDestinations(data.assets), [data.assets]);
+
+  // Device-test correction round — the same shared eligible-bill-payment-
+  // source resolver BillPaymentSourcePicker's caller uses, scoped to
+  // ordinary (non-BNPL) bill confirmation only — BNPL keeps its own
+  // separate, already-working cash/everyday/credit-card flow untouched.
+  const eligibleBillPaymentSources = useMemo(() => resolveEligibleBillPaymentSources(data.assets, data.creditCards), [data.assets, data.creditCards]);
 
   const styles = useMemo(
     () =>
@@ -157,14 +217,69 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
   // disclosure Text below is simply omitted when this is invalid.
   const disclosedAmount = moneyAmountToCents(reminder.amount ?? NaN);
 
-  function dismiss() {
-    if (!reminder) return;
-    setDismissedIds((prev) => new Set(prev).add(reminder.id));
+  // Reminder queue correction round — the shared cleanup every outcome
+  // reporter below performs before handing off to the host, extracted once
+  // so each reporter is a one-line call. Resets every local UI-only sub-step
+  // (source/account/destination pickers, the inline add-balance overlay, any
+  // recoverable error) — never persisted state.
+  function resetLocalUiState() {
     setAwaitingSource(false);
     setAwaitingEverydayAccount(false);
     setAwaitingIncomeDestination(false);
     setAddBalanceVisible(false);
     setActionError(null);
+  }
+
+  // "Not yet" — no mutation occurred. Reports this occurrence's stable key
+  // so the host (ReminderDetailSheet) can session-exclude it and advance to
+  // the next eligible reminder using the canonical ranked selector, rather
+  // than this component hiding it locally (the confirmed root cause of the
+  // Not-yet-terminates-the-review device-test defect — see this file's own
+  // top-of-file doc comment).
+  function deferReminder() {
+    if (!reminder) return;
+    const occurrenceKey = occurrenceKeyOf(reminder);
+    resetLocalUiState();
+    onOutcome?.({ kind: 'deferred', occurrenceKey });
+  }
+
+  // "Got it" (bill_due_soon only) — likewise no mutation; session-excluded
+  // the same way as deferReminder so it doesn't immediately re-select itself
+  // and reproduce the same blank-redisplay defect.
+  function acknowledgeReminder() {
+    if (!reminder) return;
+    const occurrenceKey = occurrenceKeyOf(reminder);
+    resetLocalUiState();
+    onOutcome?.({ kind: 'acknowledged', occurrenceKey });
+  }
+
+  // A real mutation was confirmed — carries the mutation's own real
+  // transactionId and its synchronously-returned freshest AppData (never the
+  // potentially one-render-stale `data` closure — the mutation and this call
+  // happen in the SAME synchronous event, before React re-renders this
+  // component with the fresh value; see this round's final report §5/§6 for
+  // the full latest-data proof).
+  function reportCompleted(transactionId: string, latestData: AppData) {
+    if (!reminder) return;
+    const occurrenceKey = occurrenceKeyOf(reminder);
+    resetLocalUiState();
+    onOutcome?.({ kind: 'completed', occurrenceKey, transactionId, latestData });
+  }
+
+  // A confirmation attempt resolved 'stale'/'not_found'/'already_confirmed'
+  // — the transition did not apply (nothing was mutated by THIS call), but
+  // the underlying occurrence is already gone/handled (a duplicate tap, or
+  // it was resolved elsewhere) and must not keep re-displaying. There is no
+  // real transactionId to report (no mutation happened here), so this is
+  // reported as 'deferred' — a session-only exclusion, never a persisted
+  // change — which is exactly the correct mechanical effect: stop offering
+  // this occurrence again this session, then let the canonical selector
+  // decide what's actually next from the latest data.
+  function reportAlreadyResolved() {
+    if (!reminder) return;
+    const occurrenceKey = occurrenceKeyOf(reminder);
+    resetLocalUiState();
+    onOutcome?.({ kind: 'deferred', occurrenceKey });
   }
 
   // Coaching-not-shaming — never exposes which technical validation failed,
@@ -207,19 +322,21 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
       case 'not_found':
       case 'stale':
       case 'already_confirmed':
-        // Unreachable here — handled via dismiss() below before this is
-        // ever called. Included so the switch stays exhaustive over the
-        // full reason union rather than assuming a subset.
+        // Unreachable here — handled via reportAlreadyResolved() below
+        // before this is ever called. Included so the switch stays
+        // exhaustive over the full reason union rather than assuming a
+        // subset.
         return "We couldn't update that yet. Please try again.";
     }
   }
 
-  function runConfirmation(paymentSource?: 'cash' | 'credit_card') {
+  function runConfirmation(paymentSource?: 'cash' | 'credit_card' | 'everyday', targetAssetId?: string, creditCardId?: string) {
     if (!reminder || !reminder.recurringItemId) return;
     setActionError(null);
-    // Left `true` on the applied/stale/not_found path deliberately — dismiss()
-    // below changes which reminder (if any) is displayed, and the identity-
-    // change effect resets isSubmitting there. Resetting it here too would
+    // Left `true` on the applied/stale/not_found path deliberately — the
+    // outcome reporters below change which reminder (if any) is displayed,
+    // and the identity-change effect resets isSubmitting there. Resetting
+    // it here too would
     // make it a same-tick no-op (set true then false before React ever
     // renders the disabled state), defeating its one purpose: giving a
     // rapid second native tap a chance to see a visually disabled button.
@@ -232,20 +349,26 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
     // persistence }; `persistence` is deliberately not awaited/consumed
     // here. The confirmed occurrence's nextDueDate already advanced as part
     // of the in-memory transition above, so computeTopReminder(data) can no
-    // longer select it on the very next render regardless of dismiss() —
-    // this card cannot reliably stay the right context for a later
+    // longer select it on the very next render regardless of which outcome
+    // is reported — this card cannot reliably stay the right context for a later
     // persistence-failure message (regression-protection review, B2.0C
     // corrected design §3). A save failure is surfaced by the app-level
     // UnsavedChangesBanner (App.tsx), driven by AppStateContext's
     // persistenceState, not by this component.
-    const { transition } = confirmRecurringOccurrence({
+    const { transition, transactionId } = confirmRecurringOccurrence({
       recurringItemId: reminder.recurringItemId,
       expectedNextDueDate: item?.nextDueDate ?? '',
       paymentSource,
+      targetAssetId,
+      creditCardId,
     });
 
-    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found') {
-      dismiss();
+    if (transition.applied) {
+      reportCompleted(transactionId, transition.data);
+      return;
+    }
+    if (transition.reason === 'stale' || transition.reason === 'not_found') {
+      reportAlreadyResolved();
       return;
     }
     // invalid_amount | invalid_input | invalid_source | invalid_date |
@@ -269,7 +392,7 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
     setActionError(null);
     setIsSubmitting(true);
     const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
-    const { transition } = confirmBnplRepayment({
+    const { transition, transactionId } = confirmBnplRepayment({
       recurringItemId: reminder.recurringItemId,
       liabilityId: reminder.liabilityId,
       expectedNextDueDate: item?.nextDueDate ?? '',
@@ -277,8 +400,12 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
       targetAssetId,
     });
 
-    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found' || transition.reason === 'already_confirmed') {
-      dismiss();
+    if (transition.applied) {
+      reportCompleted(transactionId, transition.data);
+      return;
+    }
+    if (transition.reason === 'stale' || transition.reason === 'not_found' || transition.reason === 'already_confirmed') {
+      reportAlreadyResolved();
       return;
     }
     setIsSubmitting(false);
@@ -303,14 +430,18 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
     setActionError(null);
     setIsSubmitting(true);
     const item = data.recurringItems.find((r) => r.id === reminder.recurringItemId);
-    const { transition } = confirmRecurringOccurrence({
+    const { transition, transactionId } = confirmRecurringOccurrence({
       recurringItemId: reminder.recurringItemId,
       expectedNextDueDate: item?.nextDueDate ?? '',
       targetAssetId,
     });
 
-    if (transition.applied || transition.reason === 'stale' || transition.reason === 'not_found') {
-      dismiss();
+    if (transition.applied) {
+      reportCompleted(transactionId, transition.data);
+      return;
+    }
+    if (transition.reason === 'stale' || transition.reason === 'not_found') {
+      reportAlreadyResolved();
       return;
     }
     setIsSubmitting(false);
@@ -323,6 +454,25 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
       return;
     }
     runConfirmation(source);
+  }
+
+  // Device-test correction round — the ordinary (non-BNPL) bill's own
+  // dispatcher for the new shared BillPaymentSourcePicker, replacing the
+  // previous two-button-only confirmBillPaid('cash'|'credit_card') path
+  // for this specific reminder kind. BNPL's own flow (confirmBillPaid /
+  // runBnplConfirmation / the separate awaitingEverydayAccount step above)
+  // is completely untouched — this function is only ever reachable from
+  // the bill_overdue branch below.
+  function confirmBillPaidFromSource(source: BillPaymentSourceOption) {
+    if (source.kind === 'credit_card') {
+      runConfirmation('credit_card', undefined, source.id);
+      return;
+    }
+    if (source.assetType === 'everyday') {
+      runConfirmation('everyday', source.id);
+      return;
+    }
+    runConfirmation('cash');
   }
 
   // Correction pass, §2 — the specific-account half of the Everyday Account
@@ -338,10 +488,20 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
       ? 'cash-outline'
       : reminder.kind === 'card_due_soon'
       ? 'card-outline'
-      : reminder.kind === 'bnpl_repayment_due'
+      : reminder.kind === 'bnpl_repayment_due' || reminder.kind === 'loan_repayment_due'
       ? 'bag-handle-outline'
       : 'calendar-outline';
   const reminderCard = reminder.creditCardId ? data.creditCards.find((c) => c.id === reminder.creditCardId) ?? null : null;
+  // Final Pass 2D device-test correction — the loan_repayment_due reminder's
+  // linked liability/recurring item, resolved once here for both the "Yes,
+  // I paid it" gate below and the LoanRepaymentSheet mount at the bottom of
+  // this component. Mirrors reminderCard's own resolve-once pattern exactly.
+  const reminderLoanLiability =
+    reminder.kind === 'loan_repayment_due' && reminder.liabilityId ? data.liabilities.find((l) => l.id === reminder.liabilityId) ?? null : null;
+  const reminderLoanRecurringItem =
+    reminder.kind === 'loan_repayment_due' && reminder.recurringItemId
+      ? data.recurringItems.find((r) => r.id === reminder.recurringItemId) ?? null
+      : null;
 
   return (
     <SectionCard>
@@ -380,7 +540,7 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
                 >
                   <Text style={styles.actionText}>Yes, it arrived</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={dismiss} disabled={isSubmitting}>
+                <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder} disabled={isSubmitting}>
                   <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
                 </TouchableOpacity>
               </View>
@@ -406,27 +566,45 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
               <TouchableOpacity style={styles.actionButton} onPress={() => setAwaitingSource(true)}>
                 <Text style={styles.actionText}>Yes, I paid it</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={dismiss}>
+              <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder}>
                 <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
               </TouchableOpacity>
             </View>
           ) : null}
 
-          {(reminder.kind === 'bill_overdue' || reminder.kind === 'bnpl_repayment_due') && awaitingSource && !awaitingEverydayAccount ? (
+          {/* Device-test correction round — ordinary bills now use the
+              shared BillPaymentSourcePicker (every eligible Cash/Everyday
+              account plus every credit card, each shown with its real
+              balance/owed amount) instead of a hard-coded "From cash" /
+              "From credit card" pair. Never silently defaults to Cash —
+              nothing is confirmed until a specific source is tapped. */}
+          {reminder.kind === 'bill_overdue' && awaitingSource ? (
+            <>
+              {disclosedAmount.valid ? (
+                <Text style={styles.body}>
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your chosen account or credit card balance in Navilo. This updates Navilo only—it does not move money in your bank.`}
+                </Text>
+              ) : null}
+              <BillPaymentSourcePicker
+                sources={eligibleBillPaymentSources}
+                onSelect={confirmBillPaidFromSource}
+                onBack={() => setAwaitingSource(false)}
+                disabled={isSubmitting}
+              />
+            </>
+          ) : null}
+
+          {reminder.kind === 'bnpl_repayment_due' && awaitingSource && !awaitingEverydayAccount ? (
             <>
               {/* Same transparency treatment as the income branch above —
                   shown before the payment-source choice, since that choice
                   is what determines whether Cash or the credit card is
-                  updated (PRD ask, post-device-testing correction). Same
-                  moneyAmountToCents guard as the income branch. BNPL gets
-                  its own wording — a second balance (what's still owed on
-                  the plan) changes too, which the ordinary-bill copy never
-                  mentions. */}
+                  updated (PRD ask, post-device-testing correction). BNPL
+                  gets its own wording — a second balance (what's still
+                  owed on the plan) changes too. */}
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {reminder.kind === 'bnpl_repayment_due'
-                    ? `Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Navilo only—it does not move money in your bank.`
-                    : `Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your Cash or credit-card balance in Navilo based on your choice. This updates Navilo only—it does not move money in your bank.`}
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Navilo only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <View style={styles.actionRow}>
@@ -443,7 +621,7 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
                     same routed-spending source contract the transaction
                     engine already supports. Scoped to bnpl_repayment_due
                     only — see awaitingEverydayAccount's own comment. */}
-                {reminder.kind === 'bnpl_repayment_due' && data.assets.some((a) => a.type === 'everyday') ? (
+                {data.assets.some((a) => a.type === 'everyday') ? (
                   <TouchableOpacity
                     style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
                     onPress={() => setAwaitingEverydayAccount(true)}
@@ -499,21 +677,54 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
           ) : null}
 
           {reminder.kind === 'bill_due_soon' ? (
-            <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={dismiss}>
+            <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={acknowledgeReminder}>
               <Text style={[styles.actionText, styles.actionTextSecondary]}>Got it</Text>
             </TouchableOpacity>
           ) : null}
 
           {reminder.kind === 'card_due_soon' ? (
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('Cards')}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  // Device-test correction round — close the hosting sheet
+                  // (if any) BEFORE navigating, never after: the previous
+                  // order left a still-visible, now-empty "Reminder" sheet
+                  // rendered on top of Cards for roughly a second.
+                  onNavigateAway?.();
+                  navigation.navigate('Cards');
+                }}
+              >
                 <Text style={styles.actionText}>Review card</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonSecondary]}
-                onPress={() => (reminderCard ? setMarkPaidCardVisible(true) : dismiss())}
+                onPress={() => (reminderCard ? onRequestCreditCardRepayment?.() : deferReminder())}
               >
-                <Text style={[styles.actionText, styles.actionTextSecondary]}>Mark as paid</Text>
+                <Text style={[styles.actionText, styles.actionTextSecondary]}>Record payment</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {/* Final Pass 2D device-test correction — mortgage/personal-loan/
+              car-loan reminders request the dedicated loan repayment form
+              (amount entry, source selection, and the optional balance
+              update in one place), rather than the generic
+              BillPaymentSourcePicker two-step ordinary bills use. Native-
+              Modal-lifecycle round — the form itself is now content owned
+              by ReminderDetailSheet's single Modal (see
+              onRequestLoanRepayment's own doc comment), never a second
+              nested native Modal. */}
+          {reminder.kind === 'loan_repayment_due' ? (
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => (reminderLoanLiability && reminderLoanRecurringItem ? onRequestLoanRepayment?.() : deferReminder())}
+              >
+                <Text style={styles.actionText}>Record payment</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder}>
+                <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
               </TouchableOpacity>
             </View>
           ) : null}
@@ -525,17 +736,6 @@ export function SmartReminderCard({ topReminder }: { topReminder: SmartReminder 
           ) : null}
         </View>
       </View>
-      {/* Never assumes the balance is cleared automatically — opens the
-          card's own edit form so the user confirms the real new balance
-          (PRD ask: never assume money moved without confirming first). */}
-      <AddCreditCardModal
-        visible={markPaidCardVisible}
-        editCard={reminderCard}
-        onClose={() => {
-          setMarkPaidCardVisible(false);
-          dismiss();
-        }}
-      />
     </SectionCard>
   );
 }

@@ -134,9 +134,15 @@ export interface Transaction {
    * reinterpreted based on whether a balance was updated; see
    * BalanceEffectMode for that separate concept. */
   paymentSource?: PaymentSource;
-  /** Set when paymentSource === 'credit_card' — the card this expense was
-   * charged to. Factual, independent of whether a balance effect was ever
-   * applied against it. */
+  /** Two independent uses:
+   * (1) Set when paymentSource === 'credit_card' — the card this expense
+   * was charged to (a purchase, increasing what's owed). Factual,
+   * independent of whether a balance effect was ever applied against it.
+   * (2) Set when isRepayment is true — the card this repayment reduced
+   * (the transaction's DESTINATION; paymentSource identifies the
+   * FUNDING side instead, never 'credit_card' for a repayment). Needed so
+   * reverseCreditCardRepaymentTransaction can identify which card's
+   * balance to restore without re-deriving it from anything else. */
   creditCardId?: string;
   /** Set when paymentSource === 'loan' — the liability this expense was
    * charged to (a loan-funded purchase, increasing what's owed — never a
@@ -185,20 +191,85 @@ export interface Transaction {
    * paymentSource/creditCardId/liabilityId instead — fully backward
    * compatible. */
   targetAssetId?: string;
-  /** Set only by a confirmed BNPL repayment (`confirmBnplRepaymentTransition`
-   * in AppStateContext.tsx) — a durable, ledger-based identity for exactly
-   * which scheduled occurrence this transaction pays off, independent of
-   * the linked RecurringItem's own mutable `nextDueDate` cursor. Format:
-   * `${recurringItemId}:${occurrenceDueDateISO}`. Existing recurring
-   * confirmation (bills/income) already guards against re-confirming the
-   * same occurrence via `nextDueDate !== expectedNextDueDate` staleness
-   * alone — that guard is unchanged and untouched. BNPL's engine-level
-   * duplicate-confirmation protection additionally checks this field
-   * directly against the transaction ledger before committing, so a retry
-   * that somehow reaches the transition with a schedule cursor that still
-   * looks "not yet confirmed" (e.g. after a restart that lost only part of
-   * a write) is still caught. Absent on every other transaction. */
+  /** Set by a confirmed BNPL repayment (`confirmBnplRepaymentTransition` in
+   * AppStateContext.tsx) OR a confirmed mortgage/personal-loan/car-loan
+   * repayment (`confirmLoanRepaymentTransition`, final Pass 2D device-test
+   * correction — same field, same format, reused rather than duplicated
+   * for a second liability-backed recurring commitment) — a durable,
+   * ledger-based identity for exactly which scheduled occurrence this
+   * transaction pays off, independent of the linked RecurringItem's own
+   * mutable `nextDueDate` cursor. Format: `${recurringItemId}:${occurrenceDueDateISO}`.
+   * Which of the two it is is always disambiguated by the linked
+   * RecurringItem's `linkedLiabilityId`'s own `Liability.type` (`'bnpl'`
+   * vs. `'mortgage'|'car_loan'|'personal_loan'|'other'`), never by a
+   * separate flag on the transaction itself. Existing recurring
+   * confirmation (ordinary bills/income) already guards against
+   * re-confirming the same occurrence via `nextDueDate !== expectedNextDueDate`
+   * staleness alone — that guard is unchanged and untouched, and ordinary
+   * bills never set this field. Both engine-level duplicate-confirmation
+   * paths additionally check this field directly against the transaction
+   * ledger before committing, so a retry that somehow reaches the
+   * transition with a schedule cursor that still looks "not yet confirmed"
+   * (e.g. after a restart that lost only part of a write) is still caught.
+   * Absent on every other transaction. */
   recurringOccurrenceKey?: string;
+  /** Set only by a confirmed credit-card repayment
+   * (`confirmCreditCardRepaymentTransition` in AppStateContext.tsx) — marks
+   * this expense transaction as a debt repayment (money moving from an
+   * asset to a credit-card liability), never a new purchase. Excluded from
+   * every "spending" total that would otherwise double-count it: the
+   * card's own repayment commitment is already reflected as a monthly
+   * RATE (`resolveExpectedMonthlyRepayment`, feeding `computeFixedCosts`/
+   * `cycleCreditCardRepayments`), exactly the same reasoning
+   * `recurringItemId` already uses to exclude a confirmed bill's own
+   * transaction from `monthlySummary.ts`'s `loggedExpenses` — this field
+   * exists because an ordinary credit card has no RecurringItem to link
+   * a `recurringItemId` to. Absent on every other transaction, including
+   * an ordinary card-funded purchase (`paymentSource: 'credit_card'`
+   * without this flag), which correctly remains real spending. */
+  isRepayment?: boolean;
+  /** Set only by a confirmed credit-card repayment that was initiated FROM
+   * a specific `card_due_soon` Reminder occurrence (final Pass 2D device-
+   * test correction) — the exact date-key (`YYYY-MM-DD`) of the due
+   * occurrence this repayment marked handled on the card
+   * (`CreditCard.handledReminderOccurrenceDate`). Absent when the same
+   * repayment transition is ever invoked without that context (there is
+   * currently only one entry point — the Reminder itself — but this field
+   * exists so the transition never marks an occurrence handled unless the
+   * caller explicitly names one, rather than doing so unconditionally).
+   * Lets `reverseCreditCardRepaymentTransaction` restore the Reminder
+   * occurrence on a full reversal, and only when the card's stamp still
+   * matches this exact value (never overwriting a different, later
+   * completion that may have superseded it). */
+  reminderOccurrenceCompleted?: string;
+  /** Set only by a confirmed mortgage/personal-loan/car-loan repayment
+   * (`confirmLoanRepaymentTransition`) where the customer elected to update
+   * the recorded loan balance — the KNOWN principal reduction in dollars,
+   * derived as `previousBalance - newBalance` (never inferred from a rate
+   * or amortisation schedule). `0` is a legitimate, distinct value from
+   * `undefined`: it means "known, entirely interest/fees this payment" (the
+   * customer entered the same before/after balance), whereas `undefined`
+   * means the split is genuinely UNKNOWN (the customer did not elect to
+   * update the balance) — every consumer that reports a principal/interest
+   * split must preserve this distinction rather than treating a missing
+   * value as zero. Absent on every other transaction, including an
+   * ordinary confirmed bill/BNPL/credit-card repayment. */
+  principalAmount?: number;
+  /** Set unconditionally by every confirmed mortgage/personal-loan/car-loan
+   * repayment (`confirmLoanRepaymentTransition`), whether or not the
+   * customer elected to update the recorded balance — final narrow Pass 2D
+   * correction. The single, positive discriminator every accounting
+   * consumer (`src/lib/calculations/repaymentAccounting.ts`) uses to tell
+   * a loan repayment apart from an ordinary confirmed bill/BNPL repayment,
+   * both of which also carry `recurringItemId` — `principalAmount` alone
+   * cannot do this, since it is equally absent for "not a loan repayment
+   * at all" and for "a loan repayment with an unknown split." Combined
+   * with `principalAmount`, this is what lets a consumer distinguish the
+   * three loan-repayment cases: known split (`isLoanRepayment` +
+   * `principalAmount` present), unknown split (`isLoanRepayment` +
+   * `principalAmount` absent), and not-a-loan-repayment
+   * (`isLoanRepayment` absent). Absent on every other transaction. */
+  isLoanRepayment?: boolean;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
@@ -311,6 +382,22 @@ export interface CreditCard {
    * an existing user's prior figure is never silently lost or zeroed). */
   expectedMonthlyRepayment?: number;
   apr?: number;
+  /** Final Pass 2D device-test correction — the date-key (`YYYY-MM-DD`) of
+   * the most recent `card_due_soon` Reminder due-occurrence that a
+   * Reminder-initiated repayment has already marked handled. An ordinary
+   * credit card has no RecurringItem/`nextDueDate` cursor the way a bill
+   * does, so there is no existing "advance the schedule" mechanism to reuse
+   * for occurrence completion — this is the smallest new piece of state
+   * that lets `reminders.ts` stop re-surfacing the SAME due date once it
+   * has been paid, while a later month's genuinely new due date (computed
+   * fresh from `dueDay` every time, and therefore a different date-key)
+   * naturally reappears without any extra logic. Only ever set by
+   * `confirmCreditCardRepaymentTransition` when its caller explicitly names
+   * the occurrence being completed (see `ConfirmCreditCardRepaymentInput.reminderOccurrenceDate`)
+   * — a repayment recorded without that context never touches this field,
+   * so it can never silently complete an occurrence the customer didn't
+   * actually act on from the Reminder. */
+  handledReminderOccurrenceDate?: string;
 }
 
 export interface UserProfile {

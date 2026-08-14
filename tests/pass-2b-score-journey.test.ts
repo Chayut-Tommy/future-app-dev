@@ -199,7 +199,16 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
     'LuluCheckInCard.tsx no longer imports/renders the score ring or opens ScoreExplanationSheet — the large Score presentation lives in exactly one place now',
     !/CircularScore/.test(LULU_CHECKIN_SRC) && !/ScoreExplanationSheet/.test(LULU_CHECKIN_SRC) && !/luluScore/.test(LULU_CHECKIN_SRC)
   );
-  assert('TodayScreen.tsx no longer passes luluScore into LuluCheckInCard', /<LuluCheckInCard topLine=\{checkInLine\.topLine\} insight=\{checkInInsight\} \/>/.test(TODAY_SCREEN_SRC));
+  // Pass 2D — LuluCheckInCard is now only mounted when a contextual insight
+  // exists (final Today hierarchy §6: "zero or one only"), wrapped in a
+  // TouchableOpacity so it can route to that insight's destination; the
+  // still-luluScore-free contract this assertion originally protected
+  // (LuluCheckInCard never takes a score prop) is unchanged — it still
+  // takes only topLine and insight, just a differently-sourced insight.
+  assert(
+    'TodayScreen.tsx no longer passes luluScore into LuluCheckInCard — it takes only topLine and the new contextual-insight value, mounted conditionally',
+    /<LuluCheckInCard topLine=\{checkInLine\.topLine\} insight=\{contextualInsight\} \/>/.test(TODAY_SCREEN_SRC) && !/<LuluCheckInCard[^>]*luluScore/.test(TODAY_SCREEN_SRC)
+  );
   assert('TodayScreen.tsx no longer renders JourneyTimeline directly (the long Today Journey timeline is gone)', !/<JourneyTimeline/.test(TODAY_SCREEN_SRC) && !TODAY_SCREEN_SRC.includes("import { JourneyTimeline }"));
 
   // Canonical Briefing hierarchy: title/date -> Score chip -> AUP -> reminder -> events.
@@ -247,10 +256,16 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
   // section-focus architecture (see tests/pass-2b-correction.test.ts for
   // the full pending-focus mechanism's dedicated real-function coverage —
   // this file only re-confirms the wiring at the call sites).
+  // Pass 2D — handleScoreChipPress/handleJourneyPress now delegate to the
+  // shared navigateToGrow('score'/'journey') helper (see
+  // tests/pass-2b-correction.test.ts for that helper's own dedicated
+  // coverage) rather than each inlining an identical navigate() call —
+  // still stable section identifiers, still a fresh requestId every call,
+  // still never a duplicate screen.
   assert(
-    "handleScoreChipPress/handleJourneyPress navigate to Grow with stable section identifiers ('score'/'journey') and a fresh requestId, never a duplicate screen",
-    /navigation\.navigate\('Grow', \{ scrollTo: 'score', scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC) &&
-      /navigation\.navigate\('Grow', \{ scrollTo: 'journey', scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC)
+    "handleScoreChipPress/handleJourneyPress navigate to Grow with stable section identifiers ('score'/'journey') via the shared navigateToGrow helper, never a duplicate screen",
+    /function handleScoreChipPress\(\) \{\s*navigateToGrow\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) &&
+      /function handleJourneyPress\(\) \{\s*navigateToGrow\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
     "Grow (DiscoverScreen.tsx) mounts the exact existing ScoreExplanationSheet and JourneyTimeline components — full accepted info/actions preserved, no redesigned/duplicate engine",

@@ -2,12 +2,23 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { FinancialState, FinancialStateActionSpec, describeFinancialStateForToday } from '../../lib/calculations/financialState';
+import {
+  FinancialState,
+  describeFinancialStateForToday,
+  resolveFinancialRebuildGoalActionLabel,
+} from '../../lib/calculations/financialState';
 
 export interface FinancialStateActionHandlers {
   income: () => void;
   bills: () => void;
   spending: () => void;
+  /** Financial Rebuild only — routes to the existing Wealth/net-worth
+   * destination. */
+  reviewNetWorth: () => void;
+  /** Financial Rebuild only — opens the existing Add Goal route/sheet, or
+   * routes to the existing Goals list, depending on hasActiveGoal (see
+   * resolveFinancialRebuildGoalActionLabel). */
+  goal: () => void;
 }
 
 /**
@@ -15,11 +26,30 @@ export interface FinancialStateActionHandlers {
  * non-standard financial states (Cashflow Focus, Financial Rebuild),
  * reading its label/headline/body entirely from
  * describeFinancialStateForToday (PRD ask: no screen invents its own
- * copy). Deliberately only ever offers the three neutral actions — never a
- * debt- or savings-specific action, which would read as Navilo
+ * copy). Deliberately only ever offers neutral, state-relevant actions —
+ * never a debt- or savings-specific action, which would read as Navilo
  * prescribing a strategy rather than stating a fact.
+ *
+ * Device-test correction round — Cashflow Focus and Financial Rebuild no
+ * longer share one generic three-action set. Add income/Add bills/Review
+ * spending are cashflow-relevant and stay exclusive to Cashflow Focus;
+ * Financial Rebuild (a negative-NET-WORTH state — income/bills/spending
+ * are largely beside the point there) now shows exactly two actions:
+ * Review net worth, and Add a goal/Review goals depending on whether an
+ * active goal already exists. computeFinancialState and its thresholds
+ * are unchanged — only this presentation layer's action mapping.
  */
-export function FinancialStateCard({ state, actions }: { state: FinancialState; actions: FinancialStateActionHandlers }) {
+export function FinancialStateCard({
+  state,
+  actions,
+  hasActiveGoal,
+}: {
+  state: FinancialState;
+  actions: FinancialStateActionHandlers;
+  /** Only consulted for the financial_rebuild action label — ignored
+   * (may be omitted) for cashflow_focus. */
+  hasActiveGoal?: boolean;
+}) {
   const { colors, radius, spacing, typography } = useTheme();
   const copy = describeFinancialStateForToday(state);
 
@@ -48,11 +78,20 @@ export function FinancialStateCard({ state, actions }: { state: FinancialState; 
 
   if (!copy) return null;
 
-  const actionSpecs: (FinancialStateActionSpec & { icon: keyof typeof Ionicons.glyphMap; onPress: () => void })[] = [
-    { key: 'income', label: 'Add income', icon: 'cash-outline', onPress: actions.income },
-    { key: 'bills', label: 'Add bills', icon: 'calendar-outline', onPress: actions.bills },
-    { key: 'spending', label: 'Review spending', icon: 'search-outline', onPress: actions.spending },
-  ];
+  // Device-test correction round — Financial Rebuild (negative net worth)
+  // gets its own two-action set, genuinely relevant to that state; every
+  // other non-standard state (Cashflow Focus) keeps the original three.
+  const actionSpecs: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }[] =
+    state.key === 'financial_rebuild'
+      ? [
+          { key: 'reviewNetWorth', label: 'Review net worth', icon: 'bar-chart-outline', onPress: actions.reviewNetWorth },
+          { key: 'goal', label: resolveFinancialRebuildGoalActionLabel(!!hasActiveGoal), icon: 'flag-outline', onPress: actions.goal },
+        ]
+      : [
+          { key: 'income', label: 'Add income', icon: 'cash-outline', onPress: actions.income },
+          { key: 'bills', label: 'Add bills', icon: 'calendar-outline', onPress: actions.bills },
+          { key: 'spending', label: 'Review spending', icon: 'search-outline', onPress: actions.spending },
+        ];
 
   return (
     <View style={styles.card}>

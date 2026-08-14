@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { AppData } from '../../types/models';
+import { AppData, Transaction } from '../../types/models';
+import { resolveTransactionCategoryCoachingAmount } from './repaymentAccounting';
 
 export interface SpendingInsight {
   icon: keyof typeof Ionicons.glyphMap;
@@ -10,10 +11,39 @@ export interface SpendingInsight {
 const PERIOD_DAYS = 30;
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function sumByCategory(transactions: AppData['transactions']): Map<string, number> {
+/** A confirmed expense transaction paired with its resolved eligible
+ * category-coaching amount (2D-NARROW correction, final debt-cost pass) —
+ * an ordinary bill's full amount, a credit-card/BNPL repayment's $0, or a
+ * loan repayment's $0 (every loan repayment — known-split, interest-only,
+ * and unknown-split alike — is excluded from category-based coaching; see
+ * resolveTransactionCategoryCoachingAmount's own doc comment for why: no
+ * established debt-interest category exists in this codebase, so a loan
+ * repayment's known interest/fees still count in aggregate spending
+ * elsewhere, but must never be fabricated into 'cat-debt' here). Every
+ * category/trend/pattern insight below derives from this resolved amount,
+ * never the transaction's raw `t.amount`. */
+interface ResolvedExpense {
+  t: Transaction;
+  amount: number;
+}
+
+/** Every expense transaction with a non-zero eligible category-coaching
+ * amount — a repayment (or any loan repayment) that resolves to exactly $0
+ * is excluded entirely here (not kept as a zero-amount row), since it
+ * contributes nothing to any of this file's category/trend/pattern/
+ * count-based insights and would only pad transaction counts (e.g. the
+ * weekday-pattern minimum-count check) with a non-eligible event. */
+function resolvedExpenses(data: AppData): ResolvedExpense[] {
+  return data.transactions
+    .filter((t) => t.type === 'expense')
+    .map((t) => ({ t, amount: resolveTransactionCategoryCoachingAmount(data, t) }))
+    .filter((e) => e.amount > 0);
+}
+
+function sumByCategory(expenses: ResolvedExpense[]): Map<string, number> {
   const map = new Map<string, number>();
-  for (const t of transactions) {
-    map.set(t.categoryId, (map.get(t.categoryId) ?? 0) + t.amount);
+  for (const e of expenses) {
+    map.set(e.t.categoryId, (map.get(e.t.categoryId) ?? 0) + e.amount);
   }
   return map;
 }
@@ -31,13 +61,26 @@ export interface CategoryDelta {
  * coaching (goal-impact messages) can reuse the exact same numbers shown
  * in the Spending Insights panel, rather than recomputing separately. */
 export function computeCategoryDeltas(data: AppData): CategoryDelta[] {
-  const expenses = data.transactions.filter((t) => t.type === 'expense');
+  // 2D-NARROW correction — every category/trend/pattern insight in this
+  // file derives from resolvedExpenses' resolved ELIGIBLE CATEGORY-COACHING
+  // amount, not the transaction's raw `t.amount` and not the (wider)
+  // aggregate cashflow amount used elsewhere (see resolvedExpenses' own doc
+  // comment for the full per-type contract, and repaymentAccounting.ts's
+  // module header for why the two concepts are deliberately separate). This
+  // both (a) replaces a prior round's blanket `!t.recurringItemId &&
+  // !t.isRepayment` exclusion, which incorrectly caught ordinary bills too
+  // — the device test's own proof (a confirmed $50 bill correctly increased
+  // recorded spending by $50) applies identically to category coaching
+  // here — and (b) excludes every loan repayment (not just unknown-split)
+  // from category coaching, since no established debt-interest category
+  // exists to honestly attribute a known interest/fees amount to.
+  const expenses = resolvedExpenses(data);
   const now = Date.now();
   const periodStart = now - PERIOD_DAYS * 86400000;
   const priorStart = now - PERIOD_DAYS * 2 * 86400000;
-  const thisPeriod = expenses.filter((t) => new Date(t.date).getTime() >= periodStart);
-  const priorPeriod = expenses.filter((t) => {
-    const time = new Date(t.date).getTime();
+  const thisPeriod = expenses.filter((e) => new Date(e.t.date).getTime() >= periodStart);
+  const priorPeriod = expenses.filter((e) => {
+    const time = new Date(e.t.date).getTime();
     return time >= priorStart && time < periodStart;
   });
   const thisMap = sumByCategory(thisPeriod);
@@ -69,16 +112,21 @@ export function computeCategoryDeltas(data: AppData): CategoryDelta[] {
  * enough transactions exist, never fabricated.
  */
 export function computeSpendingInsights(data: AppData): SpendingInsight[] {
-  const expenses = data.transactions.filter((t) => t.type === 'expense');
+  // 2D-NARROW correction, Gate 2 — same resolvedExpenses base set as
+  // computeCategoryDeltas above (its own doc comment has the full
+  // reasoning), used here too since this function's overall-trend,
+  // subscription-total, weekday-pattern, and average-daily-spend insights
+  // all derive from this same base set independently of computeCategoryDeltas.
+  const expenses = resolvedExpenses(data);
   if (expenses.length === 0) return [];
 
   const now = Date.now();
   const periodStart = now - PERIOD_DAYS * 86400000;
   const priorStart = now - PERIOD_DAYS * 2 * 86400000;
 
-  const thisPeriod = expenses.filter((t) => new Date(t.date).getTime() >= periodStart);
-  const priorPeriod = expenses.filter((t) => {
-    const time = new Date(t.date).getTime();
+  const thisPeriod = expenses.filter((e) => new Date(e.t.date).getTime() >= periodStart);
+  const priorPeriod = expenses.filter((e) => {
+    const time = new Date(e.t.date).getTime();
     return time >= priorStart && time < periodStart;
   });
 
@@ -90,7 +138,7 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
 
   // Overall trend vs. the prior period — the single most useful "am I
   // tracking okay?" signal, shown before any per-category detail.
-  const totalPriorPeriod = priorPeriod.reduce((sum, t) => sum + t.amount, 0);
+  const totalPriorPeriod = priorPeriod.reduce((sum, e) => sum + e.amount, 0);
   if (totalPriorPeriod >= 20) {
     const changePct = (totalThisPeriod - totalPriorPeriod) / totalPriorPeriod;
     if (Math.abs(changePct) >= 0.1) {
@@ -135,7 +183,7 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
 
   // Subscription total — a real, recurring cost worth surfacing on its own,
   // not buried inside a general category comparison.
-  const subscriptionTotal = thisPeriod.filter((t) => t.categoryId === 'cat-subscriptions').reduce((sum, t) => sum + t.amount, 0);
+  const subscriptionTotal = thisPeriod.filter((e) => e.t.categoryId === 'cat-subscriptions').reduce((sum, e) => sum + e.amount, 0);
   if (subscriptionTotal > 0) {
     insights.push({
       icon: 'card-outline',
@@ -154,9 +202,9 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
   }
   const dayTotals = new Array(7).fill(0);
   const dayTxnCounts = new Array(7).fill(0);
-  for (const t of thisPeriod) {
-    const day = new Date(t.date).getDay();
-    dayTotals[day] += t.amount;
+  for (const e of thisPeriod) {
+    const day = new Date(e.t.date).getDay();
+    dayTotals[day] += e.amount;
     dayTxnCounts[day] += 1;
   }
   const dayAverages = dayTotals.map((total, i) => (dayOccurrences[i] > 0 ? total / dayOccurrences[i] : 0));
