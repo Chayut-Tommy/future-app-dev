@@ -215,7 +215,7 @@ export function ThisMonthCard({
 
   const disclosureLines = (
     <>
-      <Text style={styles.disclaimer}>Based on transactions recorded in Navilo.</Text>
+      <Text style={styles.disclaimer}>Based on transactions recorded in Nolie.</Text>
       {summary.hasInvalidRecordedAmounts ? <Text style={styles.disclaimer}>Some recorded amounts couldn't be included.</Text> : null}
     </>
   );

@@ -886,7 +886,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       </InfoSheet>
       <InfoSheet visible={thisMonthInfoVisible} onClose={() => setThisMonthInfoVisible(false)} title="About This Month">
         <Text style={styles.flowInfoText}>
-          Income recorded and Spending recorded use transactions saved in Navilo from the start of the current calendar month through
+          Income recorded and Spending recorded use transactions saved in Nolie from the start of the current calendar month through
           today. Future-dated transactions and Move Money transfers between your own balances are excluded.
         </Text>
         <Text style={styles.flowInfoText}>Net recorded is Income recorded minus Spending recorded.</Text>
@@ -895,10 +895,10 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           still counts.
         </Text>
         <Text style={styles.flowInfoText}>
-          Current credit-card balance is a snapshot of the balance recorded in Navilo right now. It is separate from month-to-date
+          Current credit-card balance is a snapshot of the balance recorded in Nolie right now. It is separate from month-to-date
           spending.
         </Text>
-        <Text style={styles.flowInfoText}>These figures reflect only what is recorded in Navilo.</Text>
+        <Text style={styles.flowInfoText}>These figures reflect only what is recorded in Nolie.</Text>
       </InfoSheet>
       <DebtCoachSheet visible={debtCoachVisible} onClose={() => setDebtCoachVisible(false)} />
     </Screen>

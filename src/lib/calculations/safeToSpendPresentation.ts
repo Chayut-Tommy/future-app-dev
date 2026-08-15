@@ -179,7 +179,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         tone: 'warning',
         heading: eyebrow,
         primaryCopy:
-          "Select a balance for Navilo to use in your short-term money estimate — bills, savings and goals can't be compared against your available cash until then.",
+          "Select a balance for Nolie to use in your short-term money estimate — bills, savings and goals can't be compared against your available cash until then.",
         supportingCopy: null,
         ...resolveAmount(null),
         amountIsAvailableMoney: false,

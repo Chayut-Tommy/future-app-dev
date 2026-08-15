@@ -37,7 +37,7 @@ function rejectionMessage(reason: string): string {
     case 'same_balance':
       return 'Choose a different balance to transfer to.';
     case 'invalid_recorded_balance':
-      return "Navilo can't complete this right now — one of the balances involved needs to be corrected first.";
+      return "Nolie can't complete this right now — one of the balances involved needs to be corrected first.";
     default:
       return "We couldn't complete this transfer. Please check your selections and try again.";
   }

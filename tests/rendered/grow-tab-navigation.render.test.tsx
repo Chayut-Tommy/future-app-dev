@@ -102,7 +102,7 @@ describe('Grow tab navigation — rendered regression coverage (Pass 2E correcti
     await render(<Harness />);
 
     // Today's own Score chip navigates to Grow WITH scrollTo/scrollToRequestId params.
-    await user.press(await screen.findByRole('button', { name: /^Navilo Score/ }));
+    await user.press(await screen.findByRole('button', { name: /^Nolie Score/ }));
     await expectCanonicalGrowContent();
 
     // Leave Grow, then return via a DIRECT tab press (no params this time) —

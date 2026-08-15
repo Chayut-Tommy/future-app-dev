@@ -108,7 +108,7 @@ describe('Settings control — rendered regression coverage (Pass 2E final corre
     // genuine navigation occurred, not a mocked callback assertion.
     const headings = await screen.findAllByText('Settings');
     expect(headings.length).toBe(1);
-    // The real, unrelated Navilo colour-style section only SettingsScreen
+    // The real, unrelated Nolie colour-style section only SettingsScreen
     // renders — further confirms this is the actual Settings screen, not a
     // coincidental "Settings" text elsewhere.
     expect(await screen.findByText(/colour style/)).toBeOnTheScreen();
@@ -164,7 +164,7 @@ describe('Settings control — rendered regression coverage (Pass 2E final corre
     expect(screen.getByText('Dark')).toBeOnTheScreen();
   });
 
-  test('a Navilo colour style can be selected from the real, now-reachable Settings screen', async () => {
+  test('a Nolie colour style can be selected from the real, now-reachable Settings screen', async () => {
     const user = userEvent.setup();
     await render(<SettingsHarness />);
 

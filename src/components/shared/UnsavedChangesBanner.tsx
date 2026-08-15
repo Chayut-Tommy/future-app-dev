@@ -57,7 +57,7 @@ export function UnsavedChangesBanner({ onRetry }: { onRetry: () => void }) {
         <Ionicons name="cloud-offline-outline" size={18} color={colors.warning} />
       </View>
       <View style={styles.textBlock}>
-        <Text style={styles.body}>Your change is showing for now, but it hasn't been saved on this device yet. Try again before closing Navilo.</Text>
+        <Text style={styles.body}>Your change is showing for now, but it hasn't been saved on this device yet. Try again before closing Nolie.</Text>
       </View>
       <Button label="Try saving again" variant="secondary" onPress={onRetry} style={styles.button} />
     </View>

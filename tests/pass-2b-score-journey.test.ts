@@ -61,7 +61,7 @@ console.log('=== Section 1: selectScoreChipPresentation — every state (real fu
   const lockedChip = selectScoreChipPresentation(lockedResult);
   assert(
     'locked: state locked, no numeric score ever shown (never 0 as a stand-in for missing)',
-    lockedChip.state === 'locked' && lockedChip.scoreValue === null && lockedChip.label === 'Navilo Score' && lockedChip.supportingText === 'Add income to unlock' && lockedChip.tone === 'muted'
+    lockedChip.state === 'locked' && lockedChip.scoreValue === null && lockedChip.label === 'Nolie Score' && lockedChip.supportingText === 'Add income to unlock' && lockedChip.tone === 'muted'
   );
 
   // available — an ordinary, real, unlocked scenario. Also covers
@@ -77,7 +77,7 @@ console.log('=== Section 1: selectScoreChipPresentation — every state (real fu
     'incomplete-but-unlocked: still state available, a real score is shown (never hidden just for low completeness), factual wording only',
     incompleteChip.state === 'available' &&
       incompleteChip.scoreValue === incompleteResult.score &&
-      incompleteChip.label === `Navilo Score ${incompleteResult.score}` &&
+      incompleteChip.label === `Nolie Score ${incompleteResult.score}` &&
       incompleteChip.supportingText === 'Based on what you’ve recorded'
   );
   assert(

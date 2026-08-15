@@ -11,7 +11,7 @@
       "afternoon": "Good afternoon",
       "evening": "Good evening"
     },
-    "checkIn": "LULU DAILY CHECK-IN ✨",
+    "checkIn": "NOLIE DAILY CHECK-IN ✨",
     "improveScore": "Improve my score",
     "yourJourney": "Your Journey",
     "savingsCoach": "Savings Coach",
@@ -29,7 +29,7 @@
   },
   "language": {
     "title": "🌎 Choose your language",
-    "subtitle": "Lulu will speak to you in your preferred language.",
+    "subtitle": "Nolie will speak to you in your preferred language.",
     "english": "English",
     "thai": "ไทย",
     "matchDevice": "Match device language",

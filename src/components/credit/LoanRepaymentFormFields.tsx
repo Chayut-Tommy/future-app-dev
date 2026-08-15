@@ -151,7 +151,7 @@ export function LoanRepaymentFormFields({
 
       <Text style={styles.label}>Which account did you pay from?</Text>
       {form.eligibleSources.length === 0 ? (
-        <Text style={styles.disclosure}>Add a Cash or Everyday balance in Navilo first to record a payment.</Text>
+        <Text style={styles.disclosure}>Add a Cash or Everyday balance in Nolie first to record a payment.</Text>
       ) : (
         <View style={styles.sourceRow}>
           {form.eligibleSources.map((s) => (
@@ -204,7 +204,7 @@ export function LoanRepaymentFormFields({
               ) : null}
             </View>
           ) : null}
-          <Text style={styles.disclosure}>Navilo records the amounts you enter. Your lender may allocate repayments differently.</Text>
+          <Text style={styles.disclosure}>Nolie records the amounts you enter. Your lender may allocate repayments differently.</Text>
         </>
       ) : (
         <Text style={styles.disclosure}>
@@ -216,7 +216,7 @@ export function LoanRepaymentFormFields({
         <Text style={styles.disclosure}>
           {`Confirming will record ${formatMoney(form.validatedAmount.cents / 100)} as a repayment and reduce ${
             form.source.label.split(' (')[0]
-          }. This updates Navilo only — it does not move money in your bank.`}
+          }. This updates Nolie only — it does not move money in your bank.`}
         </Text>
       ) : null}
 

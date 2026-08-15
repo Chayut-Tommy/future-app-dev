@@ -60,7 +60,7 @@ export function EditSavingsAllocationModal({ visible, onClose }: { visible: bool
         </>
       }
     >
-      <Text style={styles.intro}>This optional setting is used only in Navilo's estimates and can be changed at any time.</Text>
+      <Text style={styles.intro}>This optional setting is used only in Nolie's estimates and can be changed at any time.</Text>
       {visible ? (
         <SavingsAllocationPickerBody value={draft} onChange={setDraft} hasRecurringIncome={hasRecurringIncome} monthlyIncome={data.user.monthlyIncome} />
       ) : null}

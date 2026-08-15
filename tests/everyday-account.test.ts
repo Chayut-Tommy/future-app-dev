@@ -316,7 +316,7 @@ console.log('\n=== 24. Existing Cash/Savings forms still accept their legitimate
   }
 }
 
-console.log('\n=== 25. Existing Navilo Score, achievements, milestones and opportunities remain unchanged (Real import — the required proof for "do not extend computeLiquidCash") ===');
+console.log('\n=== 25. Existing Nolie Score, achievements, milestones and opportunities remain unchanged (Real import — the required proof for "do not extend computeLiquidCash") ===');
 {
   const withoutEveryday = baseData([cashAsset({ currentValue: 500 }), savingsAsset({ currentValue: 500 })]);
   const withEveryday = baseData([cashAsset({ currentValue: 500 }), savingsAsset({ currentValue: 500 }), everydayAsset({ currentValue: 5000 })]);
@@ -396,7 +396,7 @@ console.log('\n=== Bonus structural: Add Anything tile, taxonomy, and copy wirin
   // exact phrasing and scanability bullets changed).
   assert('form: the manual-maintenance copy is present verbatim', /Update this balance when it changes\./.test(WEALTH_SRC));
   assert('form: the duplication-guidance copy is present verbatim', /To avoid double-counting, don't enter the same balance under both Cash and Everyday Account\./.test(WEALTH_SRC));
-  assert('form: deletion confirmation uses the exact suggested wording', /Remove this Everyday Account from Navilo\?/.test(WEALTH_SRC) && /Your Navilo totals will update, but this will not affect your real bank account\./.test(WEALTH_SRC));
+  assert('form: deletion confirmation uses the exact suggested wording', /Remove this Everyday Account from Nolie\?/.test(WEALTH_SRC) && /Your Nolie totals will update, but this will not affect your real bank account\./.test(WEALTH_SRC));
   assert("wealth: no new top-level category — 'everyday' folded into the existing cash category's types array", /types: \['cash', 'everyday'\]/.test(WEALTH_SCREEN_SRC));
   assert('wealth: Savings remains its own separate category, unchanged', /\{ key: 'savings', label: 'Savings', icon: 'lock-closed', color: 'accent', types: \['savings'\] \}/.test(WEALTH_SCREEN_SRC));
 }

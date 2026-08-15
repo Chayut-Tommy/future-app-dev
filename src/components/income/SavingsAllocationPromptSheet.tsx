@@ -66,7 +66,7 @@ export function SavingsAllocationPromptSheet({ visible, onDone }: { visible: boo
       }
     >
       <Text style={styles.intro}>
-        You can optionally include a savings allocation in Navilo's estimates. This does not move money or create a transaction.
+        You can optionally include a savings allocation in Nolie's estimates. This does not move money or create a transaction.
       </Text>
       <SavingsAllocationPickerBody value={draft} onChange={setDraft} hasRecurringIncome={hasRecurringIncome} monthlyIncome={data.user.monthlyIncome} />
     </KeyboardSheet>

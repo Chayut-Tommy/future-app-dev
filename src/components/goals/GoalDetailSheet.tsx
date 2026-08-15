@@ -536,7 +536,7 @@ export function GoalDetailSheet({
   function handleDelete() {
     Alert.alert(
       `Delete "${goal!.name}"?`,
-      'This removes the goal from Navilo. It does not change any transactions, balances or history already recorded.',
+      'This removes the goal from Nolie. It does not change any transactions, balances or history already recorded.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -827,7 +827,7 @@ export function GoalDetailSheet({
           Enter a valid amount greater than $0, using up to two decimal places.
         </Text>
       ) : null}
-      <Text style={styles.hintText}>Enter the amount to add. This records progress only—it does not move money or change a balance tracked in Navilo.</Text>
+      <Text style={styles.hintText}>Enter the amount to add. This records progress only—it does not move money or change a balance tracked in Nolie.</Text>
 
       {goal.targetAmount ? (
         <>

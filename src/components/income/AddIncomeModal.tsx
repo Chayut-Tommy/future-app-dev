@@ -515,7 +515,7 @@ export const AddIncomeModal = forwardRef<
     const midCycleContent = (
       <>
         <Text style={styles.midCycleTitle}>{`Did you receive your ${formatDayMonth(midCycleDate)} income?`}</Text>
-        <Text style={styles.midCycleBody}>Recording it helps Navilo understand this month more accurately.</Text>
+        <Text style={styles.midCycleBody}>Recording it helps Nolie understand this month more accurately.</Text>
 
         {!awaitingDestination ? (
           <>

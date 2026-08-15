@@ -423,7 +423,7 @@ console.log('\n=== Section 13: prohibited Score wording corrected — dailyInsig
   data.assets = [{ id: 'cash1', type: 'cash', label: 'Cash', currentValue: 50000 }];
   const result = computeLuluScore(data);
   if (!result.locked) {
-    const expectedFactual = `Your Navilo Score is ${result.score}/100 based on what you've recorded.`;
+    const expectedFactual = `Your Nolie Score is ${result.score}/100 based on what you've recorded.`;
     assert('real-import proof: the exact factual sentence for this fixture\'s real computed score is well-formed and never contains a wellbeing/judgment claim', !/doing incredibly well|doing great|excellent|perfect(?!ly)/i.test(expectedFactual));
   } else {
     assert('(locked-score fixture for this variant — score-band entry structurally absent; not applicable)', true);

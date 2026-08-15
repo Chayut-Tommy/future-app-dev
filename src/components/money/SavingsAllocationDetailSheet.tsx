@@ -115,7 +115,7 @@ export function SavingsAllocationDetailSheet({
         }
       >
         <Text style={styles.confirmCopy}>
-          This will remove the allocation from Navilo's future estimates. It will not change your balances or transaction history.
+          This will remove the allocation from Nolie's future estimates. It will not change your balances or transaction history.
         </Text>
       </KeyboardSheet>
     );
@@ -128,7 +128,7 @@ export function SavingsAllocationDetailSheet({
       title="Savings allocation"
       footer={<Button label="Close" variant="secondary" onPress={handleClose} style={{ flex: 1 }} />}
     >
-      <Text style={styles.intro}>You selected this optional allocation for Navilo's estimates. It does not move money or create a transaction.</Text>
+      <Text style={styles.intro}>You selected this optional allocation for Nolie's estimates. It does not move money or create a transaction.</Text>
       <View style={styles.detailBox}>
         <DetailRow label="Selected by you" value={selectedByYouText} />
         <DetailRow label="Estimated monthly amount" value={formatMoney(monthlyAmount)} />

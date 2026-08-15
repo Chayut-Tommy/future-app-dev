@@ -317,30 +317,30 @@ console.log('\n=== 8. Tracked-balance hint copy — no false "no cards/loans" cl
   // 8a. THE CONFIRMED DEFECT SCENARIO: a card exists but none is selected
   // yet (hasValidBalanceTarget false purely because creditCardId is null) —
   // must no longer claim "No cards added yet."
-  const hint8a = trackedBalanceHint(false, 'none', undefined, 'credit_card', 1, 0, 'Navilo');
+  const hint8a = trackedBalanceHint(false, 'none', undefined, 'credit_card', 1, 0, 'Nolie');
   assert('8a. card exists but none selected: no longer falsely claims "No cards added yet"', !/No cards added yet/.test(hint8a));
   assert('8a-correct. card exists but none selected: correctly prompts selection instead', /Select a card above/.test(hint8a));
 
   // 8b. Genuinely zero cards — the "No cards added yet" message remains
   // accurate and is preserved.
-  const hint8b = trackedBalanceHint(false, 'none', undefined, 'credit_card', 0, 0, 'Navilo');
+  const hint8b = trackedBalanceHint(false, 'none', undefined, 'credit_card', 0, 0, 'Nolie');
   assert('8b. zero cards genuinely exist: "No cards added yet" is still shown (still true in this case)', /No cards added yet/.test(hint8b));
 
   // 8c. A card IS selected and Record only is active — names the card,
   // matching the suggested direction ("...without changing your AMEX balance.").
-  const hint8c = trackedBalanceHint(true, 'none', 'AMEX', 'credit_card', 1, 0, 'Navilo');
+  const hint8c = trackedBalanceHint(true, 'none', 'AMEX', 'credit_card', 1, 0, 'Nolie');
   assert('8c. card selected + Record only: names the actual card', hint8c === 'Record this transaction without changing your AMEX balance.');
 
   // 8d. Same pattern for loans (the identical defect class, per the
   // root-cause investigation's "does the same defect affect other sources" check).
-  const hint8d = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 1, 'Navilo');
+  const hint8d = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 1, 'Nolie');
   assert('8d. loan exists but none selected: no longer falsely claims "No loans added yet"', !/No loans added yet/.test(hint8d));
-  const hint8e = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 0, 'Navilo');
+  const hint8e = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 0, 'Nolie');
   assert('8e. zero loans genuinely exist: "No loans added yet" is still shown', /No loans added yet/.test(hint8e));
 
   // 8f. Cash and Everyday were already correct (never falsely claimed
   // nonexistence) — confirm unaffected by this pass.
-  const hint8f = trackedBalanceHint(false, 'none', undefined, 'cash', 0, 0, 'Navilo');
+  const hint8f = trackedBalanceHint(false, 'none', undefined, 'cash', 0, 0, 'Nolie');
   assert('8f. cash source unaffected — unchanged existing wording', hint8f === 'Add a cash balance above to track this against it, or continue recording only.');
 
   assert(
@@ -452,9 +452,9 @@ console.log('\n=== 10. Record-only / zero-applied-effect confirmation contract, 
   // 10a. Credit Card — the exact video scenario.
   let data = baseData();
   data = applyNewTransaction(data, { type: 'expense', amount: 20, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'credit_card', creditCardId: 'amex', balanceEffect: 'none' }, 'txn-cc');
-  const conf = buildDeleteConfirmation(describeReversalTargetMirror(data, data.transactions[0]!), 'Navilo');
+  const conf = buildDeleteConfirmation(describeReversalTargetMirror(data, data.transactions[0]!), 'Nolie');
   assert('10a-title. Record-only Credit Card: title is exactly "Delete transaction?"', conf.title === 'Delete transaction?');
-  assert('10a-message. Record-only Credit Card: message uses the preferred wording and states no tracked balance will change', conf.message === 'Delete this transaction from Navilo? No tracked balance will change.');
+  assert('10a-message. Record-only Credit Card: message uses the preferred wording and states no tracked balance will change', conf.message === 'Delete this transaction from Nolie? No tracked balance will change.');
   assert('10a-buttons. Record-only Credit Card: exactly 2 buttons — Cancel and Delete transaction — no reversal option', conf.buttons.length === 2 && conf.buttons.map((b) => b.text).join('|') === 'Cancel|Delete transaction');
   assert('10a-destructive. Delete transaction button uses destructive styling', conf.buttons[1]!.style === 'destructive');
   assert('10a-cancel-noop. Cancel action never triggers a delete — the Cancel button carries no delete action', conf.buttons[0]!.action === 'cancel');
@@ -469,7 +469,7 @@ console.log('\n=== 10. Record-only / zero-applied-effect confirmation contract, 
   // 10b. Everyday Account, Record only.
   let data2 = baseData();
   data2 = applyNewTransaction(data2, { type: 'expense', amount: 30, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'everyday', targetAssetId: 'everyday-1', balanceEffect: 'none' }, 'txn-ev');
-  const conf2 = buildDeleteConfirmation(describeReversalTargetMirror(data2, data2.transactions[0]!), 'Navilo');
+  const conf2 = buildDeleteConfirmation(describeReversalTargetMirror(data2, data2.transactions[0]!), 'Nolie');
   assert('10b. Record-only Everyday Account: same 2-button, no-reversal contract', conf2.buttons.length === 2 && conf2.buttons.map((b) => b.text).join('|') === 'Cancel|Delete transaction');
   const afterDelete2 = applyTransactionDelete(data2, 'txn-ev', false);
   assert('10b-unchanged. Everyday Account balance is unchanged after Record-only delete', assetBal(afterDelete2, 'everyday-1') === 900);
@@ -477,7 +477,7 @@ console.log('\n=== 10. Record-only / zero-applied-effect confirmation contract, 
   // 10c. Cash, Record only.
   let data3 = baseData();
   data3 = applyNewTransaction(data3, { type: 'expense', amount: 10, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'cash', balanceEffect: 'none' }, 'txn-cash');
-  const conf3 = buildDeleteConfirmation(describeReversalTargetMirror(data3, data3.transactions[0]!), 'Navilo');
+  const conf3 = buildDeleteConfirmation(describeReversalTargetMirror(data3, data3.transactions[0]!), 'Nolie');
   assert('10c. Record-only Cash: same 2-button, no-reversal contract', conf3.buttons.length === 2);
   const afterDelete3 = applyTransactionDelete(data3, 'txn-cash', false);
   assert('10c-unchanged. Cash balance is unchanged after Record-only delete', assetBal(afterDelete3, 'cash-1') === 100);
@@ -486,7 +486,7 @@ console.log('\n=== 10. Record-only / zero-applied-effect confirmation contract, 
   // (there is no expense payment-source that targets Savings directly).
   let data4 = baseData();
   data4 = applyNewTransaction(data4, { type: 'income', amount: 200, categoryId: 'x', date: new Date().toISOString(), targetAssetId: 'savings-1', balanceEffect: 'none' }, 'txn-sav');
-  const conf4 = buildDeleteConfirmation(describeReversalTargetMirror(data4, data4.transactions[0]!), 'Navilo');
+  const conf4 = buildDeleteConfirmation(describeReversalTargetMirror(data4, data4.transactions[0]!), 'Nolie');
   assert('10d. Record-only Savings-targeted income: same 2-button, no-reversal contract', conf4.buttons.length === 2);
   const afterDelete4 = applyTransactionDelete(data4, 'txn-sav', false);
   assert('10d-unchanged. Savings balance is unchanged after Record-only delete', assetBal(afterDelete4, 'savings-1') === 2000);
@@ -494,7 +494,7 @@ console.log('\n=== 10. Record-only / zero-applied-effect confirmation contract, 
   // 10e. Other-funded expense (no addressable target at all).
   let data5 = baseData();
   data5 = applyNewTransaction(data5, { type: 'expense', amount: 25, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'other', balanceEffect: 'none' }, 'txn-other');
-  const conf5 = buildDeleteConfirmation(describeReversalTargetMirror(data5, data5.transactions[0]!), 'Navilo');
+  const conf5 = buildDeleteConfirmation(describeReversalTargetMirror(data5, data5.transactions[0]!), 'Nolie');
   assert('10e. Record-only Other-funded: same 2-button, no-reversal contract', conf5.buttons.length === 2);
   const afterDelete5 = applyTransactionDelete(data5, 'txn-other', false);
   assert('10e-no-mutation. no asset, credit card, or liability changed after Record-only Other delete', JSON.stringify(afterDelete5.assets) === JSON.stringify(data5.assets) && JSON.stringify(afterDelete5.creditCards) === JSON.stringify(data5.creditCards));
@@ -505,11 +505,11 @@ console.log('\n=== 11. Tracked confirmation with a real applied effect (Real imp
   let data = baseData();
   data = applyNewTransaction(data, { type: 'expense', amount: 100, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'credit_card', creditCardId: 'amex' }, 'txn-cc-tracked');
   const reversal = describeReversalTargetMirror(data, data.transactions[0]!);
-  const conf = buildDeleteConfirmation(reversal, 'Navilo');
+  const conf = buildDeleteConfirmation(reversal, 'Nolie');
   assert('11a-title. tracked Credit Card: title is "Delete transaction?"', conf.title === 'Delete transaction?');
   assert(
     '11a-message. tracked Credit Card: message names AMEX and the real applied amount, matching the preferred structure',
-    conf.message === 'This transaction changed AMEX by $100.00. Would you like Navilo to reverse that balance change?'
+    conf.message === 'This transaction changed AMEX by $100.00. Would you like Nolie to reverse that balance change?'
   );
   assert('11a-buttons. tracked Credit Card: exactly 3 buttons — Cancel, Delete record only, Delete & reverse', conf.buttons.map((b) => b.text).join('|') === 'Cancel|Delete record only|Delete & reverse');
   assert('11a-labels-short. neither action button label contains the account name', !conf.buttons.some((b) => b.text.includes('AMEX')));
@@ -529,8 +529,8 @@ console.log('\n=== 11. Tracked confirmation with a real applied effect (Real imp
   let data2 = baseData();
   data2 = applyNewTransaction(data2, { type: 'expense', amount: 50, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'everyday', targetAssetId: 'everyday-1' }, 'txn-ev-tracked');
   const r2 = describeReversalTargetMirror(data2, data2.transactions[0]!);
-  const conf2 = buildDeleteConfirmation(r2, 'Navilo');
-  assert('11e. tracked Everyday Account: message names "Everyday Account" and $50.00', conf2.message === 'This transaction changed Everyday Account by $50.00. Would you like Navilo to reverse that balance change?');
+  const conf2 = buildDeleteConfirmation(r2, 'Nolie');
+  assert('11e. tracked Everyday Account: message names "Everyday Account" and $50.00', conf2.message === 'This transaction changed Everyday Account by $50.00. Would you like Nolie to reverse that balance change?');
   assert('11f. tracked Everyday Account delete-and-reverse touches only Everyday, never AMEX or Cash', (() => {
     const after = applyTransactionDelete(data2, 'txn-ev-tracked', true);
     return assetBal(after, 'everyday-1') === 900 && ccBal(after) === 1000 && assetBal(after, 'cash-1') === 100;
@@ -539,8 +539,8 @@ console.log('\n=== 11. Tracked confirmation with a real applied effect (Real imp
   let data3 = baseData();
   data3 = applyNewTransaction(data3, { type: 'expense', amount: 40, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'cash' }, 'txn-cash-tracked');
   const r3 = describeReversalTargetMirror(data3, data3.transactions[0]!);
-  const conf3 = buildDeleteConfirmation(r3, 'Navilo');
-  assert('11g. tracked Cash: message names "Cash" and $40.00', conf3.message === 'This transaction changed Cash by $40.00. Would you like Navilo to reverse that balance change?');
+  const conf3 = buildDeleteConfirmation(r3, 'Nolie');
+  assert('11g. tracked Cash: message names "Cash" and $40.00', conf3.message === 'This transaction changed Cash by $40.00. Would you like Nolie to reverse that balance change?');
 
   // The applied amount, not the raw transaction amount, must be shown —
   // proven with a flooring scenario (Everyday only had $20 against a $50
@@ -550,7 +550,7 @@ console.log('\n=== 11. Tracked confirmation with a real applied effect (Real imp
   data4 = applyNewTransaction(data4, { type: 'expense', amount: 50, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'everyday', targetAssetId: 'everyday-1' }, 'txn-floor');
   const r4 = describeReversalTargetMirror(data4, data4.transactions[0]!);
   assert('11h. flooring case: displayed amount is the TRUE applied $20, not the raw transaction amount $50', r4?.amount === 20);
-  const conf4 = buildDeleteConfirmation(r4, 'Navilo');
+  const conf4 = buildDeleteConfirmation(r4, 'Nolie');
   assert('11i. flooring case: message correctly shows $20.00, never $50.00', conf4.message.includes('$20.00') && !conf4.message.includes('$50.00'));
 
   // Long account name — action labels stay fixed-length; the name appears
@@ -559,7 +559,7 @@ console.log('\n=== 11. Tracked confirmation with a real applied effect (Real imp
   data5.assets.push({ id: 'ev-long', type: 'everyday', label: 'My Extremely Long Everyday Banking Account Name For Testing', currentValue: 500 });
   data5 = applyNewTransaction(data5, { type: 'expense', amount: 75, categoryId: 'x', date: new Date().toISOString(), paymentSource: 'everyday', targetAssetId: 'ev-long' }, 'txn-long');
   const r5 = describeReversalTargetMirror(data5, data5.transactions[0]!);
-  const conf5 = buildDeleteConfirmation(r5, 'Navilo');
+  const conf5 = buildDeleteConfirmation(r5, 'Nolie');
   assert('11j. long account name: appears in the message', conf5.message.includes('My Extremely Long Everyday Banking Account Name For Testing'));
   assert('11k. long account name: button labels remain exactly "Delete record only" / "Delete & reverse" — unaffected by name length', conf5.buttons[1]!.text === 'Delete record only' && conf5.buttons[2]!.text === 'Delete & reverse');
 }

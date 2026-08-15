@@ -164,7 +164,7 @@ console.log('=== Section 3: complete invalid-source fixture matrix (real compute
   }
 }
 
-console.log('\n=== Section 4: Navilo Score consumer gap — exact factor outputs (real computeLuluScore) ===');
+console.log('\n=== Section 4: Nolie Score consumer gap — exact factor outputs (real computeLuluScore) ===');
 {
   function scoreReport(patch: (d: AppData) => void) {
     const d = baseData();

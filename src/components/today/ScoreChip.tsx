@@ -60,7 +60,7 @@ export function ScoreChip({ presentation, onPress }: { presentation: ScoreChipPr
       activeOpacity={0.8}
       accessibilityRole="button"
       accessibilityLabel={`${presentation.label}. ${presentation.supportingText}`}
-      accessibilityHint="Opens the full Navilo Score in Grow"
+      accessibilityHint="Opens the full Nolie Score in Grow"
       hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
     >
       <View style={styles.iconBadge}>

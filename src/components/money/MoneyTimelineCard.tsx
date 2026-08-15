@@ -142,7 +142,7 @@ export function MoneyTimelineCard({
   if (events.length === 0) {
     return (
       <Text style={styles.empty}>
-        Nothing scheduled in the next 30 days yet — add your income and bills and Navilo will map out what happens next.
+        Nothing scheduled in the next 30 days yet — add your income and bills and Nolie will map out what happens next.
       </Text>
     );
   }

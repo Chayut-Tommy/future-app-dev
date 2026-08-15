@@ -157,7 +157,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /^Navilo Score/ }));
+    await user.press(await screen.findByRole('button', { name: /^Nolie Score/ }));
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();
     expect((await screen.findAllByText('Grow')).length).toBeGreaterThan(0);
   });
@@ -251,8 +251,8 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /^Navilo Score/ }));
-    const scoreHeading = await screen.findByRole('header', { name: /Navilo Score/ });
+    await user.press(await screen.findByRole('button', { name: /^Nolie Score/ }));
+    const scoreHeading = await screen.findByRole('header', { name: /Nolie Score/ });
     fireLayoutOnOwner(scoreHeading, 250);
 
     // Not open yet — this Jest environment's native-stack never fires a

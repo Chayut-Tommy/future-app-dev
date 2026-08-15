@@ -143,7 +143,7 @@ export function CreditCardRepaymentFormFields({
 
       <Text style={styles.label}>Which account did you pay from?</Text>
       {form.eligibleSources.length === 0 ? (
-        <Text style={styles.disclosure}>Add a Cash or Everyday balance in Navilo first to record a payment.</Text>
+        <Text style={styles.disclosure}>Add a Cash or Everyday balance in Nolie first to record a payment.</Text>
       ) : (
         <View style={styles.sourceRow}>
           {form.eligibleSources.map((s) => (
@@ -165,14 +165,14 @@ export function CreditCardRepaymentFormFields({
         <Text style={styles.disclosure}>
           {`Confirming will record ${formatMoney(form.validatedAmount.cents / 100)} as a repayment, reduce ${
             form.source.label
-          }, and reduce what you owe on ${card.label} by the same amount. This updates Navilo only — it does not move money in your bank.`}
+          }, and reduce what you owe on ${card.label} by the same amount. This updates Nolie only — it does not move money in your bank.`}
         </Text>
       ) : null}
 
       {form.needsBelowMinimumAck ? (
         <View style={styles.warningBox}>
           <Text style={styles.warningText}>
-            This is below the minimum payment recorded in Navilo. Recording it does not confirm that you have met your card provider's
+            This is below the minimum payment recorded in Nolie. Recording it does not confirm that you have met your card provider's
             requirements.
           </Text>
         </View>

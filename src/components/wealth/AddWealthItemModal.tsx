@@ -158,14 +158,14 @@ const GENERIC_SAVE_ERROR = 'Something went wrong saving this — nothing was los
 // ambiguous exact-linked repayment: Navilo must not guess which of
 // several linked repayment records to update, so nothing is written and
 // the user is told exactly what to go check.
-const DUPLICATE_REPAYMENT_ERROR = 'Navilo found more than one repayment linked to this loan. Review the existing repayments before updating this schedule.';
+const DUPLICATE_REPAYMENT_ERROR = 'Nolie found more than one repayment linked to this loan. Review the existing repayments before updating this schedule.';
 // BNPL — the safest narrow behaviour for a corrupted/legacy plan with more
 // than one active linked repayment: never guess which one, never confirm
 // or project against it, surface a recoverable state instead. Reachable
 // only from imported/legacy data — the normal add/edit form's own
 // duplicate guard (upsertLinkedRecurringItem) already prevents creating
 // this state.
-const BNPL_AMBIGUOUS_SCHEDULE_ERROR = 'Navilo found more than one repayment schedule linked to this plan. Check your repayment details before saving.';
+const BNPL_AMBIGUOUS_SCHEDULE_ERROR = 'Nolie found more than one repayment schedule linked to this plan. Check your repayment details before saving.';
 
 function messageForSaveFailure(err: unknown): string {
   if (!(err instanceof LiabilityFailure)) return GENERIC_SAVE_ERROR;
@@ -1333,7 +1333,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // type in this file with a delete confirmation; every other existing
     // type's immediate-delete behavior below is deliberately unchanged.
     if (editAsset?.type === 'everyday') {
-      Alert.alert('Remove this Everyday Account from Navilo?', 'Your Navilo totals will update, but this will not affect your real bank account.', [
+      Alert.alert('Remove this Everyday Account from Nolie?', 'Your Nolie totals will update, but this will not affect your real bank account.', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
@@ -1348,7 +1348,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     }
     if (editLiability?.type === 'bnpl') {
       Alert.alert(
-        'Remove this BNPL plan from Navilo?',
+        'Remove this BNPL plan from Nolie?',
         'Future repayment estimates will stop. This will not change your account with the provider.',
         [
           { text: 'Cancel', style: 'cancel' },

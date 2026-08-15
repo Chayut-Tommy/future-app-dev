@@ -308,7 +308,7 @@ export function SafeToSpendHero({
           ) : (
             <>
               <Text style={styles.line}>{presentation.primaryCopy}</Text>
-              <Text style={styles.explainer}>Add or select a money balance that Navilo can use for short-term money calculations.</Text>
+              <Text style={styles.explainer}>Add or select a money balance that Nolie can use for short-term money calculations.</Text>
             </>
           )}
           {!hasIncludedBalance && onSelectBalances ? (

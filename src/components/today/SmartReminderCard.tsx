@@ -546,7 +546,7 @@ export function SmartReminderCard({
                   is already decided. */}
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as income in Navilo — you'll choose which balance it's added to next. This updates Navilo only—it does not move money in your bank.`}
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as income in Nolie — you'll choose which balance it's added to next. This updates Nolie only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <View style={styles.actionRow}>
@@ -617,7 +617,7 @@ export function SmartReminderCard({
             <>
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your chosen account or credit card balance in Navilo. This updates Navilo only—it does not move money in your bank.`}
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense and update your chosen account or credit card balance in Nolie. This updates Nolie only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <BillPaymentSourcePicker
@@ -639,7 +639,7 @@ export function SmartReminderCard({
                   owed on the plan) changes too. */}
               {disclosedAmount.valid ? (
                 <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Navilo only—it does not move money in your bank.`}
+                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Nolie only—it does not move money in your bank.`}
                 </Text>
               ) : null}
               <View style={styles.actionRow}>

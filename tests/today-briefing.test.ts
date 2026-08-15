@@ -268,7 +268,7 @@ console.log('\n=== Section 4: selectSafeToSpendPresentation — full contract, e
     const p = selectSafeToSpendPresentation(safeToSpend, heroCopy);
     assert(
       'missing_balance: heading is persona eyebrow, amount hidden, explains no balance selected',
-      p.heroState === 'missing_balance' && p.heading === heroCopy.eyebrowScheduled.toUpperCase() && p.amountVisible === false && p.primaryCopy.includes('Select a balance for Navilo')
+      p.heroState === 'missing_balance' && p.heading === heroCopy.eyebrowScheduled.toUpperCase() && p.amountVisible === false && p.primaryCopy.includes('Select a balance for Nolie')
     );
     assertAupAction('missing_balance', p);
   }

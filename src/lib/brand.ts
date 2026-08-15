@@ -10,8 +10,8 @@
  * AsyncStorage data is never at risk from this rename.
  */
 export const brand = {
-  name: 'Navilo',
+  name: 'Nolie',
   tagline: 'Your wealth navigator',
-  assistantName: 'Navilo',
-  scoreName: 'Navilo Score',
+  assistantName: 'Nolie',
+  scoreName: 'Nolie Score',
 } as const;

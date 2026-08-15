@@ -186,7 +186,7 @@ export function SelectBalancesSheet({
       }
     >
       <Text style={styles.intro}>
-        Choose which Cash, Savings or Everyday Account balances Navilo includes when estimating your available money. Excluding a
+        Choose which Cash, Savings or Everyday Account balances Nolie includes when estimating your available money. Excluding a
         balance here never changes or deletes it — it stays exactly as recorded in Wealth, and only stops counting toward this specific
         estimate.
       </Text>
