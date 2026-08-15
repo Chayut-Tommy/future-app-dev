@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import type { RefObject } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme/ThemeContext';
 import { SafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
@@ -57,6 +58,8 @@ export function TodayBriefingCard({
   onPressAup,
   onPressEventRow,
   onPressReminderTile,
+  headingRef,
+  reminderTileRef,
 }: {
   /** The same local-calendar Date every other Briefing calculation already
    * derives from (TodayScreen's useCurrentLocalDate-sourced `currentDate`)
@@ -74,6 +77,16 @@ export function TodayBriefingCard({
    * destination. This component never renders reminder confirmation/
    * account-choice UI itself. */
   onPressReminderTile: () => void;
+  /** Reminder focus/announcements task — forwarded to this card's own
+   * "Your Today Briefing" heading. TodayScreen uses this as the safe
+   * fallback focus target when the Reminder sheet fully closes and the
+   * originating Reminder tile no longer exists (every reminder resolved). */
+  headingRef?: RefObject<any>;
+  /** Reminder focus/announcements task — forwarded to BriefingTileRow,
+   * attached only to the 'reminder' tile when one is present. TodayScreen
+   * uses this to restore accessibility focus there when the Reminder sheet
+   * closes and that exact tile still exists. */
+  reminderTileRef?: RefObject<any>;
 }) {
   const { spacing, radius, typography, glow, naviloPalette } = useTheme();
 
@@ -106,11 +119,11 @@ export function TodayBriefingCard({
   return (
     <LinearGradient colors={[naviloPalette.heroGradientStart, naviloPalette.heroGradientEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Your Today Briefing</Text>
+        <Text ref={headingRef} style={styles.sectionTitle} accessibilityRole="header">Your Today Briefing</Text>
         <Text style={styles.sectionDateContext}>{formatBriefingDateContext(today)}</Text>
       </View>
       <ScoreChip presentation={scoreChip} onPress={onPressScoreChip} />
-      <BriefingTileRow tiles={tiles} onPressTile={handlePressTile} />
+      <BriefingTileRow tiles={tiles} onPressTile={handlePressTile} reminderTileRef={reminderTileRef} />
     </LinearGradient>
   );
 }

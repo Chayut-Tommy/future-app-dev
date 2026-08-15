@@ -256,16 +256,16 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
   // section-focus architecture (see tests/pass-2b-correction.test.ts for
   // the full pending-focus mechanism's dedicated real-function coverage —
   // this file only re-confirms the wiring at the call sites).
-  // Pass 2D — handleScoreChipPress/handleJourneyPress now delegate to the
-  // shared navigateToGrow('score'/'journey') helper (see
-  // tests/pass-2b-correction.test.ts for that helper's own dedicated
-  // coverage) rather than each inlining an identical navigate() call —
-  // still stable section identifiers, still a fresh requestId every call,
-  // still never a duplicate screen.
+  // Pass 2E final correction — handleScoreChipPress/handleJourneyPress now
+  // delegate to the shared pushGrowDetail('score'/'journey') helper, which
+  // pushes the root stack's GrowDetail route (mounting the exact same
+  // DiscoverScreen component, in its `pushed` mode) instead of navigating
+  // within the Grow tab — still stable section identifiers, still a fresh
+  // requestId every call, still never a duplicate screen/engine.
   assert(
-    "handleScoreChipPress/handleJourneyPress navigate to Grow with stable section identifiers ('score'/'journey') via the shared navigateToGrow helper, never a duplicate screen",
-    /function handleScoreChipPress\(\) \{\s*navigateToGrow\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) &&
-      /function handleJourneyPress\(\) \{\s*navigateToGrow\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
+    "handleScoreChipPress/handleJourneyPress push GrowDetail with stable section identifiers ('score'/'journey') via the shared pushGrowDetail helper, never a duplicate screen",
+    /function handleScoreChipPress\(\) \{\s*pushGrowDetail\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) &&
+      /function handleJourneyPress\(\) \{\s*pushGrowDetail\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
     "Grow (DiscoverScreen.tsx) mounts the exact existing ScoreExplanationSheet and JourneyTimeline components — full accepted info/actions preserved, no redesigned/duplicate engine",

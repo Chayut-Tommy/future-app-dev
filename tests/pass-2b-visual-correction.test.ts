@@ -203,7 +203,11 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
   assert('ScoreChip.tsx uses navy (light mode) / textPrimary (dark mode) for its headline text — not a hard-coded near-black', /scheme === 'light' \? colors\.navy : colors\.textPrimary/.test(SCORE_CHIP_SRC));
   assert('ScoreChip.tsx uses a gauge/speedometer icon, never Journey\'s trophy glyph', /speedometer-outline/.test(SCORE_CHIP_SRC) && !/name="trophy"/.test(SCORE_CHIP_SRC));
   assert('ScoreChip.tsx still retains the exact factual copy contract — renders presentation.label/presentation.supportingText verbatim, never its own wording', /\{presentation\.label\}/.test(SCORE_CHIP_SRC) && /\{presentation\.supportingText\}/.test(SCORE_CHIP_SRC));
-  assert('ScoreChip.tsx locked/unavailable ("muted") state still falls back to the existing neutral surfaceMuted/textMuted treatment, not green — preserves the established locked mapping', /presentation\.tone === 'muted' \? colors\.surfaceMuted/.test(SCORE_CHIP_SRC) && /presentation\.tone === 'muted' \? colors\.textMuted/.test(SCORE_CHIP_SRC));
+  // Pass 2E contrast correction — the muted icon now reads colors.textSecondary
+  // instead of colors.textMuted (textMuted failed 3:1 against surfaceMuted);
+  // this still asserts the treatment is neutral/non-green, just via the
+  // corrected accessible token.
+  assert('ScoreChip.tsx locked/unavailable ("muted") state still falls back to the existing neutral surfaceMuted/textSecondary treatment, not green — preserves the established locked mapping', /presentation\.tone === 'muted' \? colors\.surfaceMuted/.test(SCORE_CHIP_SRC) && /presentation\.tone === 'muted' \? colors\.textSecondary/.test(SCORE_CHIP_SRC));
 
   // --- Journey snapshot: teal/route iconography, no gold, single chevron ---
   assert('TodayJourneySnapshotCard.tsx never references colors.gold or colors.goldSoft', !/colors\.gold\b/.test(JOURNEY_SNAPSHOT_SRC) && !/colors\.goldSoft\b/.test(JOURNEY_SNAPSHOT_SRC));
@@ -249,7 +253,10 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
         // Searched from heroOpen onward — the doc comment above also
         // mentions "Your Today Briefing" in prose, which would otherwise be
         // found first and falsely appear to precede the gradient.
-        const titleIdx = BRIEFING_CARD_SRC.indexOf('<Text style={styles.sectionTitle}>Your Today Briefing</Text>', heroOpen);
+        // Pass 2E accessibility correction added accessibilityRole="header"
+        // to this Text — search for the still-unique "Your Today Briefing"
+        // text content itself rather than the exact opening-tag literal.
+        const titleIdx = BRIEFING_CARD_SRC.indexOf('>Your Today Briefing</Text>', heroOpen);
         const chipIdx = BRIEFING_CARD_SRC.indexOf('<ScoreChip', heroOpen);
         const tileRowIdx = BRIEFING_CARD_SRC.indexOf('<BriefingTileRow', heroOpen);
         return heroOpen !== -1 && heroClose !== -1 && titleIdx > heroOpen && chipIdx > titleIdx && tileRowIdx > chipIdx && tileRowIdx < heroClose;

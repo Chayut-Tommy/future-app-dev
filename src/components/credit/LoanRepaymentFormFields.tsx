@@ -1,8 +1,10 @@
 import React, { useMemo } from 'react';
 import { InputAccessoryView, Keyboard, Platform, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import type { RefObject } from 'react';
 import { useTheme } from '../../theme/ThemeContext';
 import { Liability, LiabilityType, RecurringItem } from '../../types/models';
 import { LoanRepaymentFormBundle } from '../../hooks/useLoanRepaymentForm';
+import { useAnnounceOnce } from '../../hooks/useAnnounceOnce';
 
 function formatMoney(value: number): string {
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -36,12 +38,25 @@ export function LoanRepaymentFormFields({
   liability,
   recurringItem,
   form,
+  headingRef,
 }: {
   liability: Liability;
   recurringItem: RecurringItem;
   form: LoanRepaymentFormBundle;
+  /** Reminder focus/announcements task — the host (ReminderDetailSheet)
+   * moves accessibility focus here once this form becomes the presented
+   * state, so VoiceOver/TalkBack lands on "which loan, what's due" rather
+   * than silently landing nowhere. Optional so this component still works
+   * standalone (e.g. in isolated tests) without a host providing one. */
+  headingRef?: RefObject<any>;
 }) {
   const { colors, radius, spacing, typography } = useTheme();
+
+  // Reminder focus/announcements task — announced once per distinct
+  // message, never on every re-render while the same error persists (e.g.
+  // the customer retyping the amount), and never moves focus away from
+  // whichever field the customer is using.
+  useAnnounceOnce(form.errorText);
 
   const styles = useMemo(
     () =>
@@ -104,7 +119,7 @@ export function LoanRepaymentFormFields({
 
   return (
     <>
-      <Text style={styles.subtitle}>
+      <Text ref={headingRef} style={styles.subtitle}>
         {liability.label} · {LIABILITY_TYPE_LABEL[liability.type]}
       </Text>
 
@@ -205,11 +220,7 @@ export function LoanRepaymentFormFields({
         </Text>
       ) : null}
 
-      {form.errorText ? (
-        <Text style={styles.errorText} accessibilityLiveRegion="polite">
-          {form.errorText}
-        </Text>
-      ) : null}
+      {form.errorText ? <Text style={styles.errorText}>{form.errorText}</Text> : null}
 
       {doneAccessory}
     </>

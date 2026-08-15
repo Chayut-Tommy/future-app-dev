@@ -78,6 +78,9 @@ export function Button({
       disabled={isDisabled}
       activeOpacity={0.75}
       hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
     >
       {loading ? (
         <ActivityIndicator color={variant === 'primary' ? colors.onAccent : colors.accent} />

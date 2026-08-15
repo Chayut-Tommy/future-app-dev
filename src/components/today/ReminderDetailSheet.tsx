@@ -23,6 +23,7 @@ import {
   occurrenceKeyOf,
 } from '../../lib/calculations/reminderInteractionLifecycle';
 import { AppData } from '../../types/models';
+import { sendFocusEvent } from '../../lib/accessibilityFocus';
 
 const CLOSED_STATE: ReminderLifecycleState = { kind: 'closed' };
 
@@ -122,6 +123,7 @@ const CLOSED_STATE: ReminderLifecycleState = { kind: 'closed' };
 export function ReminderDetailSheet({
   openRequest,
   today,
+  onFullyClosed,
 }: {
   /** The atomic, collision-safe open request TodayScreen's tile-press
    * handler builds — null when nothing has ever been requested yet. See
@@ -134,6 +136,16 @@ export function ReminderDetailSheet({
    * recompute computeTopReminder against the latest committed data
    * themselves, never a second, independently-captured `new Date()`. */
   today: Date;
+  /** Reminder focus/announcements task — fires once the native Modal's own
+   * dismissal has ACTUALLY finished (mirrors handleNativeDismissComplete's
+   * existing real-signal contract, never a guessed timeout), for every path
+   * that ends the review: the "Close" link, completing the final reminder,
+   * or otherwise running out of eligible reminders. The host (TodayScreen)
+   * uses this to restore accessibility focus to whichever Briefing control
+   * originated the sheet, or a safe fallback if that control no longer
+   * exists. Optional — a host that doesn't need origin-focus restoration
+   * simply omits it. */
+  onFullyClosed?: () => void;
 }) {
   const { data } = useAppState();
   const { colors, spacing } = useTheme();
@@ -306,7 +318,67 @@ export function ReminderDetailSheet({
   // was still visibly closing).
   function handleNativeDismissComplete() {
     lastPresentedStateRef.current = CLOSED_STATE;
+    // Reminder focus/announcements task — every genuinely fresh open (even
+    // of the exact same reminder that was showing before a prior close)
+    // must move focus again; without this reset, reopening the very same
+    // occurrence would look identical to the identity-based focus effect
+    // below and be silently skipped.
+    lastFocusedIdentityRef.current = null;
+    onFullyClosed?.();
   }
+
+  // Reminder focus/announcements task — the single source of truth for
+  // "what should currently have accessibility focus." Keyed on a compound
+  // identity (content kind + occurrence key) derived from `presentedState`
+  // (not `state`) so it never fires from the transient 'closed' frame during
+  // the native closing animation — only from a genuine content change.
+  // Ordinary re-renders (typing an amount, a rerank that doesn't change
+  // which content is shown) never change this identity, so they can never
+  // steal focus — satisfied structurally, not by a special case.
+  const reminderTitleRef = useRef<any>(null);
+  const loanFormHeadingRef = useRef<any>(null);
+  const cardFormHeadingRef = useRef<any>(null);
+  const recordedContentRef = useRef<any>(null);
+
+  function focusTargetForKind(kind: ReminderLifecycleState['kind']) {
+    switch (kind) {
+      case 'reminder_detail':
+        return reminderTitleRef;
+      case 'loan_form':
+        return loanFormHeadingRef;
+      case 'card_form':
+        return cardFormHeadingRef;
+      case 'loan_recorded':
+      case 'card_recorded':
+        return recordedContentRef;
+      case 'closed':
+        return null;
+    }
+  }
+
+  const contentIdentity = presentedState.kind === 'closed' ? 'closed' : `${presentedState.kind}:${presentedState.occurrenceKey}`;
+  const lastFocusedIdentityRef = useRef<string | null>(null);
+
+  // Reminder focus/announcements task — fires exactly once per genuine
+  // content identity change while the sheet is visible: the initial open,
+  // every same-sheet advancement (Not yet/Got it/completed payment ->
+  // next reminder), every repayment-form open, and every Cancel-back to
+  // reminder_detail. No deferral, no timeout: React attaches refs during
+  // the commit phase, strictly before effects run, so by the time this
+  // effect body executes the target ref for `presentedState.kind` is
+  // already mounted for THIS render — there is no asynchronous gap in
+  // which a "stale" request could exist to invalidate. An ordinary
+  // re-render that doesn't change contentIdentity (typing an amount, a
+  // rerank that keeps showing the same content) is a no-op here by
+  // construction, so it can never steal focus from a field the customer is
+  // using.
+  useEffect(() => {
+    if (!visible) return;
+    if (contentIdentity === lastFocusedIdentityRef.current) return;
+    lastFocusedIdentityRef.current = contentIdentity;
+    sendFocusEvent(focusTargetForKind(presentedState.kind));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentIdentity, visible]);
 
   const styles = useMemo(
     () =>
@@ -405,6 +477,7 @@ export function ReminderDetailSheet({
       gesturesEnabled={gesturesEnabled}
       headerRight={headerRight}
       footer={footer}
+      animateContentEntrance
     >
       {presentedState.kind === 'reminder_detail' ? (
         <>
@@ -414,6 +487,7 @@ export function ReminderDetailSheet({
             onOutcome={handleReminderOutcome}
             onRequestLoanRepayment={() => dispatch({ type: 'REQUEST_LOAN_FORM' })}
             onRequestCreditCardRepayment={() => dispatch({ type: 'REQUEST_CARD_FORM' })}
+            titleRef={reminderTitleRef}
           />
           <TouchableOpacity style={styles.closeButton} onPress={handleForceClose}>
             <Text style={styles.closeText}>Close</Text>
@@ -421,11 +495,13 @@ export function ReminderDetailSheet({
         </>
       ) : null}
       {presentedState.kind === 'loan_form' && loanLiability && loanRecurringItem ? (
-        <LoanRepaymentFormFields liability={loanLiability} recurringItem={loanRecurringItem} form={loanForm} />
+        <LoanRepaymentFormFields liability={loanLiability} recurringItem={loanRecurringItem} form={loanForm} headingRef={loanFormHeadingRef} />
       ) : null}
-      {presentedState.kind === 'loan_recorded' ? <PaymentRecordedContent /> : null}
-      {presentedState.kind === 'card_form' && cardCard ? <CreditCardRepaymentFormFields card={cardCard} form={cardForm} /> : null}
-      {presentedState.kind === 'card_recorded' ? <PaymentRecordedContent /> : null}
+      {presentedState.kind === 'loan_recorded' ? <PaymentRecordedContent focusRef={recordedContentRef} /> : null}
+      {presentedState.kind === 'card_form' && cardCard ? (
+        <CreditCardRepaymentFormFields card={cardCard} form={cardForm} headingRef={cardFormHeadingRef} />
+      ) : null}
+      {presentedState.kind === 'card_recorded' ? <PaymentRecordedContent focusRef={recordedContentRef} /> : null}
     </KeyboardSheet>
   );
 }

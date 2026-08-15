@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -64,13 +64,35 @@ function formatMoney(value: number): string {
  * goal discovery, Navilo Picks, a Future You/Safety Net section, then the
  * six-category Explore Money Moves accordion, with Market Pulse lowest
  * priority at the very bottom (Pass 2D — Today & Grow hierarchy cleanup).
+ *
+ * `pushed` — Pass 2E final correction (destination-reveal replacement).
+ * True only when this instance is mounted as the root stack's `GrowDetail`
+ * route (RootNavigator.tsx) — Today Briefing's Score/Journey destinations,
+ * pushed above Today with a real Back header, exactly like Transactions.
+ * The ordinary Grow BOTTOM-TAB instance (MainTabNavigator.tsx) never passes
+ * this prop (defaults false) — Today's contextual-insight card still
+ * navigates there directly with scrollTo params for its own, unrelated
+ * targets (safety_net/saving/learning/goals/financial-learning), which this
+ * screen's existing section-focus mechanism below is unchanged for. Same
+ * component, same calculations, same shared state either way — only
+ * whether a Back header renders, which ScrollView instance owns the
+ * section-focus scroll, and whether a Score-sheet auto-open is sequenced
+ * after the push transition differ. Never a second/duplicate Grow screen.
  */
-export function DiscoverScreen() {
+export function DiscoverScreen({ reduceMotion, pushed = false }: { reduceMotion: boolean; pushed?: boolean }) {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { data } = useAppState();
   const { colors, spacing, typography, radius, naviloPalette } = useTheme();
-  const scrollRef = tabScrollRefs.Grow;
+  // Pass 2E final correction — the pushed instance owns a private ScrollView
+  // ref, never the shared tabScrollRefs.Grow singleton MainTabNavigator's
+  // "tap active tab to scroll to top" listener and the tab-hosted instance
+  // both depend on — two simultaneously-mounted DiscoverScreen instances
+  // (the tab one underneath, this pushed one on top) attaching the SAME ref
+  // object would make each overwrite the other's `.current`, breaking
+  // whichever attached first.
+  const pushedScrollRef = useRef<ScrollView>(null);
+  const scrollRef = pushed ? pushedScrollRef : tabScrollRefs.Grow;
   const exploreMoneyMovesY = useRef<number | null>(null);
   const scoreSectionY = useRef<number | null>(null);
   const journeySectionY = useRef<number | null>(null);
@@ -119,6 +141,30 @@ export function DiscoverScreen() {
   // Milestones presentation" an organic (non-Today-driven) Grow visit
   // already showed before this correction.
   const [journeySubview, setJourneySubview] = useState<'milestones' | 'moneyPath'>('milestones');
+  // Pass 2E final correction — a native push transition and a native Modal
+  // presentation must never animate at the same time (device-test
+  // rejection evidence: Score's own destination hard-cut with no
+  // perceptible motion, and the prior DestinationReveal attempt never
+  // addressed this — ScoreExplanationSheet could still present WHILE the
+  // stack was still sliding in). Gated on this screen's own `transitionEnd`
+  // — the standard React Navigation native-stack event for "this screen's
+  // push/pop animation has finished" — so the sheet opens once, only after
+  // the push settles, and never for the tab-hosted instance (which has no
+  // push transition to wait for; `transitionEndedRef` starts true there).
+  const transitionEndedRef = useRef(!pushed);
+  const pendingScoreSheetOpenRef = useRef(false);
+  useEffect(() => {
+    if (!pushed) return;
+    const unsubscribe = navigation.addListener('transitionEnd', () => {
+      transitionEndedRef.current = true;
+      if (pendingScoreSheetOpenRef.current) {
+        pendingScoreSheetOpenRef.current = false;
+        setScoreSheetVisible(true);
+      }
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushed]);
   // Pass 2D — purely local UI state for the new Explore Money Moves
   // accordion; never persisted (no accepted persistence path owns this),
   // so it resets to fully collapsed on every fresh mount of this screen —
@@ -250,7 +296,15 @@ export function DiscoverScreen() {
       scoreChipPresentation.state === 'available'
     );
     if (!result.fulfilled) return; // still pending — left untouched, retried by that section's own onLayout
-    scrollRef.current?.scrollTo({ y: result.scrollY!, animated: true });
+    // Pass 2E final correction — a pushed arrival must never animate this
+    // scroll: it is the destination's INITIAL position (Section 3's "arrive
+    // already focused... without a second conspicuous jump"), and an
+    // animated scroll running alongside the native push transition is
+    // exactly the "competing movement" the rejected DestinationReveal
+    // attempt never fixed. The tab-hosted instance (still reachable via
+    // Today's contextual-insight card for its own, unrelated targets) keeps
+    // honouring Reduce Motion exactly as before.
+    scrollRef.current?.scrollTo({ y: result.scrollY!, animated: pushed ? false : !reduceMotion });
     // Pass 2B correction §2 — one Today tap must reach the full Navilo
     // Score experience, not a second compact launcher requiring another
     // tap. ScoreExplanationSheet IS that full experience (score, life
@@ -263,7 +317,10 @@ export function DiscoverScreen() {
     // landing on this section's already-correct locked/unavailable copy,
     // and Today's existing UnlockPromptCard already owns the one unlock
     // CTA (must not gain a second, per this correction's own instruction).
-    if (result.shouldOpenScoreSheet) setScoreSheetVisible(true);
+    if (result.shouldOpenScoreSheet) {
+      if (transitionEndedRef.current) setScoreSheetVisible(true);
+      else pendingScoreSheetOpenRef.current = true;
+    }
     // Pass 2B correction §5 — one Today tap must reach the complete Journey
     // presentation, not JourneyTimeline's own collapsed "View full journey"
     // gate a second time. shouldExpandJourney is already false for every
@@ -403,7 +460,11 @@ export function DiscoverScreen() {
   );
 
   return (
-    <Screen title="Grow" scrollRef={scrollRef}>
+    <Screen
+      title="Grow"
+      scrollRef={scrollRef}
+      onBack={pushed ? () => { if (navigation.canGoBack()) navigation.goBack(); } : undefined}
+    >
       <View style={styles.disclaimer}>
         <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
         <Text style={styles.disclaimerText}>Educational information only. Not investment advice.</Text>
@@ -679,16 +740,21 @@ export function DiscoverScreen() {
         Future You and Safety Net
       </Text>
       <FutureYouCard preview={futureYouPreview} onAdjust={() => navigation.navigate('CompoundCalculator')} />
-      <TouchableOpacity onPress={() => navigation.navigate('EmergencyFund')} activeOpacity={0.8}>
+      <TouchableOpacity
+        onPress={() => navigation.navigate('EmergencyFund')}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel="How long would my safety net last? See how many months your cash covers, plus your savings rate"
+      >
         <SectionCard style={styles.navCard}>
           <View style={styles.navIcon}>
-            <Ionicons name="shield-outline" size={20} color={colors.market} />
+            <Ionicons name="shield-outline" size={20} color={colors.market} importantForAccessibility="no" />
           </View>
           <View style={styles.navTextBlock}>
             <Text style={styles.navTitle}>How long would my safety net last?</Text>
             <Text style={styles.navBody}>See how many months your cash covers, plus your savings rate</Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} importantForAccessibility="no" />
         </SectionCard>
       </TouchableOpacity>
 
@@ -708,6 +774,7 @@ export function DiscoverScreen() {
           exploreMoneyMovesY.current = e.nativeEvent.layout.y;
           attemptSectionFocus();
         }}
+        accessibilityRole="header"
       >
         Explore Money Moves
       </Text>
@@ -722,16 +789,21 @@ export function DiscoverScreen() {
           attemptSectionFocus();
         }}
       >
-        <TouchableOpacity onPress={() => navigation.navigate('SavingsComparison')} activeOpacity={0.8}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('SavingsComparison')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Compare savings rates. Bank accounts, rates, and a savings calculator"
+        >
           <SectionCard style={styles.navCard}>
             <View style={styles.navIcon}>
-              <Ionicons name="calculator-outline" size={20} color={colors.market} />
+              <Ionicons name="calculator-outline" size={20} color={colors.market} importantForAccessibility="no" />
             </View>
             <View style={styles.navTextBlock}>
               <Text style={styles.navTitle}>Compare savings rates</Text>
               <Text style={styles.navBody}>Bank accounts, rates, and a savings calculator</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} importantForAccessibility="no" />
           </SectionCard>
         </TouchableOpacity>
         {/* Pass 2D relocation — Savings Coach, moved here unchanged from
@@ -744,16 +816,21 @@ export function DiscoverScreen() {
 
       <ExploreCategorySection title="Investing" icon="trending-up-outline" expanded={exploreExpanded.investing} onToggle={() => toggleExplore('investing')}>
         <LearningPathCard path={INVESTING_PATH} />
-        <TouchableOpacity onPress={() => navigation.navigate('CompoundCalculator')} activeOpacity={0.8}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('CompoundCalculator')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Compare investment options. See how different monthly amounts could grow over time"
+        >
           <SectionCard style={styles.navCard}>
             <View style={styles.navIcon}>
-              <Ionicons name="trending-up-outline" size={20} color={colors.market} />
+              <Ionicons name="trending-up-outline" size={20} color={colors.market} importantForAccessibility="no" />
             </View>
             <View style={styles.navTextBlock}>
               <Text style={styles.navTitle}>Compare investment options</Text>
               <Text style={styles.navBody}>See how different monthly amounts could grow over time</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} importantForAccessibility="no" />
           </SectionCard>
         </TouchableOpacity>
       </ExploreCategorySection>
@@ -763,16 +840,21 @@ export function DiscoverScreen() {
       </ExploreCategorySection>
 
       <ExploreCategorySection title="Home" icon="home-outline" expanded={exploreExpanded.home} onToggle={() => toggleExplore('home')}>
-        <TouchableOpacity onPress={() => navigation.navigate('HomeLoanCalculator')} activeOpacity={0.8}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('HomeLoanCalculator')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Can I buy a home? Estimate repayments, total interest, and total loan cost"
+        >
           <SectionCard style={styles.navCard}>
             <View style={styles.navIcon}>
-              <Ionicons name="home-outline" size={20} color={colors.market} />
+              <Ionicons name="home-outline" size={20} color={colors.market} importantForAccessibility="no" />
             </View>
             <View style={styles.navTextBlock}>
               <Text style={styles.navTitle}>Can I buy a home?</Text>
               <Text style={styles.navBody}>Estimate repayments, total interest, and total loan cost</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} importantForAccessibility="no" />
           </SectionCard>
         </TouchableOpacity>
         <LearningPathCard path={PROPERTY_PATH} />
@@ -824,7 +906,7 @@ export function DiscoverScreen() {
       {/* No onLayout/focus-target here by design — Market Pulse is
           intentionally not one of the typed SectionFocusTarget values,
           since nothing in this pass routes a customer to it directly. */}
-      <Text style={styles.categoryTitle}>Markets</Text>
+      <Text style={styles.categoryTitle} accessibilityRole="header">Markets</Text>
       <SectionCard>
         <MarketPulsePreview />
       </SectionCard>

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -60,12 +60,31 @@ function formatMoney(value: number): string {
  * what already happened. Every figure here reads from the same shared
  * engines (computeSafeToSpend, computeMoneyTimeline) used across Wealth,
  * Today, and Grow — this screen only changes how they're presented.
+ *
+ * `pushed` — Pass 2E final correction (destination-reveal replacement).
+ * True only when this instance is mounted as the root stack's `MoneyDetail`
+ * route (RootNavigator.tsx) — Today Briefing's Available Until Payday /
+ * outflow-event-row destinations, pushed above Today with a real Back
+ * header, exactly like Transactions. The ordinary Money BOTTOM-TAB instance
+ * (MainTabNavigator.tsx) never passes this prop (defaults false): same
+ * component, same calculations, same shared state — only whether a Back
+ * header renders and which ScrollView instance owns the section-focus
+ * scroll differ. Never a second/duplicate Money screen.
  */
-export function MoneyScreen() {
+export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: boolean; pushed?: boolean }) {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { colors, spacing, typography, radius, cardShadow } = useTheme();
+  // Pass 2E final correction — the pushed instance owns a private ScrollView
+  // ref, never the shared tabScrollRefs.Money singleton MainTabNavigator's
+  // "tap active tab to scroll to top" listener and the tab-hosted instance
+  // both depend on — two simultaneously-mounted MoneyScreen instances (the
+  // tab one underneath, this pushed one on top) attaching the SAME ref
+  // object would make each overwrite the other's `.current`, breaking
+  // whichever attached first.
+  const pushedScrollRef = useRef<ScrollView>(null);
+  const activeScrollRef = pushed ? pushedScrollRef : tabScrollRefs.Money;
   // Pass 2A section-focused navigation targets — null (not 0) is the
   // "not yet measured" sentinel, distinguishing an unmeasured section from
   // one genuinely positioned at the very top of the scroll content.
@@ -212,7 +231,17 @@ export function MoneyScreen() {
       timeline: whatHappensNextSectionY.current,
     });
     if (!result.fulfilled) return; // still pending — retried by that section's own onLayout below
-    tabScrollRefs.Money.current?.scrollTo({ y: result.scrollY!, animated: true });
+    // Pass 2E final correction — a pushed arrival must never animate this
+    // scroll: it is the destination's INITIAL position (Section 3's "arrive
+    // already focused... without a second conspicuous jump"), and an
+    // animated scroll running alongside the native push transition is
+    // exactly the "competing movement" the rejected DestinationReveal
+    // attempt never fixed. The tab-hosted instance has no live caller left
+    // (Briefing now pushes MoneyDetail instead of navigating here with
+    // scrollTo params — see TodayScreen.tsx), so `!reduceMotion` below is
+    // inert in production; kept only so a future in-tab caller would still
+    // honour Reduce Motion rather than silently losing that guarantee.
+    activeScrollRef.current?.scrollTo({ y: result.scrollY!, animated: pushed ? false : !reduceMotion });
     pendingMoneyFocusRef.current = null;
     navigation.setParams({ scrollTo: undefined, scrollToRequestId: undefined });
   }
@@ -509,7 +538,11 @@ export function MoneyScreen() {
   );
 
   return (
-    <Screen title="Money" scrollRef={tabScrollRefs.Money}>
+    <Screen
+      title="Money"
+      scrollRef={activeScrollRef}
+      onBack={pushed ? () => { if (navigation.canGoBack()) navigation.goBack(); } : undefined}
+    >
       <View
         onLayout={(e) => {
           aupSectionY.current = e.nativeEvent.layout.y;

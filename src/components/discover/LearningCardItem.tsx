@@ -24,7 +24,7 @@ export function LearningCardItem({ card, onOpen }: { card: LearningCard; onOpen?
         title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
         hook: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
         body: { ...typography.body, fontSize: 14, color: colors.textPrimary, lineHeight: 21, marginBottom: spacing.sm },
-        readTime: { ...typography.micro, color: colors.textMuted },
+        readTime: { ...typography.micro, color: colors.textSecondary },
       }),
     [colors, radius, spacing, typography]
   );

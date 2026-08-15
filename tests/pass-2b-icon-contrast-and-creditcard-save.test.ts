@@ -212,8 +212,17 @@ console.log('\n=== Section 7: BriefingTileRow wiring — normal-tone icons use t
 {
   const SRC = readFileSync('src/components/today/BriefingTileRow.tsx', 'utf8');
   assert(
-    "the tile icon's colour expression uses naviloPalette.tileIconForeground for the normal (non-attention) branch and naviloPalette.attentionAccent for the attention branch — no raw colour literal, no primaryAccent left as the icon source",
-    /color=\{tile\.tone === 'attention' \? naviloPalette\.attentionAccent : naviloPalette\.tileIconForeground\}/.test(SRC)
+    // Pass 2E — the ternary itself moved into the per-tile animated
+    // sub-component (BriefingTileButton), reading semantically-named props
+    // (attentionColor/iconColor) rather than naviloPalette directly; the
+    // parent still passes the SAME two palette values through unchanged, so
+    // the effective colour source is still naviloPalette.tileIconForeground
+    // / naviloPalette.attentionAccent end to end — never a raw literal, never
+    // primaryAccent.
+    "the tile icon's colour resolves to naviloPalette.tileIconForeground for the normal (non-attention) branch and naviloPalette.attentionAccent for the attention branch — no raw colour literal, no primaryAccent left as the icon source",
+    /attentionColor=\{naviloPalette\.attentionAccent\}/.test(SRC) &&
+      /iconColor=\{naviloPalette\.tileIconForeground\}/.test(SRC) &&
+      /color=\{tile\.tone === 'attention' \? attentionColor : iconColor\}/.test(SRC)
   );
   assert('BriefingTileRow.tsx contains no hard-coded hex/rgba colour literal of its own — the new icon colour is resolved entirely through naviloPalette', !/#[0-9A-Fa-f]{3,8}\b/.test(SRC) && !/rgba\(\d/.test(SRC));
   assert('tile content, icon glyph selection (tile.icon), label, value, and supportingLine rendering are otherwise unchanged — only the icon colour source moved', /Ionicons name=\{tile\.icon\}/.test(SRC) && /\{tile\.label\}/.test(SRC) && /\{tile\.value\}/.test(SRC) && /\{tile\.supportingLine\}/.test(SRC));

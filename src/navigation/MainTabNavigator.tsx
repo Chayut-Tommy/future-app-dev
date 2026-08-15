@@ -7,6 +7,7 @@ import { WealthScreen } from '../screens/wealth/WealthScreen';
 import { MoneyScreen } from '../screens/money/MoneyScreen';
 import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
 import { useTheme } from '../theme/ThemeContext';
+import { useReduceMotion } from '../hooks/useReduceMotion';
 import { tabScrollRefs } from './tabScrollRefs';
 
 const Tab = createBottomTabNavigator();
@@ -42,6 +43,13 @@ const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: k
 // hub — renamed so it reads as "Lulu growing me," not a content library.
 export function MainTabNavigator() {
   const { colors } = useTheme();
+  // Read once here, at the top of the whole tab session, and threaded down
+  // to the tab-hosted Money/Grow instances as a prop — the same pattern
+  // RootNavigator.tsx's own MoneyDetail/GrowDetail routes use for their own,
+  // separately-mounted pushed instances (each calls useReduceMotion() fresh,
+  // since a push is a brand new screen instance every time, not a long-lived
+  // lazily-mounted tab).
+  const reduceMotion = useReduceMotion();
 
   const styles = useMemo(
     () =>
@@ -66,6 +74,13 @@ export function MainTabNavigator() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        // Animated bottom-tab transitions ('fade'/'shift') were trialled in
+        // Pass 2E and reverted: they caused a device-reproduced blank-scene
+        // compatibility defect under the current Expo 54 / navigation
+        // stack, tracked through React Navigation #12755 and Expo #39514.
+        // `animation` is intentionally left unset (bottom-tabs' own
+        // documented default is 'none') to retain the accepted,
+        // non-animated behaviour — do not re-enable 'fade' or 'shift' here.
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: styles.label,
@@ -77,9 +92,13 @@ export function MainTabNavigator() {
       })}
     >
       <Tab.Screen name="Today" component={TodayScreen} listeners={scrollToTopOnRepeatPress('Today')} />
-      <Tab.Screen name="Money" component={MoneyScreen} listeners={scrollToTopOnRepeatPress('Money')} />
+      <Tab.Screen name="Money" listeners={scrollToTopOnRepeatPress('Money')}>
+        {() => <MoneyScreen reduceMotion={reduceMotion} />}
+      </Tab.Screen>
       <Tab.Screen name="Wealth" component={WealthScreen} listeners={scrollToTopOnRepeatPress('Wealth')} />
-      <Tab.Screen name="Grow" component={DiscoverScreen} listeners={scrollToTopOnRepeatPress('Grow')} />
+      <Tab.Screen name="Grow" listeners={scrollToTopOnRepeatPress('Grow')}>
+        {() => <DiscoverScreen reduceMotion={reduceMotion} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }

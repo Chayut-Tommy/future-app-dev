@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { MoneyOpportunity } from '../../lib/calculations/moneyOpportunities';
 import { brand } from '../../lib/brand';
+import { HERO_SCRIM_OPACITY } from '../../theme/contrastOverrides';
 
 const COLLAPSED_COUNT = 3;
 
@@ -21,16 +22,18 @@ export function MoneyOpportunitiesHero({
   opportunities: MoneyOpportunity[];
   onAction: (opportunity: MoneyOpportunity) => void;
 }) {
-  const { colors, radius, spacing, typography, glow, aiAccentColor, aiCardGradient, onAiAccent } = useTheme();
+  const { colors, radius, spacing, typography, glow, aiAccentColor, aiCardGradient, onAiAccent, naviloColorStyle, scheme } = useTheme();
   const [expanded, setExpanded] = useState(false);
 
   const visible = expanded ? opportunities : opportunities.slice(0, COLLAPSED_COUNT);
   const hasMore = opportunities.length > COLLAPSED_COUNT;
+  const scrimOpacity = HERO_SCRIM_OPACITY[naviloColorStyle][scheme];
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, ...glow(aiAccentColor) },
+        scrim: { ...StyleSheet.absoluteFillObject, borderRadius: radius.card, backgroundColor: `rgba(0,0,0,${scrimOpacity})` },
         headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
         eyebrow: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '700' },
         title: { ...typography.title, fontSize: 19, color: '#fff', fontWeight: '800', marginBottom: spacing.xs },
@@ -51,12 +54,13 @@ export function MoneyOpportunitiesHero({
         },
         exploreButtonText: { ...typography.caption, fontSize: 12, color: '#fff', fontWeight: '700' },
       }),
-    [colors, radius, spacing, typography, glow, aiAccentColor]
+    [colors, radius, spacing, typography, glow, aiAccentColor, scrimOpacity]
   );
 
   if (opportunities.length === 0) {
     return (
       <LinearGradient colors={aiCardGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
+        <View style={styles.scrim} pointerEvents="none" />
         <View style={styles.headerRow}>
           <Ionicons name="sparkles" size={14} color={onAiAccent} />
           <Text style={styles.eyebrow}>{brand.name.toUpperCase()} PICK</Text>
@@ -69,6 +73,7 @@ export function MoneyOpportunitiesHero({
 
   return (
     <LinearGradient colors={aiCardGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
+      <View style={styles.scrim} pointerEvents="none" />
       <View style={styles.headerRow}>
         <Ionicons name="sparkles" size={14} color={onAiAccent} />
         <Text style={styles.eyebrow}>{brand.name.toUpperCase()} PICK</Text>

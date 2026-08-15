@@ -49,7 +49,7 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
         nextText: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginTop: 3 },
         allCompletedText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: spacing.md },
         progressWrap: { marginTop: spacing.md },
-        progressText: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: 5 },
+        progressText: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginTop: 5 },
         viewFullRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -69,7 +69,7 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
   return (
     <>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Your Journey</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">Your Journey</Text>
       </View>
       <TouchableOpacity
         activeOpacity={0.8}
@@ -78,7 +78,11 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
         accessibilityLabel={
           snapshot.unavailable
             ? 'Your Journey is not available yet'
-            : `${snapshot.completedCount} of ${snapshot.totalCount} milestones completed${snapshot.next ? `, next: ${snapshot.next.title}` : ''}`
+            : `${snapshot.completedCount} of ${snapshot.totalCount} milestones completed${
+                snapshot.next
+                  ? `, next: ${snapshot.next.title}${snapshot.nextProgress ? `, ${snapshot.nextProgress.formatted}` : ''}`
+                  : ''
+              }`
         }
         accessibilityHint="Opens the full Journey in Grow"
       >

@@ -54,7 +54,7 @@ export function SavingStrategyCalculator() {
         divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: spacing.sm },
         resultLabel: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: 2 },
         resultValue: { ...typography.title, fontSize: 30, color: colors.accentStrong },
-        disclaimer: { ...typography.micro, fontSize: 10, color: colors.textMuted, marginTop: spacing.sm },
+        disclaimer: { ...typography.micro, fontSize: 10, color: colors.textSecondary, marginTop: spacing.sm },
         linkRow: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.sm },
         linkText: { ...typography.caption, fontSize: 12, color: colors.accent, fontWeight: '700' },
       }),

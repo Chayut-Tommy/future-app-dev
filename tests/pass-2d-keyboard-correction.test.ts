@@ -367,11 +367,16 @@ console.log('=== SECTION 3: structural proof of the interaction-integrity fix (c
     // presentedState (not state) for content derivation so the last real
     // content survives the native closing-animation window — same single
     // KeyboardSheet, same plain-content (no second Modal) rendering.
+    // Reminder focus/announcements task added a focusRef prop to both
+    // PaymentRecordedContent call sites (accessibility focus target for the
+    // confirmation text) — tolerated here since it's still the same plain-
+    // content, non-Modal element; only the exact-literal self-closing tag
+    // shape needed relaxing, not the underlying invariant.
     '3g. ReminderDetailSheet.tsx is the sole Modal owner — loan_recorded/card_recorded render PaymentRecordedContent as plain content, not a second Modal',
     (reminderSheetSrc.match(/<KeyboardSheet\b/g) ?? []).length === 1 &&
       !/<Modal\b/.test(reminderSheetSrc) &&
-      /presentedState\.kind === 'loan_recorded' \? <PaymentRecordedContent \/> : null/.test(reminderSheetSrc) &&
-      /presentedState\.kind === 'card_recorded' \? <PaymentRecordedContent \/> : null/.test(reminderSheetSrc)
+      /presentedState\.kind === 'loan_recorded' \? <PaymentRecordedContent[^>]*\/> : null/.test(reminderSheetSrc) &&
+      /presentedState\.kind === 'card_recorded' \? <PaymentRecordedContent[^>]*\/> : null/.test(reminderSheetSrc)
   );
   assert(
     '3g-i. PaymentRecordedContent.tsx itself renders no Modal — a plain confirmation Text node only',

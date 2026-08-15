@@ -190,14 +190,33 @@ console.log('\n=== Section 4: Score/Journey focus-request mechanism is completel
     /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) && /focusRequestIdRef\.current \+= 1;/.test(TODAY_SCREEN_SRC)
   );
   assert('a newer request always overwrites the pending ref outright (never queued) — rapid repeated navigation cannot create duplicate/conflicting focus actions', /pendingSectionFocusRef\.current = parsed;/.test(DISCOVER_SCREEN_SRC));
-  assert('shouldOpenScoreSheet still drives setScoreSheetVisible(true) as part of fulfilling the focus request — the Today Score chip still reaches the exact full Score destination in one tap', /if \(result\.shouldOpenScoreSheet\) setScoreSheetVisible\(true\);/.test(DISCOVER_SCREEN_SRC));
+  // Pass 2E final correction — the Score chip's destination is now the
+  // pushed GrowDetail route; opening the sheet immediately would compete
+  // with the still-playing native push transition (device-test rejection),
+  // so it's sequenced on transitionEnd there instead — still driven
+  // directly by shouldOpenScoreSheet as part of fulfilling the focus
+  // request, still reaches the exact full Score destination in one tap.
+  assert(
+    'shouldOpenScoreSheet still drives the Score sheet open as part of fulfilling the focus request — the Today Score chip still reaches the exact full Score destination in one tap',
+    /if \(result\.shouldOpenScoreSheet\) \{\s*if \(transitionEndedRef\.current\) setScoreSheetVisible\(true\);\s*else pendingScoreSheetOpenRef\.current = true;\s*\}/.test(DISCOVER_SCREEN_SRC)
+  );
   assert(
     'physical-device correction: shouldExpandJourney now ALSO selects the Milestones subview (setJourneySubview(\'milestones\')) as well as expanding it — a one-tap arrival from Today\'s Journey snapshot always lands on the milestone timeline, never a possibly-stale Money Path selection from a prior visit',
     /if \(result\.shouldExpandJourney\) \{\s*setJourneyExpanded\(true\);\s*setJourneySubview\('milestones'\);\s*\}/.test(DISCOVER_SCREEN_SRC)
   );
   assert('an organic (non-Today-driven) Grow visit defaults to the Milestones subview — journeySubview initial state is \'milestones\', the same established collapsed-Milestones presentation Grow already showed', /const \[journeySubview, setJourneySubview\] = useState<'milestones' \| 'moneyPath'>\('milestones'\);/.test(DISCOVER_SCREEN_SRC));
-  assert('Back/close behaviour is unchanged — ScoreExplanationSheet\'s own Modal onRequestClose/close-button dismissal is byte-identical, never redesigned for this reorg', /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) && /<TouchableOpacity style=\{styles\.closeButton\} onPress=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC));
-  assert('no hard-coded pixel scroll position was introduced — scrollTo still uses the measured result.scrollY from computeSectionFocusFulfillment, never a literal number', /scrollRef\.current\?\.scrollTo\(\{ y: result\.scrollY!, animated: true \}\);/.test(DISCOVER_SCREEN_SRC) && !/scrollTo\(\{ y: \d+/.test(DISCOVER_SCREEN_SRC));
+  // Pass 2E accessibility correction added accessibilityRole/Label to this
+  // same TouchableOpacity (no dismissal-behaviour change) — tolerate
+  // trailing props on the opening tag rather than requiring it end
+  // immediately after onPress={onClose}.
+  assert('Back/close behaviour is unchanged — ScoreExplanationSheet\'s own Modal onRequestClose/close-button dismissal is byte-identical, never redesigned for this reorg', /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) && /<TouchableOpacity style=\{styles\.closeButton\} onPress=\{onClose\}[^>]*>/.test(SCORE_EXPLANATION_SHEET_SRC));
+  // Pass 2E final correction changed this line's trailing `animated:
+  // !reduceMotion` to a `pushed ? false : !reduceMotion` conditional — a
+  // pushed arrival must never animate this scroll (it would compete with
+  // the native push transition), while the in-tab instance still honours
+  // Reduce Motion exactly as before. The measured-scrollY-not-a-literal
+  // guarantee this assertion exists for is unaffected.
+  assert('no hard-coded pixel scroll position was introduced — scrollTo still uses the measured result.scrollY from computeSectionFocusFulfillment, never a literal number', /scrollRef\.current\?\.scrollTo\(\{ y: result\.scrollY!, animated: pushed \? false : !reduceMotion \}\);/.test(DISCOVER_SCREEN_SRC) && !/scrollTo\(\{ y: \d+/.test(DISCOVER_SCREEN_SRC));
   assert(
     'selecting a Journey subview is a purely local UI choice — journeySubview never appears inside the achievements or journeyPaths useMemo dependency arrays, so switching tabs can never mutate either engine\'s own data',
     !/useMemo\(\(\) => computeAchievements\(data\), \[data, journeySubview\]\)/.test(DISCOVER_SCREEN_SRC) && !/journeyPaths.*journeySubview|journeySubview.*journeyPaths/.test(DISCOVER_SCREEN_SRC)

@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { AskLuluSheet } from './AskLuluSheet';
+import { brand } from '../../lib/brand';
 
 // Matches the tab bar height set in MainTabNavigator (88 iOS / 64 Android)
 // plus a comfortable gap, so the button always floats just above the tabs
@@ -45,9 +46,15 @@ export function FloatingLuluButton() {
 
   return (
     <View style={styles.container} pointerEvents="box-none">
-      <TouchableOpacity onPress={() => setSheetVisible(true)} activeOpacity={0.85}>
+      <TouchableOpacity
+        onPress={() => setSheetVisible(true)}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`Ask ${brand.name}`}
+        accessibilityHint="Opens a chat to ask about your money"
+      >
         <LinearGradient colors={aiCardGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.button}>
-          <Ionicons name="sparkles" size={18} color={onAiAccent} />
+          <Ionicons name="sparkles" size={18} color={onAiAccent} importantForAccessibility="no" />
         </LinearGradient>
       </TouchableOpacity>
       <AskLuluSheet visible={sheetVisible} onClose={() => setSheetVisible(false)} />

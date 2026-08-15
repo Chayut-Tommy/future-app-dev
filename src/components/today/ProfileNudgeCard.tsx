@@ -56,12 +56,24 @@ export function ProfileNudgeCard() {
         <View style={styles.textBlock}>
           <Text style={styles.title}>Enjoying {brand.name}? ✨</Text>
           <Text style={styles.body}>Complete your profile so {brand.name} can give you smarter money insights.</Text>
-          <TouchableOpacity style={styles.button} onPress={() => setModalVisible(true)}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => setModalVisible(true)}
+            hitSlop={{ top: 9, bottom: 9, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Complete profile"
+          >
             <Text style={styles.buttonText}>Complete profile</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.dismissButton} onPress={() => updateUser({ profileNudgeDismissed: true })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="close" size={16} color={colors.textMuted} />
+        <TouchableOpacity
+          style={styles.dismissButton}
+          onPress={() => updateUser({ profileNudgeDismissed: true })}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss profile reminder"
+        >
+          <Ionicons name="close" size={16} color={colors.textMuted} importantForAccessibility="no" />
         </TouchableOpacity>
       </View>
       <EditProfileModal visible={modalVisible} onClose={() => setModalVisible(false)} />

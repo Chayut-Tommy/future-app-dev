@@ -83,6 +83,28 @@ export function Screen({
           ...typography.title,
           color: colors.textPrimary,
         },
+        // Pass 2E correction — `overlay` is declared before the scroll/
+        // content block (below) so assistive-technology focus order
+        // matches visual order, but JSX sibling order alone also
+        // determines native paint/hit-test order absent an explicit
+        // zIndex — so the ScrollView, declared after, was silently
+        // painting (and hit-testing) on top of the overlay's absolutely
+        // positioned children, swallowing touches meant for them (e.g.
+        // Today's Settings gear) even though they remained visually on
+        // top. This wrapper restores correct touch precedence via
+        // zIndex/elevation without reordering the JSX, so the a11y
+        // traversal order this comment describes is unaffected.
+        // `absoluteFillObject` keeps it out of layout flow (it never
+        // pushes the ScrollView down), and `pointerEvents="box-none"` (set
+        // on the View itself, below) means only the overlay's own
+        // absolutely-positioned children capture touches — everywhere else
+        // in this full-screen layer passes taps straight through to
+        // whatever's underneath.
+        overlayLayer: {
+          ...StyleSheet.absoluteFillObject,
+          zIndex: 10,
+          elevation: 10,
+        },
       }),
     [colors, spacing, typography]
   );
@@ -91,7 +113,14 @@ export function Screen({
     <View style={styles.header}>
       <View style={styles.titleRow}>
         {onBack ? (
-          <TouchableOpacity onPress={onBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.backButton}>
+          <TouchableOpacity
+            onPress={onBack}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.backButton}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            accessibilityHint="Returns to the previous screen"
+          >
             <Text style={styles.backChevron}>‹</Text>
           </TouchableOpacity>
         ) : null}
@@ -103,6 +132,13 @@ export function Screen({
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* Pass 2E — rendered before the scroll/content block so assistive-
+       * technology focus order matches the visual order (overlay content is
+       * absolutely positioned, so this reorder has no layout effect).
+       * Wrapped for correct touch precedence — see styles.overlayLayer. */}
+      <View style={styles.overlayLayer} pointerEvents="box-none">
+        {overlay}
+      </View>
       {scroll ? (
         <ScrollView
           ref={scrollRef}
@@ -119,7 +155,6 @@ export function Screen({
           {children}
         </View>
       )}
-      {overlay}
     </View>
   );
 }

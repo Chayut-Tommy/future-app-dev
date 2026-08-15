@@ -71,16 +71,24 @@ export function LoanBalanceReminderCard() {
             {copy.emoji} You've been paying your {copy.label} for a few months
           </Text>
           <Text style={styles.body}>Want to update your remaining loan balance so {brand.name}'s wealth picture stays accurate?</Text>
-          <TouchableOpacity style={styles.button} onPress={() => setModalVisible(true)}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => setModalVisible(true)}
+            hitSlop={{ top: 9, bottom: 9, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Update balance"
+          >
             <Text style={styles.buttonText}>Update balance</Text>
           </TouchableOpacity>
         </View>
         <TouchableOpacity
           style={styles.dismissButton}
           onPress={() => updateLiability(loan.id, { balanceReminderDismissed: true })}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss loan balance reminder"
         >
-          <Ionicons name="close" size={16} color={colors.textMuted} />
+          <Ionicons name="close" size={16} color={colors.textMuted} importantForAccessibility="no" />
         </TouchableOpacity>
       </View>
       <AddWealthItemModal

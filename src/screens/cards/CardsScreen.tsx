@@ -151,6 +151,10 @@ export function CardsScreen() {
           const utilStatus = utilisationStatus(util);
           const payoffInsight = computeCardPayoffInsight(item);
           const utilisationInsight = computeCardUtilisationInsight(item);
+          const rowLabel =
+            `${item.label}, due ${due.label}, $${item.currentBalance.toLocaleString()} of $${item.creditLimit.toLocaleString()}, ` +
+            `${Math.round(util * 100)}% utilised, ${utilStatus.label}, repay $${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()} per month` +
+            `${utilisationInsight ? `. ${utilisationInsight}` : ''}${payoffInsight ? ` ${payoffInsight}` : ''}`;
           return (
             <TouchableOpacity
               style={styles.card}
@@ -159,13 +163,16 @@ export function CardsScreen() {
                 setEditCard(item);
                 setVisible(true);
               }}
+              accessibilityRole="button"
+              accessibilityLabel={rowLabel}
+              accessibilityHint="Opens card details"
             >
               <View style={styles.cardHeaderRow}>
                 <View style={styles.cardHeaderLeft}>
                   <Text style={styles.cardTitle}>{item.label}</Text>
                 </View>
                 <Text style={[styles.dueBadge, { color: toneColor(due.tone) }]}>{due.label}</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} style={{ marginLeft: 6 }} />
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} style={{ marginLeft: 6 }} importantForAccessibility="no" />
               </View>
               <Text style={styles.cardSubtitle}>
                 ${item.currentBalance.toLocaleString()} of ${item.creditLimit.toLocaleString()}
@@ -179,13 +186,13 @@ export function CardsScreen() {
               </View>
               {utilisationInsight ? (
                 <View style={styles.insightBox}>
-                  <Ionicons name="sparkles" size={13} color={colors.market} />
+                  <Ionicons name="sparkles" size={13} color={colors.market} importantForAccessibility="no" />
                   <Text style={styles.insightText}>{utilisationInsight}</Text>
                 </View>
               ) : null}
               {payoffInsight ? (
                 <View style={styles.insightBox}>
-                  <Ionicons name="trending-up" size={13} color={colors.market} />
+                  <Ionicons name="trending-up" size={13} color={colors.market} importantForAccessibility="no" />
                   <Text style={styles.insightText}>{payoffInsight}</Text>
                 </View>
               ) : null}

@@ -24,7 +24,7 @@ function statusColor(colors: ReturnType<typeof useTheme>['colors'], status: Fact
     case 'needs_attention':
       return colors.warning;
     case 'not_started':
-      return colors.textMuted;
+      return colors.textSecondary;
     default:
       return colors.textSecondary;
   }
@@ -62,7 +62,7 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
         subtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.md },
         totalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: spacing.sm },
         totalValue: { ...typography.title, fontSize: 32, color: colors.textPrimary },
-        totalMax: { ...typography.caption, color: colors.textMuted },
+        totalMax: { ...typography.caption, color: colors.textSecondary },
         metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.lg },
         metaChip: { backgroundColor: colors.surfaceMuted, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md },
         metaChipLabel: { ...typography.micro, fontSize: 10, color: colors.textSecondary },
@@ -81,12 +81,12 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
         factorLabel: { ...typography.body, fontSize: 13, color: colors.textPrimary, fontWeight: '600', flex: 1 },
         factorPoints: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
         factorCurrent: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginLeft: 24, lineHeight: 15 },
-        factorTarget: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginLeft: 24, marginTop: 2, lineHeight: 15 },
+        factorTarget: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginLeft: 24, marginTop: 2, lineHeight: 15 },
         factorActionRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 24, marginTop: spacing.xs },
         factorPotential: { ...typography.micro, fontSize: 11, color: colors.gold, fontWeight: '700' },
         factorActionChip: { backgroundColor: colors.surface, borderRadius: radius.pill, paddingVertical: 4, paddingHorizontal: spacing.sm },
         factorActionText: { ...typography.micro, fontSize: 10, color: colors.accentStrong, fontWeight: '700' },
-        disclosure: { ...typography.micro, fontSize: 10, color: colors.textMuted, textAlign: 'center', lineHeight: 14, marginTop: spacing.sm },
+        disclosure: { ...typography.micro, fontSize: 10, color: colors.textSecondary, textAlign: 'center', lineHeight: 14, marginTop: spacing.sm },
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
         closeText: { color: colors.textSecondary, fontWeight: '600' },
       }),
@@ -199,7 +199,7 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
             recommendation or personal financial advice.
           </Text>
 
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
             <Text style={styles.closeText}>Close</Text>
           </TouchableOpacity>
         </View>

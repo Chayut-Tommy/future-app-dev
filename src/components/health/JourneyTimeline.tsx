@@ -104,7 +104,7 @@ export function JourneyTimeline({
                   <Ionicons
                     name={a.unlocked || isNext ? a.icon : 'lock-closed-outline'}
                     size={18}
-                    color={a.unlocked ? naviloPalette.secondaryAccentForeground : isNext ? naviloPalette.secondaryAccent : colors.textMuted}
+                    color={a.unlocked ? naviloPalette.secondaryAccentForeground : isNext ? naviloPalette.secondaryAccent : colors.textSecondary}
                   />
                 </View>
                 {!isLast ? (
@@ -112,7 +112,7 @@ export function JourneyTimeline({
                 ) : null}
               </View>
               <View style={styles.textCol}>
-                <Text style={[styles.title, { color: a.unlocked || isNext ? colors.textPrimary : colors.textMuted }]}>{a.title}</Text>
+                <Text style={[styles.title, { color: a.unlocked || isNext ? colors.textPrimary : colors.textSecondary }]}>{a.title}</Text>
                 <Text style={styles.subtitle}>{a.subtitle}</Text>
                 {isNext ? (
                   <View style={styles.nextBadge}>
@@ -121,7 +121,12 @@ export function JourneyTimeline({
                 ) : null}
                 {isNext && a.target ? (
                   <View style={styles.progressWrap}>
-                    <ProgressBar progress={progress} color={naviloPalette.progressAccent} height={4} />
+                    <ProgressBar
+                      progress={progress}
+                      color={naviloPalette.progressAccent}
+                      height={4}
+                      accessibilityLabel={`${a.title} progress, ${Math.round(progress * 100)} percent`}
+                    />
                   </View>
                 ) : null}
               </View>
@@ -130,9 +135,15 @@ export function JourneyTimeline({
         })}
       </View>
       {hasMore ? (
-        <TouchableOpacity style={styles.expandButton} onPress={onToggleExpanded}>
+        <TouchableOpacity
+          style={styles.expandButton}
+          onPress={onToggleExpanded}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Show less' : 'View full journey'}
+          accessibilityState={{ expanded }}
+        >
           <Text style={styles.expandText}>{expanded ? 'Show less' : 'View full journey'}</Text>
-          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.accent} />
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.accent} importantForAccessibility="no" />
         </TouchableOpacity>
       ) : null}
     </View>

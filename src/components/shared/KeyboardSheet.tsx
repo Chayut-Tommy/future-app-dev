@@ -8,6 +8,7 @@ import {
   computeKeyboardOverlap,
   MIN_VISIBLE_HEIGHT_WHEN_KEYBOARD_OPEN,
 } from '../navigation/addWorkspaceGeometry';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
 
 const DISMISS_DISTANCE = 120;
 const DISMISS_VELOCITY = 0.6;
@@ -37,6 +38,7 @@ export function KeyboardSheet({
   onRequestDismiss,
   fixedSheetHeight,
   headerRight,
+  animateContentEntrance = false,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -128,15 +130,69 @@ export function KeyboardSheet({
    * owned ScrollView for a plain clipped View, since the caller owns its
    * own per-screen ScrollView(s) instead. */
   fixedSheetHeight?: number;
+  /** Pass 2E final correction — opts this sheet into a restrained default
+   * opening transition (backdrop fade + a small ~14pt content rise/opacity
+   * settle, ~200ms, timing, native-driver where supported) instead of
+   * appearing instantly. Omitted (the default) by every existing caller —
+   * Add Wealth Item, Add Income, Add Recurring Item, Goal Detail, and every
+   * other KeyboardSheet consumer keeps today's byte-identical instant
+   * appearance; only ReminderDetailSheet (the sole modal owner for the
+   * whole Reminder experience — Credit Card Due Today and every other
+   * Reminder entry point) opts in, since that was the specific customer-
+   * visible "opens too abruptly" defect. Triggers exactly once per genuine
+   * fresh open (the `visible` prop's false->true transition) via the same
+   * effect that already resets translateY on open — content swaps within
+   * an already-open sheet (e.g. "Not yet"/"Got it" advancing to the next
+   * reminder) never flip `visible` false first, so they never replay this.
+   * Honours reduceMotion exactly like this component's existing dismiss/
+   * springBack animations (instant settle instead of the timed transition). */
+  animateContentEntrance?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, radius, spacing, typography } = useTheme();
   const translateY = useRef(new Animated.Value(0)).current;
   const windowHeight = useWindowDimensions().height;
+  // Pass 2E — Reduce Motion: no native Modal slide, zero-duration dismissal,
+  // instant reset instead of spring-back. Never affects the animationType a
+  // caller explicitly requests for its own accepted-handoff dismissal
+  // ('none' either way); only overrides the default 'slide' presentation
+  // and this component's own JS-driven dismiss/spring-back animations.
+  const reduceMotion = useReduceMotion();
+
+  // Pass 2E final correction — the opt-in opening transition (see
+  // animateContentEntrance doc comment above). Initial values (1, 0, 1) are
+  // each already the "settled/no-op" state, so a caller that never sets
+  // animateContentEntrance never sees these move — the entrance-animation
+  // branch in the effect below is the only place that reads or writes them.
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentTranslateY = useRef(new Animated.Value(0)).current;
+  const backdropOpacity = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (visible) translateY.setValue(0);
-  }, [visible, translateY]);
+    if (!visible) return;
+    translateY.setValue(0);
+    if (!animateContentEntrance) return;
+    if (reduceMotion) {
+      contentOpacity.setValue(1);
+      contentTranslateY.setValue(0);
+      backdropOpacity.setValue(1);
+      return;
+    }
+    contentOpacity.setValue(0.94);
+    contentTranslateY.setValue(14);
+    backdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.timing(contentOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.timing(contentTranslateY, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
+    // Deliberately keyed only on `visible` (plus the stable refs/flags) —
+    // this effect re-runs on the visible false->true transition (a genuine
+    // fresh open), never on a content swap within an already-open sheet
+    // ("Not yet"/"Got it" advancing to the next reminder keeps `visible`
+    // true throughout, per ReminderDetailSheet's own SETTLED transition —
+    // see that file's doc comment), so the entrance never replays for those.
+  }, [visible, animateContentEntrance, reduceMotion, translateY, contentOpacity, contentTranslateY, backdropOpacity]);
 
   // Fixed-height keyboard tracking (Option B premium-transition correction)
   // — entirely gated behind fixedSheetHeight so every existing caller is
@@ -189,7 +245,7 @@ export function KeyboardSheet({
       : undefined;
 
   function dismiss() {
-    Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
+    Animated.timing(translateY, { toValue: 800, duration: reduceMotion ? 0 : 200, useNativeDriver: true }).start(() => {
       onClose();
     });
   }
@@ -225,7 +281,15 @@ export function KeyboardSheet({
   }
 
   function springBack(onComplete?: () => void) {
-    Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start(() => {
+    // Reduce Motion: an instant reset, never a spring/bounce/positional
+    // animation — still uses Animated.timing (duration 0) rather than a
+    // bare translateY.setValue(0) so the same onComplete-callback contract
+    // every caller already relies on (springBack(() => ...)) stays uniform
+    // across both branches.
+    const animation = reduceMotion
+      ? Animated.timing(translateY, { toValue: 0, duration: 0, useNativeDriver: true })
+      : Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 });
+    animation.start(() => {
       onComplete?.();
     });
   }
@@ -303,8 +367,16 @@ export function KeyboardSheet({
       StyleSheet.create({
         backdrop: {
           flex: 1,
-          backgroundColor: 'rgba(10,12,20,0.45)',
           justifyContent: 'flex-end',
+        },
+        // Pass 2E final correction — split out from `backdrop` so its tint
+        // can be opacity-animated (native-driver-compatible) for the opt-in
+        // entrance transition without touching backdrop's own flex layout.
+        // `backdropOpacity` is pinned at 1 unless animateContentEntrance is
+        // true, so this renders the exact same static rgba(10,12,20,0.45)
+        // every existing caller already sees.
+        backdropTint: {
+          backgroundColor: 'rgba(10,12,20,0.45)',
         },
         sheet: {
           backgroundColor: colors.surface,
@@ -351,13 +423,24 @@ export function KeyboardSheet({
   );
 
   return (
-    <Modal visible={visible} animationType={animationType} transparent onRequestClose={requestClose} onDismiss={handleNativeDismissComplete}>
+    <Modal
+      visible={visible}
+      animationType={reduceMotion ? 'none' : animationType}
+      transparent
+      onRequestClose={requestClose}
+      onDismiss={handleNativeDismissComplete}
+    >
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.backdropTint, { opacity: backdropOpacity }]} />
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={requestClose} disabled={!gesturesEnabled} />
         <Animated.View
           style={[
             styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, spacing.lg), transform: [{ translateY }] },
+            {
+              paddingBottom: Math.max(insets.bottom, spacing.lg),
+              transform: [{ translateY }, { translateY: contentTranslateY }],
+              opacity: contentOpacity,
+            },
             minSheetHeight ? { minHeight: minSheetHeight } : null,
             adjustedFixedHeight !== undefined ? { height: adjustedFixedHeight, maxHeight: adjustedFixedHeight } : null,
           ]}

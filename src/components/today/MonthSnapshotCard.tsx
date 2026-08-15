@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeContext';
+import { WARNING_TEXT_LIGHT_OVERRIDE } from '../../theme/contrastOverrides';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { computeMonthToDateActivity } from '../../lib/calculations/monthlySummary';
@@ -34,7 +35,7 @@ function formatMoney(value: number): string {
 export function MonthSnapshotCard({ today, onAddTransaction }: { today: Date; onAddTransaction: () => void }) {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
-  const { colors, spacing, typography, cardShadow, radius } = useTheme();
+  const { colors, spacing, typography, cardShadow, radius, scheme } = useTheme();
   // Round 6 correction — `today` is the caller's live local-date value
   // (see useCurrentLocalDate), included in this memo's own dependency
   // array so a month/day rollover with zero new transactions still
@@ -47,7 +48,8 @@ export function MonthSnapshotCard({ today, onAddTransaction }: { today: Date; on
   // net reads in the accent color, a negative net in the warning color
   // (never danger red, which this app reserves for genuinely time-sensitive
   // items), and exactly zero stays neutral.
-  const netColor = net > 0 ? colors.accentStrong : net < 0 ? colors.warning : colors.textPrimary;
+  // Pass 2E contrast correction — see WARNING_TEXT_LIGHT_OVERRIDE.
+  const netColor = net > 0 ? colors.accentStrong : net < 0 ? (scheme === 'light' ? WARNING_TEXT_LIGHT_OVERRIDE : colors.warning) : colors.textPrimary;
 
   const styles = useMemo(
     () =>

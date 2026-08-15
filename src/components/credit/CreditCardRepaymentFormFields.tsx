@@ -1,8 +1,10 @@
 import React, { useMemo } from 'react';
 import { InputAccessoryView, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import type { RefObject } from 'react';
 import { useTheme } from '../../theme/ThemeContext';
 import { CreditCard } from '../../types/models';
 import { CreditCardRepaymentFormBundle } from '../../hooks/useCreditCardRepaymentForm';
+import { useAnnounceOnce } from '../../hooks/useAnnounceOnce';
 
 function formatMoney(value: number): string {
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -21,8 +23,27 @@ const DONE_ACCESSORY_ID = 'creditCardRepaymentDoneAccessory';
  * lifecycle state. See LoanRepaymentFormFields.tsx's own doc comment for
  * the identical sibling rationale.
  */
-export function CreditCardRepaymentFormFields({ card, form }: { card: CreditCard; form: CreditCardRepaymentFormBundle }) {
+export function CreditCardRepaymentFormFields({
+  card,
+  form,
+  headingRef,
+}: {
+  card: CreditCard;
+  form: CreditCardRepaymentFormBundle;
+  /** Reminder focus/announcements task — the host (ReminderDetailSheet)
+   * moves accessibility focus here once this form becomes the presented
+   * state. Optional so this component still works standalone (e.g. in
+   * isolated tests) without a host providing one. */
+  headingRef?: RefObject<any>;
+}) {
   const { colors, radius, spacing, typography } = useTheme();
+
+  // Reminder focus/announcements task — each announced once per distinct
+  // message, never on every re-render while the same validation state
+  // persists, and never moves focus away from the amount field.
+  const exceedsBalanceMessage = form.exceedsBalance ? `That's more than the current recorded balance (${formatMoney(card.currentBalance)}).` : null;
+  useAnnounceOnce(exceedsBalanceMessage);
+  useAnnounceOnce(form.errorText);
 
   const styles = useMemo(
     () =>
@@ -81,7 +102,7 @@ export function CreditCardRepaymentFormFields({ card, form }: { card: CreditCard
 
   return (
     <>
-      <Text style={styles.subtitle}>{card.label}</Text>
+      <Text ref={headingRef} style={styles.subtitle}>{card.label}</Text>
 
       <View style={styles.factRow}>
         <Text style={styles.factLabel}>Current recorded balance</Text>
@@ -157,11 +178,7 @@ export function CreditCardRepaymentFormFields({ card, form }: { card: CreditCard
         </View>
       ) : null}
 
-      {form.errorText ? (
-        <Text style={styles.errorText} accessibilityLiveRegion="polite">
-          {form.errorText}
-        </Text>
-      ) : null}
+      {form.errorText ? <Text style={styles.errorText}>{form.errorText}</Text> : null}
 
       {doneAccessory}
     </>

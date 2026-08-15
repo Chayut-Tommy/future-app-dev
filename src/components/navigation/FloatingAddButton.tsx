@@ -57,8 +57,15 @@ export function FloatingAddButton() {
 
   return (
     <View style={styles.container} pointerEvents="box-none">
-      <TouchableOpacity style={styles.button} onPress={() => setSheetVisible(true)} activeOpacity={0.85}>
-        <Ionicons name="add" size={34} color={colors.onAccent} />
+      <TouchableOpacity
+        style={styles.button}
+        onPress={() => setSheetVisible(true)}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Add"
+        accessibilityHint="Opens options to add money, bills, goals, and more"
+      >
+        <Ionicons name="add" size={34} color={colors.onAccent} importantForAccessibility="no" />
       </TouchableOpacity>
       <AddAnythingSheet visible={sheetVisible} onClose={() => setSheetVisible(false)} />
     </View>

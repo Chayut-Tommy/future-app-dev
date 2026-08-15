@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { RefObject } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { WARNING_TEXT_LIGHT_OVERRIDE } from '../../theme/contrastOverrides';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { SmartReminder } from '../../lib/calculations/reminders';
@@ -14,6 +16,7 @@ import { resolveEligibleBillPaymentSources, BillPaymentSourceOption } from '../.
 import { BillPaymentSourcePicker } from '../shared/BillPaymentSourcePicker';
 import { AppData } from '../../types/models';
 import { occurrenceKeyOf, ReminderReviewOutcome } from '../../lib/calculations/reminderInteractionLifecycle';
+import { useAnnounceOnce } from '../../hooks/useAnnounceOnce';
 
 // Financial-disclosure formatter (regression-protection review, B2.0B
 // recurring-money precision correction §6) — deliberately NOT the app-wide
@@ -80,8 +83,16 @@ export function SmartReminderCard({
   onOutcome,
   onRequestLoanRepayment,
   onRequestCreditCardRepayment,
+  titleRef,
 }: {
   topReminder: SmartReminder | null;
+  /** Reminder focus/announcements task — the host (ReminderDetailSheet)
+   * moves accessibility focus here whenever this card starts presenting a
+   * new reminder occurrence (initial open, or advancing past "Not yet"/
+   * "Got it"/a completed payment to the next eligible reminder). Optional
+   * so this component still works standalone (e.g. in isolated tests)
+   * without a host providing one. */
+  titleRef?: RefObject<any>;
   /** Device-test correction round — called immediately before navigating
    * away to another screen (Cards) or opening a full-screen destination,
    * so a host that renders this inside a Modal (ReminderDetailSheet) can
@@ -119,7 +130,7 @@ export function SmartReminderCard({
 }) {
   const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, scheme } = useTheme();
   const [awaitingSource, setAwaitingSource] = useState(false);
   // Correction pass, §2 — BNPL confirmation's Everyday Account choice needs
   // a second step (which specific account), unlike Cash/Credit card which
@@ -144,6 +155,11 @@ export function SmartReminderCard({
   const [addBalanceVisible, setAddBalanceVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Reminder focus/announcements task — announced once per distinct error,
+  // never on every re-render while the same error persists, and never
+  // moves focus away from whichever field/button the customer is using.
+  useAnnounceOnce(actionError);
 
   // Pass 2A — topReminder is now computed once by the caller (TodayScreen's
   // own useMemo(() => computeTopReminder(data, today), [data, today])) and
@@ -197,9 +213,10 @@ export function SmartReminderCard({
         actionButtonDisabled: { opacity: 0.5 },
         actionText: { ...typography.caption, fontSize: 12, color: colors.onAccent, fontWeight: '700' },
         actionTextSecondary: { color: colors.textSecondary },
-        errorText: { ...typography.caption, fontSize: 12, color: colors.warning, lineHeight: 16, marginTop: spacing.sm },
+        // Pass 2E contrast correction — see WARNING_TEXT_LIGHT_OVERRIDE.
+        errorText: { ...typography.caption, fontSize: 12, color: scheme === 'light' ? WARNING_TEXT_LIGHT_OVERRIDE : colors.warning, lineHeight: 16, marginTop: spacing.sm },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, scheme]
   );
 
   if (!reminder) return null;
@@ -510,7 +527,7 @@ export function SmartReminderCard({
           <Ionicons name={icon} size={16} color={colors.accentStrong} />
         </View>
         <View style={styles.textBlock}>
-          <Text style={styles.title}>{reminder.title}</Text>
+          <Text ref={titleRef} style={styles.title}>{reminder.title}</Text>
           <Text style={styles.body}>{reminder.body}</Text>
 
           {reminder.kind === 'salary_check' && !awaitingIncomeDestination ? (
@@ -537,10 +554,18 @@ export function SmartReminderCard({
                   style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
                   onPress={confirmSalary}
                   disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Yes, it arrived"
                 >
                   <Text style={styles.actionText}>Yes, it arrived</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder} disabled={isSubmitting}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonSecondary]}
+                  onPress={deferReminder}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Not yet"
+                >
                   <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
                 </TouchableOpacity>
               </View>
@@ -563,10 +588,20 @@ export function SmartReminderCard({
 
           {(reminder.kind === 'bill_overdue' || reminder.kind === 'bnpl_repayment_due') && !awaitingSource ? (
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.actionButton} onPress={() => setAwaitingSource(true)}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => setAwaitingSource(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Yes, I paid it"
+              >
                 <Text style={styles.actionText}>Yes, I paid it</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonSecondary]}
+                onPress={deferReminder}
+                accessibilityRole="button"
+                accessibilityLabel="Not yet"
+              >
                 <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
               </TouchableOpacity>
             </View>
@@ -612,6 +647,8 @@ export function SmartReminderCard({
                   style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
                   onPress={() => confirmBillPaid('cash')}
                   disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="From cash"
                 >
                   <Text style={styles.actionText}>From cash</Text>
                 </TouchableOpacity>
@@ -626,6 +663,8 @@ export function SmartReminderCard({
                     style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
                     onPress={() => setAwaitingEverydayAccount(true)}
                     disabled={isSubmitting}
+                    accessibilityRole="button"
+                    accessibilityLabel="From everyday account"
                   >
                     <Text style={[styles.actionText, styles.actionTextSecondary]}>From everyday account</Text>
                   </TouchableOpacity>
@@ -635,6 +674,8 @@ export function SmartReminderCard({
                     style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
                     onPress={() => confirmBillPaid('credit_card')}
                     disabled={isSubmitting}
+                    accessibilityRole="button"
+                    accessibilityLabel="From credit card"
                   >
                     <Text style={[styles.actionText, styles.actionTextSecondary]}>From credit card</Text>
                   </TouchableOpacity>
@@ -659,6 +700,8 @@ export function SmartReminderCard({
                       style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
                       onPress={() => confirmBnplEveryday(a.id)}
                       disabled={isSubmitting}
+                      accessibilityRole="button"
+                      accessibilityLabel={a.label}
                     >
                       <Text style={styles.actionText}>
                         {a.label} (${a.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
@@ -669,6 +712,8 @@ export function SmartReminderCard({
                   style={[styles.actionButton, styles.actionButtonSecondary]}
                   onPress={() => setAwaitingEverydayAccount(false)}
                   disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Back"
                 >
                   <Text style={[styles.actionText, styles.actionTextSecondary]}>Back</Text>
                 </TouchableOpacity>
@@ -677,7 +722,12 @@ export function SmartReminderCard({
           ) : null}
 
           {reminder.kind === 'bill_due_soon' ? (
-            <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={acknowledgeReminder}>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionButtonSecondary]}
+              onPress={acknowledgeReminder}
+              accessibilityRole="button"
+              accessibilityLabel="Got it"
+            >
               <Text style={[styles.actionText, styles.actionTextSecondary]}>Got it</Text>
             </TouchableOpacity>
           ) : null}
@@ -694,12 +744,16 @@ export function SmartReminderCard({
                   onNavigateAway?.();
                   navigation.navigate('Cards');
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Review card"
               >
                 <Text style={styles.actionText}>Review card</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonSecondary]}
                 onPress={() => (reminderCard ? onRequestCreditCardRepayment?.() : deferReminder())}
+                accessibilityRole="button"
+                accessibilityLabel="Record payment"
               >
                 <Text style={[styles.actionText, styles.actionTextSecondary]}>Record payment</Text>
               </TouchableOpacity>
@@ -720,20 +774,23 @@ export function SmartReminderCard({
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={() => (reminderLoanLiability && reminderLoanRecurringItem ? onRequestLoanRepayment?.() : deferReminder())}
+                accessibilityRole="button"
+                accessibilityLabel="Record payment"
               >
                 <Text style={styles.actionText}>Record payment</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, styles.actionButtonSecondary]} onPress={deferReminder}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonSecondary]}
+                onPress={deferReminder}
+                accessibilityRole="button"
+                accessibilityLabel="Not yet"
+              >
                 <Text style={[styles.actionText, styles.actionTextSecondary]}>Not yet</Text>
               </TouchableOpacity>
             </View>
           ) : null}
 
-          {actionError ? (
-            <Text style={styles.errorText} accessibilityLiveRegion="polite">
-              {actionError}
-            </Text>
-          ) : null}
+          {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
         </View>
       </View>
     </SectionCard>

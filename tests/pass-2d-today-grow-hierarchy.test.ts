@@ -350,8 +350,13 @@ console.log('\n=== FOCUS NAVIGATION (real import) ===');
   // removes an issuer is caught, and so this fact is verifiable by running
   // this file rather than only trusted from a report's prose.
   assert(
+    // Pass 2E final correction — score/journey now push the GrowDetail
+    // route (pushGrowDetail) rather than navigating in-tab (navigateToGrow),
+    // but each still has a real, distinct onPress issuer in TodayScreen.tsx
+    // wired to the Score chip and Journey snapshot, and both still carry a
+    // scrollTo target of exactly 'score'/'journey' through to DiscoverScreen.
     "'score' and 'journey' each have a real onPress issuer in TodayScreen.tsx (handleScoreChipPress/handleJourneyPress, wired to the Score chip and Journey snapshot)",
-    /function handleScoreChipPress\(\) \{\s*navigateToGrow\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) && /function handleJourneyPress\(\) \{\s*navigateToGrow\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
+    /function handleScoreChipPress\(\) \{\s*pushGrowDetail\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) && /function handleJourneyPress\(\) \{\s*pushGrowDetail\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
     "'safety_net' and 'saving' each have a real issuer — TodayScreen's contextual-insight tap delegates to pickTodayContextualInsight's own destination.target, which is typed to only ever be 'safety_net' or 'saving'",

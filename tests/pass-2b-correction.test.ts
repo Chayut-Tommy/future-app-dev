@@ -255,25 +255,27 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   );
 
   // --- Repeated-request support: requestId stamping ---
-  // Pass 2D — TodayScreen.tsx consolidated the three near-identical
-  // score/journey/financial-learning navigate() call sites into one shared
-  // navigateToGrow(scrollTo) helper (also now reused by the new contextual-
-  // insight destination) — the counter increment and navigate() call each
-  // now appear once in source, not three times, but every caller still goes
-  // through this single helper, so a fresh id is still stamped on every
-  // single Grow-focus navigation, exactly as before.
+  // Pass 2E final correction — Score and Journey now push GrowDetail
+  // (RootNavigator.tsx) instead of navigating within the Grow tab, via the
+  // new pushGrowDetail(scrollTo) helper; navigateToGrow itself is unchanged
+  // and still stamps a fresh id from the exact same shared counter for its
+  // remaining callers (Today's contextual-insight destinations, which never
+  // target 'score'/'journey' — see todayContextualInsight.ts). Every
+  // destination, pushed or in-tab, still goes through this one counter, so
+  // a fresh id is still stamped on every single focus request.
   assert(
-    'TodayScreen.tsx stamps every Grow focus navigation with a fresh, monotonically increasing requestId from one shared counter, via one shared navigateToGrow helper',
+    'TodayScreen.tsx stamps every Grow-bound focus request (pushed or in-tab) with a fresh, monotonically increasing requestId from one shared counter',
     /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) &&
       /function navigateToGrow\(scrollTo: string\) \{\s*focusRequestIdRef\.current \+= 1;\s*navigation\.navigate\('Grow', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);\s*\}/.test(TODAY_SCREEN_SRC) &&
-      /navigateToGrow\('score'\);/.test(TODAY_SCREEN_SRC) &&
-      /navigateToGrow\('journey'\);/.test(TODAY_SCREEN_SRC)
+      /function pushGrowDetail\(scrollTo: 'score' \| 'journey'\) \{[\s\S]{0,200}focusRequestIdRef\.current \+= 1;[\s\S]{0,200}navigation\.navigate\('GrowDetail', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC) &&
+      /pushGrowDetail\('score'\);/.test(TODAY_SCREEN_SRC) &&
+      /pushGrowDetail\('journey'\);/.test(TODAY_SCREEN_SRC)
   );
 
   // --- One-tap Score destination ---
   assert(
-    'DiscoverScreen.tsx wires shouldOpenScoreSheet from the fulfilment result directly into setScoreSheetVisible(true) — the sheet opens as part of successfully fulfilling the focus request, not from a separate second tap',
-    /if \(result\.shouldOpenScoreSheet\) setScoreSheetVisible\(true\);/.test(DISCOVER_SCREEN_SRC)
+    'DiscoverScreen.tsx wires shouldOpenScoreSheet from the fulfilment result directly into setScoreSheetVisible(true) (in-tab) or a pending-open ref sequenced on transitionEnd (pushed) — the sheet opens as part of successfully fulfilling the focus request, never from a separate second tap',
+    /if \(result\.shouldOpenScoreSheet\) \{\s*if \(transitionEndedRef\.current\) setScoreSheetVisible\(true\);\s*else pendingScoreSheetOpenRef\.current = true;\s*\}/.test(DISCOVER_SCREEN_SRC)
   );
   assert(
     'the Score section is still independently tappable for an organic (non-Today-driven) visit to Grow — the whole Score card is one TouchableOpacity with onPress={() => setScoreSheetVisible(true)}, so this correction (and the Pass 2C radial-gauge redesign) adds the auto-open without removing the existing manual affordance',
@@ -284,8 +286,12 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   // its onRequestClose/Close-button dismissal is untouched regardless of
   // how it was opened (auto vs. manual tap), so no new trap is introduced. ---
   assert(
+    // Pass 2E accessibility correction added accessibilityRole/Label to this
+    // same TouchableOpacity (no visual, dismissal, or ownership change) —
+    // the regex now tolerates trailing props on the opening tag rather than
+    // requiring it end immediately after onPress={onClose}.
     'ScoreExplanationSheet.tsx is untouched by this correction pass — its Modal onRequestClose/Close-button dismissal (the real Back/close behaviour) is exactly the pre-existing, accepted component, not redesigned for auto-open',
-    /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) && /<TouchableOpacity style=\{styles\.closeButton\} onPress=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC)
+    /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) && /<TouchableOpacity style=\{styles\.closeButton\} onPress=\{onClose\}[^>]*>/.test(SCORE_EXPLANATION_SHEET_SRC)
   );
   assert(
     'DiscoverScreen.tsx never introduces a second, competing dismissal path for the Score sheet — onClose is the same single setScoreSheetVisible(false) regardless of how the sheet was opened',

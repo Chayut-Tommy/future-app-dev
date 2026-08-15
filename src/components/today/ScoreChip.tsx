@@ -61,9 +61,10 @@ export function ScoreChip({ presentation, onPress }: { presentation: ScoreChipPr
       accessibilityRole="button"
       accessibilityLabel={`${presentation.label}. ${presentation.supportingText}`}
       accessibilityHint="Opens the full Navilo Score in Grow"
+      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
     >
       <View style={styles.iconBadge}>
-        <Ionicons name="speedometer-outline" size={13} color={presentation.tone === 'muted' ? colors.textMuted : colors.accent} />
+        <Ionicons name="speedometer-outline" size={13} color={presentation.tone === 'muted' ? colors.textSecondary : colors.accent} />
       </View>
       <View style={styles.textBlock}>
         <Text style={styles.label} numberOfLines={1}>
@@ -73,7 +74,7 @@ export function ScoreChip({ presentation, onPress }: { presentation: ScoreChipPr
           {presentation.supportingText}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={12} color={colors.textMuted} />
+      <Ionicons name="chevron-forward" size={12} color={colors.textMuted} importantForAccessibility="no" />
     </TouchableOpacity>
   );
 }

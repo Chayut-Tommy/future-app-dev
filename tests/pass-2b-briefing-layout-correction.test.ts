@@ -236,9 +236,13 @@ console.log('\n=== Section 4: detailed reminder account actions remain reachable
   // single `openRequest` prop (the confirmed fix for the blank-sheet
   // defect: no more externally-tracked visibility boolean to race the
   // reducer).
+  // Reminder focus/announcements task added onFullyClosed as a further
+  // prop on this same element (origin-focus restoration) — tolerate
+  // trailing props rather than requiring the tag to end immediately after
+  // today={currentDate}.
   assert(
     'TodayScreen.tsx mounts ReminderDetailSheet with the atomic openRequest and today props',
-    /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\} \/>/.test(TODAY_SCREEN_SRC)
+    /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\}[^>]*\/>/.test(TODAY_SCREEN_SRC)
   );
 }
 
@@ -426,8 +430,17 @@ console.log('\n=== Section 14: everything NOT in scope this round is confirmed u
   const CREDIT_CARD_TEST_SRC = readFileSync('tests/pass-2b-icon-contrast-and-creditcard-save.test.ts', 'utf8');
 
   assert(
-    'the tile icon colour expression is unchanged — normal tone still reads naviloPalette.tileIconForeground, attention tone still reads naviloPalette.attentionAccent, exactly as accepted in the previous correction round',
-    /color=\{tile\.tone === 'attention' \? naviloPalette\.attentionAccent : naviloPalette\.tileIconForeground\}/.test(TILE_ROW_SRC)
+    // Pass 2E — the ternary itself moved into the per-tile animated
+    // sub-component (BriefingTileButton), reading semantically-named props
+    // rather than naviloPalette directly; the parent still passes the
+    // SAME two palette values through unchanged (attentionColor <-
+    // naviloPalette.attentionAccent, iconColor <- naviloPalette.tileIconForeground),
+    // so the effective mapping — normal tone -> tileIconForeground,
+    // attention tone -> attentionAccent — is unchanged end to end.
+    'the tile icon colour mapping is unchanged — normal tone still resolves to naviloPalette.tileIconForeground, attention tone still resolves to naviloPalette.attentionAccent, exactly as accepted in the previous correction round',
+    /attentionColor=\{naviloPalette\.attentionAccent\}/.test(TILE_ROW_SRC) &&
+      /iconColor=\{naviloPalette\.tileIconForeground\}/.test(TILE_ROW_SRC) &&
+      /color=\{tile\.tone === 'attention' \? attentionColor : iconColor\}/.test(TILE_ROW_SRC)
   );
   assert('the tile value Text still uses numberOfLines={1} + adjustsFontSizeToFit + minimumFontScale={0.75} — financial amounts still bounded-shrink, never silently truncated, unaffected by this width correction', /numberOfLines=\{1\} adjustsFontSizeToFit minimumFontScale=\{0\.75\}/.test(TILE_ROW_SRC));
   assert('selectBriefingTiles (AUP -> reminder -> events order, Score never included) is untouched this round — same function body as the previous accepted round', /export function selectBriefingTiles\(presentation: SafeToSpendPresentation, topReminder: SmartReminder \| null, eventRows: TodayBriefingEventRow\[\]\): BriefingTile\[\] \{/.test(BRIEFING_TILES_SRC));

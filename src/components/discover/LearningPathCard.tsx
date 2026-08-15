@@ -46,7 +46,13 @@ export function LearningPathCard({ path, startExpanded = false }: { path: Learni
 
   return (
     <SectionCard>
-      <TouchableOpacity activeOpacity={0.7} onPress={() => setExpanded((v) => !v)}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => setExpanded((v) => !v)}
+        accessibilityRole="button"
+        accessibilityLabel={`${path.title}, ${progress.completed} of ${progress.total} lessons completed`}
+        accessibilityState={{ expanded }}
+      >
         <View style={styles.header}>
           <View style={styles.emojiBadge}>
             <Text style={styles.emoji}>{path.emoji}</Text>
@@ -62,7 +68,7 @@ export function LearningPathCard({ path, startExpanded = false }: { path: Learni
               </Text>
             </View>
           </View>
-          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} importantForAccessibility="no" />
         </View>
       </TouchableOpacity>
       {expanded ? (

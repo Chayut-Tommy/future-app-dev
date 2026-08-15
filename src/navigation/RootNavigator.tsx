@@ -3,7 +3,10 @@ import { ActivityIndicator, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAppState } from '../state/AppStateContext';
 import { useTheme } from '../theme/ThemeContext';
+import { useReduceMotion } from '../hooks/useReduceMotion';
 import { MainTabNavigator } from './MainTabNavigator';
+import { MoneyScreen } from '../screens/money/MoneyScreen';
+import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
 import { SettingsScreen } from '../screens/settings/SettingsScreen';
 import { LanguageScreen } from '../screens/settings/LanguageScreen';
 import { ResetLuluScreen } from '../screens/settings/ResetLuluScreen';
@@ -54,6 +57,35 @@ export function RootNavigator() {
         <RootStack.Screen name="Goals" component={GoalsScreen} />
         <RootStack.Screen name="Cards" component={CardsScreen} />
         <RootStack.Screen name="Transactions" component={TransactionsScreen} />
+        {/* Pass 2E final correction (destination-reveal replacement) — Today
+            Briefing's four destinations (Available Until Payday, an outflow
+            event row, Score, Journey) push onto this exact same root stack,
+            the identical mechanism Transactions already uses (no navigator
+            options beyond the stack's own headerShown:false — pure native-
+            stack push defaults: slide-in-from-right, swipe-back enabled).
+            Each renders the exact existing canonical Money/Grow screen
+            component (never a duplicate/rebuilt content surface) in its
+            `pushed` mode — see MoneyScreen.tsx/DiscoverScreen.tsx for what
+            that mode changes (a real Back header instead of none, a private
+            ScrollView ref instead of the shared tab one, and non-animated
+            initial-section positioning instead of DestinationReveal's
+            retired opacity fade). reduceMotion is read fresh here, once per
+            push, via its own useReduceMotion() call — this route is a brand
+            new screen instance every time (never the long-lived, lazily-
+            mounted tab instance MainTabNavigator's own single call already
+            serves), so there is no mount-order race to avoid here. */}
+        <RootStack.Screen name="MoneyDetail">
+          {() => {
+            const reduceMotion = useReduceMotion();
+            return <MoneyScreen reduceMotion={reduceMotion} pushed />;
+          }}
+        </RootStack.Screen>
+        <RootStack.Screen name="GrowDetail">
+          {() => {
+            const reduceMotion = useReduceMotion();
+            return <DiscoverScreen reduceMotion={reduceMotion} pushed />;
+          }}
+        </RootStack.Screen>
         <RootStack.Screen name="SavingsComparison" component={SavingsComparisonScreen} />
         <RootStack.Screen name="CompoundCalculator" component={CompoundCalculatorScreen} />
         <RootStack.Screen name="EmergencyFund" component={EmergencyFundScreen} />

@@ -72,21 +72,28 @@ export function GoalsScreen() {
   );
 
   function renderGoalCard(item: Goal, completed: boolean) {
+    const progressLabel = item.targetAmount
+      ? `${formatMoney(item.currentAmount)} of ${formatMoney(item.targetAmount)}`
+      : completed
+      ? 'Completed'
+      : 'No target set yet';
     return (
-      <TouchableOpacity key={item.id} style={[styles.card, completed ? styles.completedCard : null]} activeOpacity={0.7} onPress={() => setSelectedGoalId(item.id)}>
+      <TouchableOpacity
+        key={item.id}
+        style={[styles.card, completed ? styles.completedCard : null]}
+        activeOpacity={0.7}
+        onPress={() => setSelectedGoalId(item.id)}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.name}, ${progressLabel}`}
+        accessibilityHint="Opens goal details"
+      >
         {completed ? <Ionicons name="trophy" size={18} color={colors.gold} style={styles.completedIcon} /> : null}
         <View style={styles.cardBody}>
           <Text style={styles.cardTitle}>{item.name}</Text>
           {!completed ? <ProgressBar progress={item.targetAmount ? item.currentAmount / item.targetAmount : 0} /> : null}
-          <Text style={styles.cardSubtitle}>
-            {item.targetAmount
-              ? `${formatMoney(item.currentAmount)} of ${formatMoney(item.targetAmount)}`
-              : completed
-              ? 'Completed'
-              : 'No target set yet'}
-          </Text>
+          <Text style={styles.cardSubtitle}>{progressLabel}</Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} importantForAccessibility="no" />
       </TouchableOpacity>
     );
   }

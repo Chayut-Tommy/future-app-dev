@@ -201,8 +201,13 @@ console.log('\n=== 8g. Dismissal presentation — a dirty interactive swipe neve
     /function requestClose\(\) \{\s*\n\s*if \(onRequestDismiss\) \{\s*\n\s*onRequestDismiss\(\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, dismiss, discardTitle, discardMessage\);/.test(KEYBOARD_SHEET_SRC)
   );
   assert(
-    '8g-2. springBack now accepts an onComplete callback, invoked only once the spring-to-rest animation has actually finished',
-    /function springBack\(onComplete\?: \(\) => void\) \{\s*\n\s*Animated\.spring\(translateY, \{ toValue: 0, useNativeDriver: true, bounciness: 6 \}\)\.start\(\(\) => \{\s*\n\s*onComplete\?\.\(\);/.test(KEYBOARD_SHEET_SRC)
+    // Pass 2E — springBack now branches on Reduce Motion (an instant
+    // duration-0 timing reset instead of the spring/bounce animation), but
+    // onComplete is still invoked exactly once, only via that single
+    // animation's own .start() callback, once it has actually finished —
+    // never a bare synchronous call, in either branch.
+    '8g-2. springBack now accepts an onComplete callback, invoked only once the spring-to-rest (or, under Reduce Motion, instant-reset) animation has actually finished',
+    /function springBack\(onComplete\?: \(\) => void\) \{[\s\S]*?const animation = reduceMotion\s*\n\s*\? Animated\.timing\(translateY, \{ toValue: 0, duration: 0, useNativeDriver: true \}\)\s*\n\s*: Animated\.spring\(translateY, \{ toValue: 0, useNativeDriver: true, bounciness: 6 \}\);\s*\n\s*animation\.start\(\(\) => \{\s*\n\s*onComplete\?\.\(\);/.test(KEYBOARD_SHEET_SRC)
   );
   assert(
     '8g-3. on a dirty interactive swipe-dismiss, the delegated path calls springBack(...) and only invokes onRequestDismissRef.current INSIDE that completion callback — never both at once, so the sheet is always fully settled before any host-owned alert can appear',

@@ -299,9 +299,16 @@ console.log('\n=== SECTION 8: ReminderDetailSheet.tsx session-deferred queue + b
     /const presentedState = state\.kind !== 'closed' \? state : lastPresentedStateRef\.current;/.test(REMINDER_SHEET_SRC)
   );
   assert('visible is still derived from the REAL state, not presentedState — the close animation begins immediately', /const visible = isReminderLifecycleVisible\(state\);/.test(REMINDER_SHEET_SRC));
+  // Reminder focus/announcements task extended this same function with two
+  // further real-signal-gated steps (resetting the focus-identity dedupe
+  // ref, and notifying the host via onFullyClosed) — still only ever fires
+  // from the real native onDismiss event, never a timeout, so the regex now
+  // just confirms the invariant line is still present rather than requiring
+  // the function body to contain nothing else.
   assert(
     'the retained content is cleared only via KeyboardSheet\'s existing onDismiss (the real native dismissal-complete signal), never a timeout',
-    /onDismiss=\{handleNativeDismissComplete\}/.test(REMINDER_SHEET_SRC) && /function handleNativeDismissComplete\(\) \{\s*lastPresentedStateRef\.current = CLOSED_STATE;\s*\}/.test(REMINDER_SHEET_SRC)
+    /onDismiss=\{handleNativeDismissComplete\}/.test(REMINDER_SHEET_SRC) &&
+      /function handleNativeDismissComplete\(\) \{[\s\S]*?lastPresentedStateRef\.current = CLOSED_STATE;[\s\S]*?\}/.test(REMINDER_SHEET_SRC)
   );
   assert('no timeout/setTimeout/setInterval was introduced anywhere in this file for the blank-shell fix', !/setTimeout|setInterval/.test(REMINDER_SHEET_SRC));
   assert('still exactly one native Modal/KeyboardSheet, unchanged from the prior round', (REMINDER_SHEET_SRC.match(/<KeyboardSheet\b/g) ?? []).length === 1 && !/<Modal\b/.test(REMINDER_SHEET_SRC));

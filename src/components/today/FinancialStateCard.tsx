@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { WARNING_TEXT_LIGHT_OVERRIDE } from '../../theme/contrastOverrides';
 import {
   FinancialState,
   describeFinancialStateForToday,
@@ -50,7 +51,7 @@ export function FinancialStateCard({
    * (may be omitted) for cashflow_focus. */
   hasActiveGoal?: boolean;
 }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, scheme } = useTheme();
   const copy = describeFinancialStateForToday(state);
 
   const styles = useMemo(
@@ -58,7 +59,8 @@ export function FinancialStateCard({
       StyleSheet.create({
         card: { backgroundColor: colors.warningSoft, borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg },
         eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
-        eyebrow: { ...typography.micro, fontSize: 11, color: colors.warning, fontWeight: '700', letterSpacing: 0.5 },
+        // Pass 2E contrast correction — see WARNING_TEXT_LIGHT_OVERRIDE.
+        eyebrow: { ...typography.micro, fontSize: 11, color: scheme === 'light' ? WARNING_TEXT_LIGHT_OVERRIDE : colors.warning, fontWeight: '700', letterSpacing: 0.5 },
         headline: { ...typography.heading, fontSize: 16, color: colors.textPrimary, marginBottom: 4 },
         body: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, marginBottom: spacing.md },
         actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
@@ -73,7 +75,7 @@ export function FinancialStateCard({
         },
         actionText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, scheme]
   );
 
   if (!copy) return null;
@@ -103,8 +105,16 @@ export function FinancialStateCard({
       <Text style={styles.body}>{copy.body}</Text>
       <View style={styles.actionsRow}>
         {actionSpecs.map((a) => (
-          <TouchableOpacity key={a.key} style={styles.actionChip} onPress={a.onPress} activeOpacity={0.7}>
-            <Ionicons name={a.icon} size={14} color={colors.warning} />
+          <TouchableOpacity
+            key={a.key}
+            style={styles.actionChip}
+            onPress={a.onPress}
+            activeOpacity={0.7}
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel={a.label}
+          >
+            <Ionicons name={a.icon} size={14} color={colors.warning} importantForAccessibility="no" />
             <Text style={styles.actionText}>{a.label}</Text>
           </TouchableOpacity>
         ))}

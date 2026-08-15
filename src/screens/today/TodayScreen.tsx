@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -45,6 +45,7 @@ import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
 import { brand } from '../../lib/brand';
+import { sendFocusEvent } from '../../lib/accessibilityFocus';
 
 // Confetti + trophy tier reserved for the genuinely big moments (PRD ask) —
 // everything else newly-unlocked still gets the existing Journey sheet.
@@ -82,6 +83,22 @@ export function TodayScreen() {
   // already established for AUP/timeline navigation.
   const reminderOpenRequestIdRef = useRef(0);
   const [reminderOpenRequest, setReminderOpenRequest] = useState<ReminderOpenRequest | null>(null);
+  // Reminder focus/announcements task — the two possible accessibility-
+  // focus-restore targets once the Reminder sheet fully closes: the exact
+  // Briefing Reminder tile that originated it (still real/mounted whenever
+  // a reminder remains — "Not yet"/"Got it" never remove the underlying
+  // occurrence, only a genuine mutation does), or this heading as the safe
+  // fallback when every reminder has genuinely been resolved and the tile
+  // itself no longer renders.
+  const reminderTileRef = useRef<any>(null);
+  const briefingHeadingRef = useRef<any>(null);
+  function handleReminderSheetFullyClosed() {
+    if (topReminder) {
+      sendFocusEvent(reminderTileRef);
+    } else {
+      sendFocusEvent(briefingHeadingRef);
+    }
+  }
 
   // Round 6 correction — the single live local-date value this screen's
   // month heading and relative-day labels derive from; see
@@ -272,34 +289,6 @@ export function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [luluScore.locked, luluScore.score, data.user.highestScoreMilestoneCelebrated, data.user.scoreMilestoneBaselineSet]);
 
-  // Correction pass — the shared AUP presentation now owns its own action
-  // declaratively (safeToSpendPresentation.action), rather than this screen
-  // hard-coding a single navigate() call independent of state. Every state
-  // currently resolves to the same action (focus Money's existing AUP
-  // section, whose own per-state CTA already owns the actual recovery
-  // journey) — this switch exists so that ownership is genuinely read from
-  // the presentation, not merely declared on its type and then ignored.
-  //
-  // Final Pass 2D device-test correction, §9 — stamps a fresh
-  // scrollToRequestId (reusing the exact same monotonic counter Grow's own
-  // focus requests already use below — a single shared sequence is safe
-  // since Money and Grow each compare requestId only within their own
-  // pending-focus module) so a repeat tap on the AUP tile is always a
-  // genuine, detectable navigation change, never silently swallowed by
-  // React Navigation treating identical params as unchanged.
-  function handleBriefingAupPress() {
-    if (safeToSpendPresentation.action.kind === 'focus_money_section') {
-      focusRequestIdRef.current += 1;
-      navigation.navigate('Money', { scrollTo: safeToSpendPresentation.action.section, scrollToRequestId: focusRequestIdRef.current });
-    }
-  }
-
-  // Pass 2B — both compact presentations' destinations reuse the exact same
-  // stable section-focus architecture as the AUP row above (Grow's own
-  // pending-focus mechanism, corrected this pass — see DiscoverScreen.tsx),
-  // never a hard-coded pixel offset and never a new duplicate Score/Journey
-  // screen.
-  //
   // Pass 2B correction — every Grow section-focus request (score, journey,
   // and the pre-existing financial-learning) is stamped with a fresh,
   // monotonically increasing id from this single shared counter. Grow's own
@@ -308,19 +297,86 @@ export function TodayScreen() {
   // same section would navigate with an identical params object and React
   // Navigation would treat it as no change, silently swallowing the repeat
   // tap. The id makes every intentional tap a genuine, detectable change,
-  // even back-to-back taps on the exact same section. Pass 2D reuses this
-  // exact same counter/mechanism for the new contextual-insight and goal-
-  // snapshot destinations — no second, parallel navigation system.
+  // even back-to-back taps on the exact same section. Still shared by every
+  // destination below — both the pushed MoneyDetail/GrowDetail routes
+  // (Pass 2E final correction) and the unrelated in-tab Grow contextual-
+  // insight/goal-snapshot destinations that navigateToGrow still serves.
   const focusRequestIdRef = useRef(0);
+
+  // Pass 2E final correction (destination-reveal replacement) — guards
+  // against a rapid double-press stacking two pushed detail routes before
+  // the first navigate() call's state update has been processed (Section
+  // 6.8's explicit "repeated/rapid presses cannot stack duplicate routes"
+  // requirement). Reset the instant Today regains focus (i.e. every time
+  // the user returns via Back), not on a timer — a timer would either fire
+  // too early (still stacked) or leave Today briefly unresponsive after a
+  // genuine, intentional return.
+  const navigatingToDetailRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      navigatingToDetailRef.current = false;
+    }, [])
+  );
+
+  // Pass 2E final correction — replaces the previous cross-tab
+  // navigation (navigate('Money'/'Grow', { scrollTo, scrollToRequestId }))
+  // for these four Briefing destinations specifically. Pushes the exact
+  // same existing Money/Grow content as a new stack entry above Today
+  // (RootNavigator.tsx's MoneyDetail/GrowDetail routes — the identical
+  // native-stack push pattern Transactions already uses), rather than
+  // switching the active bottom tab. scrollTo/scrollToRequestId are still
+  // the same params/mechanism MoneyScreen.tsx/DiscoverScreen.tsx's own
+  // section-focus effect already consumes (sectionFocus.ts/
+  // moneySectionFocus.ts, unchanged) — only the destination ROUTE name
+  // changed, not the focus-request contract itself.
+  function pushMoneyDetail(scrollTo: 'aup' | 'timeline') {
+    if (navigatingToDetailRef.current) return;
+    navigatingToDetailRef.current = true;
+    focusRequestIdRef.current += 1;
+    navigation.navigate('MoneyDetail', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
+  }
+  function pushGrowDetail(scrollTo: 'score' | 'journey') {
+    if (navigatingToDetailRef.current) return;
+    navigatingToDetailRef.current = true;
+    focusRequestIdRef.current += 1;
+    navigation.navigate('GrowDetail', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
+  }
+
+  // Correction pass — the shared AUP presentation now owns its own action
+  // declaratively (safeToSpendPresentation.action), rather than this screen
+  // hard-coding a single navigate() call independent of state. Every state
+  // currently resolves to the same action (focus Money's existing AUP
+  // section, whose own per-state CTA already owns the actual recovery
+  // journey) — this switch exists so that ownership is genuinely read from
+  // the presentation, not merely declared on its type and then ignored.
+  function handleBriefingAupPress() {
+    if (safeToSpendPresentation.action.kind === 'focus_money_section') {
+      pushMoneyDetail(safeToSpendPresentation.action.section);
+    }
+  }
+
+  // Pass 2B — both compact presentations' destinations reuse the exact same
+  // stable section-focus architecture as the AUP row above (Grow's own
+  // pending-focus mechanism — see DiscoverScreen.tsx), never a hard-coded
+  // pixel offset and never a new duplicate Score/Journey screen.
+  //
+  // navigateToGrow (in-tab, unrelated targets only) — still used exactly as
+  // before by handleContextualInsightPress below for its own
+  // safety_net/saving/learning/goals/financial-learning destinations, which
+  // remain out of this pass's scope and must keep navigating to the Grow
+  // TAB, not a pushed route. Score and Journey are no longer routed through
+  // it (see pushGrowDetail above) — pickTodayContextualInsight never
+  // targets 'score'/'journey' (see that module's own doc comment), so the
+  // two mechanisms never compete for the same destination.
   function navigateToGrow(scrollTo: string) {
     focusRequestIdRef.current += 1;
     navigation.navigate('Grow', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
   }
   function handleScoreChipPress() {
-    navigateToGrow('score');
+    pushGrowDetail('score');
   }
   function handleJourneyPress() {
-    navigateToGrow('journey');
+    pushGrowDetail('journey');
   }
   // Pass 2D — the one contextual insight's own destination, computed by
   // pickTodayContextualInsight (see that module's own doc comment for the
@@ -376,8 +432,10 @@ export function TodayScreen() {
           style={styles.floatingSettings}
           onPress={() => navigation.navigate('Settings')}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
         >
-          <Ionicons name="settings-outline" size={20} color={colors.textSecondary} />
+          <Ionicons name="settings-outline" size={20} color={colors.textSecondary} importantForAccessibility="no" />
         </TouchableOpacity>
       }
     >
@@ -407,14 +465,7 @@ export function TodayScreen() {
         topReminder={topReminder}
         onPressScoreChip={handleScoreChipPress}
         onPressAup={handleBriefingAupPress}
-        onPressEventRow={() => {
-          // Final Pass 2D device-test correction, §9 — same requestId fix
-          // as handleBriefingAupPress above: this destination shares the
-          // identical underlying pending-focus mechanism in MoneyScreen.tsx
-          // (moneySectionFocus.ts), so it needed the identical correction.
-          focusRequestIdRef.current += 1;
-          navigation.navigate('Money', { scrollTo: 'timeline', scrollToRequestId: focusRequestIdRef.current });
-        }}
+        onPressEventRow={() => pushMoneyDetail('timeline')}
         onPressReminderTile={() => {
           // Reminder-opening correction round — captures the exact
           // currently-selected topReminder synchronously, at press time;
@@ -426,6 +477,8 @@ export function TodayScreen() {
           reminderOpenRequestIdRef.current += 1;
           setReminderOpenRequest(createReminderOpenRequest(reminderOpenRequestIdRef.current, topReminder));
         }}
+        headingRef={briefingHeadingRef}
+        reminderTileRef={reminderTileRef}
       />
 
       {/* 3. Your Journey snapshot (Pass 2B) — unchanged: completed count,
@@ -446,7 +499,7 @@ export function TodayScreen() {
           totals, payment-source breakdown, flip behaviour, and the
           Transaction History route are all exactly as before this pass. */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{monthLabel} so far</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{monthLabel} so far</Text>
       </View>
       <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
 
@@ -461,7 +514,7 @@ export function TodayScreen() {
           filter is 'active' only, the exact same filter Grow's own list
           already used). */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Your goal</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">Your goal</Text>
       </View>
       {primaryActiveGoal ? (
         (() => {
@@ -551,7 +604,7 @@ export function TodayScreen() {
         <LoanBalanceReminderCard />
       </View>
 
-      <ReminderDetailSheet openRequest={reminderOpenRequest} today={currentDate} />
+      <ReminderDetailSheet openRequest={reminderOpenRequest} today={currentDate} onFullyClosed={handleReminderSheetFullyClosed} />
       <AddIncomeModal visible={incomeModalVisible} onClose={() => setIncomeModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />
       <AddWealthItemModal

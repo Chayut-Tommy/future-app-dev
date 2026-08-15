@@ -101,13 +101,25 @@ export function UnlockPromptCard({
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.body}>{body}</Text>
         </View>
-        <TouchableOpacity style={styles.action} onPress={onAction} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity
+          style={styles.action}
+          onPress={onAction}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+        >
           <Text style={styles.actionText}>{actionLabel}</Text>
         </TouchableOpacity>
       </View>
       {learnLabel && onLearn ? (
-        <TouchableOpacity style={styles.learnRow} onPress={onLearn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="school-outline" size={14} color={colors.accentStrong} />
+        <TouchableOpacity
+          style={styles.learnRow}
+          onPress={onLearn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={learnLabel}
+        >
+          <Ionicons name="school-outline" size={14} color={colors.accentStrong} importantForAccessibility="no" />
           <Text style={styles.learnText}>{learnLabel}</Text>
         </TouchableOpacity>
       ) : null}

@@ -143,20 +143,32 @@ export function MoneyPictureChecklistCard() {
         <Text style={styles.title}>Great start 👋 Let's build your money picture.</Text>
         <TouchableOpacity
           onPress={() => updateUser({ moneyPictureChecklistDismissed: true })}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          hitSlop={{ top: 13, bottom: 13, left: 13, right: 13 }}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss money picture checklist"
         >
           <Ionicons name="close" size={18} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
       <Text style={styles.subtitle}>The more {brand.name} knows, the better it can guide you.</Text>
       <View style={styles.progressWrap}>
-        <ProgressBar progress={completedCount / steps.length} />
+        <ProgressBar
+          progress={completedCount / steps.length}
+          accessibilityLabel={`${completedCount} of ${steps.length} steps completed`}
+        />
       </View>
       {steps.map((s) => (
-        <TouchableOpacity key={s.key} style={styles.row} activeOpacity={0.7} onPress={s.onPress}>
-          <Ionicons name={s.done ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={s.done ? colors.accent : colors.textMuted} />
+        <TouchableOpacity
+          key={s.key}
+          style={styles.row}
+          activeOpacity={0.7}
+          onPress={s.onPress}
+          accessibilityRole="button"
+          accessibilityLabel={`${s.label}${s.done ? ', completed' : ''}`}
+        >
+          <Ionicons name={s.done ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={s.done ? colors.accent : colors.textMuted} importantForAccessibility="no" />
           <Text style={[styles.rowLabel, s.done ? styles.rowLabelDone : null]}>{s.label}</Text>
-          {!s.done ? <Ionicons name="chevron-forward" size={16} color={colors.textMuted} /> : null}
+          {!s.done ? <Ionicons name="chevron-forward" size={16} color={colors.textMuted} importantForAccessibility="no" /> : null}
         </TouchableOpacity>
       ))}
 

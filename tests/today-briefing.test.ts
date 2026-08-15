@@ -651,7 +651,9 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
       /onPressReminderTile=\{\(\) => \{[\s\S]{0,700}if \(!topReminder\) return;[\s\S]{0,300}setReminderOpenRequest\(createReminderOpenRequest\(reminderOpenRequestIdRef\.current, topReminder\)\);/.test(
         TODAY_SCREEN_SRC
       ) &&
-      /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\} \/>/.test(TODAY_SCREEN_SRC)
+      // Reminder focus/announcements task added onFullyClosed as a further
+      // prop on this same element — tolerate trailing props.
+      /<ReminderDetailSheet openRequest=\{reminderOpenRequest\} today=\{currentDate\}[^>]*\/>/.test(TODAY_SCREEN_SRC)
   );
   // CANONICAL TILE ORDER (correction pass, this round): AUP tile -> Smart
   // Reminder tile -> event tiles — now enforced by selectBriefingTiles
@@ -669,29 +671,25 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
       /\{formatBriefingDateContext\(today\)\}/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
-    // Final Pass 2D device-test correction, §9 — both destinations now also
-    // stamp a fresh scrollToRequestId (the confirmed fix for "repeated
-    // targeted AUP navigation" — see this round's final report §9). The
+    // Pass 2E final correction — both destinations now push the root
+    // stack's MoneyDetail route (pushMoneyDetail) instead of navigating
+    // within the Money tab, via TodayScreen's own rapid-press guard; the
     // underlying claim (onPressAup is the presentation-action-driven
     // handler; onPressEventRow still targets the timeline section) is
     // unchanged and still proven.
     'onPressAup is now the presentation-action-driven handler, not a hard-coded navigate() literal inline; onPressEventRow still targets the timeline section',
     /onPressAup=\{handleBriefingAupPress\}/.test(TODAY_SCREEN_SRC) &&
-      /onPressEventRow=\{\(\) => \{[\s\S]{0,500}navigation\.navigate\('Money', \{ scrollTo: 'timeline', scrollToRequestId: focusRequestIdRef\.current \}\);/.test(
-        TODAY_SCREEN_SRC
-      )
+      /onPressEventRow=\{\(\) => pushMoneyDetail\('timeline'\)\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
-    // Final Pass 2D device-test correction, §9 — the navigate call now also
-    // stamps scrollToRequestId from the same shared monotonic counter
-    // Grow's own focus requests use; the underlying claim (genuinely reads
+    // Pass 2E final correction — the push call now goes through
+    // pushMoneyDetail (rapid-press guard + fresh scrollToRequestId from the
+    // same shared monotonic counter); the underlying claim (genuinely reads
     // safeToSpendPresentation.action, still navigates to Money's existing
     // AUP section) is unchanged and still proven.
     'handleBriefingAupPress genuinely reads safeToSpendPresentation.action (action ownership is real, not decorative) and still navigates to Money\'s existing AUP section — no duplicate setup route introduced',
-    /if \(safeToSpendPresentation\.action\.kind === 'focus_money_section'\) \{/.test(TODAY_SCREEN_SRC) &&
-      /navigation\.navigate\('Money', \{ scrollTo: safeToSpendPresentation\.action\.section, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(
-        TODAY_SCREEN_SRC
-      )
+    /if \(safeToSpendPresentation\.action\.kind === 'focus_money_section'\) \{\s*pushMoneyDetail\(safeToSpendPresentation\.action\.section\);\s*\}/.test(TODAY_SCREEN_SRC) &&
+      /function pushMoneyDetail\(scrollTo: 'aup' \| 'timeline'\) \{[\s\S]{0,300}navigation\.navigate\('MoneyDetail', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC)
   );
 
   assert(
@@ -788,13 +786,17 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     })()
   );
   assert(
-    // Final Pass 2D device-test correction, §9 — the scrollTo call now
-    // reads the measured y from the fulfilment result (result.scrollY!)
-    // rather than the target ref directly; the underlying claim (scrolls
-    // the existing tabScrollRefs.Money ScrollView, never a new/duplicate
-    // scroll surface) is unchanged and still proven.
-    'MoneyScreen.tsx scrolls the existing tabScrollRefs.Money ScrollView, never a new/duplicate scroll surface',
-    /tabScrollRefs\.Money\.current\?\.scrollTo\(\{ y: result\.scrollY!, animated: true \}\);/.test(MONEY_SCREEN_SRC)
+    // Pass 2E final correction — the pushed MoneyDetail instance now scrolls
+    // its own private ScrollView (never the shared tabScrollRefs.Money
+    // singleton, which the still-mounted tab instance underneath keeps
+    // owning) via activeScrollRef, and never animates (a pushed arrival must
+    // not compete with the native push transition) — the tab-hosted
+    // instance keeps honouring Reduce Motion exactly as before. The
+    // underlying claim (scrolls via the measured result.scrollY, never a
+    // new/duplicate scroll surface introduced beyond this one private ref)
+    // is unchanged and still proven.
+    'MoneyScreen.tsx scrolls the correct ScrollView instance (private ref when pushed, the shared tab ref otherwise), never a new/duplicate scroll surface',
+    /activeScrollRef\.current\?\.scrollTo\(\{ y: result\.scrollY!, animated: pushed \? false : !reduceMotion \}\);/.test(MONEY_SCREEN_SRC)
   );
 }
 

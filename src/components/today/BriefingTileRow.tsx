@@ -1,10 +1,101 @@
-import React, { useMemo, useState } from 'react';
-import { LayoutChangeEvent, PixelRatio, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, LayoutChangeEvent, PixelRatio, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { RefObject } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { BriefingTile, computeBriefingLayout } from '../../lib/calculations/briefingTiles';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
 
 const TILE_MIN_WIDTH = 92;
+const CONTENT_FADE_DURATION_MS = 180;
+
+/**
+ * Pass 2E — the restrained fade for eligible Briefing content changing in
+ * place (e.g. the AUP tile's amount updating, or the Reminder tile's status
+ * changing after "Not yet"/completion). React already preserves this
+ * component's own state across renders by `tile.key` (the same key the
+ * parent's .map already used before this round), so comparing against the
+ * PREVIOUS render's own committed value/supportingLine here — via a ref,
+ * not re-derived by the parent — is sufficient to detect "this specific
+ * tile's content changed in place" without any cross-tile diffing. A tile
+ * newly mounting (composition change, not an in-place change) starts at
+ * opacity 1 with no fade — only a genuine value change on an
+ * already-mounted tile fades. The underlying data has already been
+ * recomputed by the time this renders (selectBriefingTiles already ran) —
+ * this only ever animates the PRESENTATION of an already-confirmed result,
+ * never a live-tweened number that could imply a calculation is still in
+ * progress.
+ */
+function BriefingTileButton({
+  tile,
+  onPress,
+  styles,
+  attentionColor,
+  iconColor,
+  focusRef,
+}: {
+  tile: BriefingTile;
+  onPress: () => void;
+  styles: { [key: string]: any };
+  attentionColor: string;
+  iconColor: string;
+  /** Reminder focus/announcements task — set only for the 'reminder' tile
+   * (see BriefingTileRow's own map below), so TodayScreen can restore
+   * accessibility focus here when the Reminder sheet fully closes and this
+   * exact tile is still the one that originated it. */
+  focusRef?: RefObject<any>;
+}) {
+  const reduceMotion = useReduceMotion();
+  const opacity = useRef(new Animated.Value(1)).current;
+  const prevSignatureRef = useRef<string | null>(null);
+  const signature = `${tile.value}|${tile.supportingLine ?? ''}`;
+
+  useEffect(() => {
+    if (prevSignatureRef.current === null) {
+      // First mount for this key — no fade, nothing changed "in place" yet.
+      prevSignatureRef.current = signature;
+      return;
+    }
+    if (prevSignatureRef.current === signature) return;
+    prevSignatureRef.current = signature;
+    if (reduceMotion) {
+      opacity.setValue(1);
+      return;
+    }
+    opacity.setValue(0.35);
+    Animated.timing(opacity, { toValue: 1, duration: CONTENT_FADE_DURATION_MS, useNativeDriver: true }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, reduceMotion]);
+
+  return (
+    <Animated.View style={{ opacity }}>
+      <TouchableOpacity
+        ref={focusRef}
+        style={styles.tile}
+        onPress={onPress}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={tile.accessibilityLabel}
+        accessibilityHint="Opens details"
+      >
+        <View style={styles.iconRow}>
+          <Ionicons name={tile.icon} size={13} color={tile.tone === 'attention' ? attentionColor : iconColor} />
+          <Text style={[styles.label, { opacity: 0.8 }]} numberOfLines={2}>
+            {tile.label}
+          </Text>
+        </View>
+        <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+          {tile.value}
+        </Text>
+        {tile.supportingLine ? (
+          <Text style={[styles.supportingLine, { opacity: 0.8 }]} numberOfLines={2}>
+            {tile.supportingLine}
+          </Text>
+        ) : null}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
 
 /**
  * Pass 2B correction §2/§3/§4 — the Briefing's responsive tile
@@ -33,7 +124,18 @@ const TILE_MIN_WIDTH = 92;
  * cannot re-introduce a long question, an account-choice control, or an
  * unbounded row (the exact defect this correction fixes).
  */
-export function BriefingTileRow({ tiles, onPressTile }: { tiles: BriefingTile[]; onPressTile: (tile: BriefingTile) => void }) {
+export function BriefingTileRow({
+  tiles,
+  onPressTile,
+  reminderTileRef,
+}: {
+  tiles: BriefingTile[];
+  onPressTile: (tile: BriefingTile) => void;
+  /** Reminder focus/announcements task — attached only to the 'reminder'
+   * tile (if present this render), so TodayScreen can restore accessibility
+   * focus to it once the Reminder sheet fully closes. */
+  reminderTileRef?: RefObject<any>;
+}) {
   const { spacing, radius, typography, naviloPalette } = useTheme();
   const fontScale = PixelRatio.getFontScale();
   // 0 until the row's own first layout pass — computeBriefingLayout treats
@@ -82,30 +184,15 @@ export function BriefingTileRow({ tiles, onPressTile }: { tiles: BriefingTile[];
   return (
     <View style={styles.row} onLayout={handleRowLayout}>
       {tiles.map((tile) => (
-        <TouchableOpacity
+        <BriefingTileButton
           key={tile.key}
-          style={styles.tile}
+          tile={tile}
           onPress={() => onPressTile(tile)}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel={tile.accessibilityLabel}
-          accessibilityHint="Opens details"
-        >
-          <View style={styles.iconRow}>
-            <Ionicons name={tile.icon} size={13} color={tile.tone === 'attention' ? naviloPalette.attentionAccent : naviloPalette.tileIconForeground} />
-            <Text style={[styles.label, { opacity: 0.8 }]} numberOfLines={2}>
-              {tile.label}
-            </Text>
-          </View>
-          <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
-            {tile.value}
-          </Text>
-          {tile.supportingLine ? (
-            <Text style={[styles.supportingLine, { opacity: 0.8 }]} numberOfLines={2}>
-              {tile.supportingLine}
-            </Text>
-          ) : null}
-        </TouchableOpacity>
+          styles={styles}
+          attentionColor={naviloPalette.attentionAccent}
+          iconColor={naviloPalette.tileIconForeground}
+          focusRef={tile.kind === 'reminder' ? reminderTileRef : undefined}
+        />
       ))}
     </View>
   );

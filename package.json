@@ -26,7 +26,12 @@
     "react-native-svg": "15.12.1"
   },
   "devDependencies": {
+    "@testing-library/react-native": "14.0.1",
+    "@types/jest": "29.5.14",
     "@types/react": "~19.1.10",
+    "jest": "29.7.0",
+    "jest-expo": "54.0.17",
+    "test-renderer": "1.1.0",
     "tsx": "4.23.8",
     "typescript": "~5.9.2"
   },
@@ -34,7 +39,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test:legacy": "for f in tests/*.test.ts; do npx tsx \"$f\" || exit 1; done",
+    "test:render": "jest --config jest.render.config.cjs",
+    "test:all": "npm run test:legacy && npm run test:render"
   },
   "private": true
 }
