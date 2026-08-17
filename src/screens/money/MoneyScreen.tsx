@@ -37,6 +37,7 @@ import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculatio
 import { DebtCoachSheet } from '../../components/debt/DebtCoachSheet';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { parseMoneySectionFocusRequest, computeMoneySectionFocusFulfillment, MoneySectionFocusRequest } from '../../lib/calculations/moneySectionFocus';
+import { TimelineFocusTarget } from '../../lib/calculations/timelineFocus';
 import { RecurringItem, LiabilityType } from '../../types/models';
 import { brand } from '../../lib/brand';
 
@@ -90,6 +91,11 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // one genuinely positioned at the very top of the scroll content.
   const aupSectionY = useRef<number | null>(null);
   const whatHappensNextSectionY = useRef<number | null>(null);
+  // Worth Knowing (Today) — the destination for its payment-source-
+  // concentration insight (WK-04), mirroring aupSectionY/whatHappensNextSectionY
+  // exactly (see moneySectionFocus.ts's own doc comment for why this is the
+  // least-invasive real destination rather than a new screen).
+  const thisMonthSectionY = useRef<number | null>(null);
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [editIncome, setEditIncome] = useState<RecurringItem | null>(null);
   const [billModalVisible, setBillModalVisible] = useState(false);
@@ -225,10 +231,25 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // left exactly where it was, per this round's explicit required
   // distinction between targeted and ordinary tab navigation.
   const pendingMoneyFocusRef = useRef<MoneySectionFocusRequest | null>(null);
+  // Correction round — Worth Knowing's own inner-timeline destination
+  // target, tracked independently of pendingMoneyFocusRef above (which only
+  // ever resolves the OUTER page scroll to the "What happens next" HEADING).
+  // See timelineFocus.ts's own doc comment for why this is a distinct
+  // mechanism, not an extension of the one above. Correction round §3 —
+  // explicitly cleared via MoneyTimelineCard's own onFocusHandled callback
+  // the moment its request resolves (scrolled, or safely given up on): a
+  // one-time destination, not a persistent target that could be reapplied
+  // after an unrelated re-render (opening/closing an edit sheet, ordinary
+  // scrolling). MoneyTimelineCard's own lastHandledRequestIdRef is a second,
+  // independent guard against exactly that even before this clears — this
+  // is the belt to that braces, matching the "no lasting state" requirement
+  // explicitly, not merely relying on the child's own dedup.
+  const [timelineFocusTarget, setTimelineFocusTarget] = useState<TimelineFocusTarget | null>(null);
   function attemptMoneySectionFocus() {
     const result = computeMoneySectionFocusFulfillment(pendingMoneyFocusRef.current, {
       aup: aupSectionY.current,
       timeline: whatHappensNextSectionY.current,
+      this_month: thisMonthSectionY.current,
     });
     if (!result.fulfilled) return; // still pending — retried by that section's own onLayout below
     // Pass 2E final correction — a pushed arrival must never animate this
@@ -246,12 +267,20 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     navigation.setParams({ scrollTo: undefined, scrollToRequestId: undefined });
   }
   useEffect(() => {
-    const parsed = parseMoneySectionFocusRequest(route.params?.scrollTo, route.params?.scrollToRequestId);
+    const parsed = parseMoneySectionFocusRequest(
+      route.params?.scrollTo,
+      route.params?.scrollToRequestId,
+      route.params?.targetDateKey,
+      route.params?.targetOccurrenceKeys
+    );
     if (!parsed) return;
     pendingMoneyFocusRef.current = parsed;
     attemptMoneySectionFocus();
+    if (parsed.target === 'timeline' && parsed.targetDateKey) {
+      setTimelineFocusTarget({ requestId: parsed.requestId, dateKey: parsed.targetDateKey, occurrenceKeys: parsed.targetOccurrenceKeys ?? [] });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.params?.scrollTo, route.params?.scrollToRequestId]);
+  }, [route.params?.scrollTo, route.params?.scrollToRequestId, route.params?.targetDateKey, route.params?.targetOccurrenceKeys]);
 
   function openAddBill() {
     setEditBill(null);
@@ -567,7 +596,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           (PRD ask, Finding #40) placed directly under the hero so credit-
           card-heavy users see recorded activity right away, without
           altering what Available Until Payday itself means. */}
-      <View style={styles.sectionHeader}>
+      <View
+        style={styles.sectionHeader}
+        onLayout={(e) => {
+          thisMonthSectionY.current = e.nativeEvent.layout.y;
+          attemptMoneySectionFocus();
+        }}
+      >
         <Text style={styles.sectionTitle}>This Month</Text>
         <TouchableOpacity onPress={() => setThisMonthInfoVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
@@ -618,7 +653,14 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         </SectionCard>
       ) : (
         <SectionCard>
-          <MoneyTimelineCard events={timelineEvents} onEventPress={handleTimelineEventPress} onNearEnd={extendTimelineHorizon} />
+          <MoneyTimelineCard
+            events={timelineEvents}
+            onEventPress={handleTimelineEventPress}
+            onNearEnd={extendTimelineHorizon}
+            focusTarget={timelineFocusTarget}
+            onFocusHandled={() => setTimelineFocusTarget(null)}
+            reduceMotion={reduceMotion}
+          />
         </SectionCard>
       )}
 

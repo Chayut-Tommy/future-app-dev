@@ -203,11 +203,17 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
   // exists (final Today hierarchy §6: "zero or one only"), wrapped in a
   // TouchableOpacity so it can route to that insight's destination; the
   // still-luluScore-free contract this assertion originally protected
-  // (LuluCheckInCard never takes a score prop) is unchanged — it still
-  // takes only topLine and insight, just a differently-sourced insight.
+  // (LuluCheckInCard never took a score prop) held until the Worth Knowing
+  // correction round, which removed LuluCheckInCard/pickTodayContextualInsight
+  // from TodayScreen.tsx entirely (they were a second, independently-eligible
+  // fallback selector competing with Worth Knowing for the same slot — see
+  // worthKnowing.ts's own header comment). The underlying claim this
+  // assertion protects — that TodayScreen never passes a Score value into
+  // a check-in-style card — still holds trivially, since no such card is
+  // mounted from Today at all any more.
   assert(
-    'TodayScreen.tsx no longer passes luluScore into LuluCheckInCard — it takes only topLine and the new contextual-insight value, mounted conditionally',
-    /<LuluCheckInCard topLine=\{checkInLine\.topLine\} insight=\{contextualInsight\} \/>/.test(TODAY_SCREEN_SRC) && !/<LuluCheckInCard[^>]*luluScore/.test(TODAY_SCREEN_SRC)
+    'TodayScreen.tsx no longer mounts LuluCheckInCard at all (Worth Knowing correction round) — and never did pass luluScore into it while it was mounted',
+    !/<LuluCheckInCard/.test(TODAY_SCREEN_SRC) && !/<LuluCheckInCard[^>]*luluScore/.test(TODAY_SCREEN_SRC)
   );
   assert('TodayScreen.tsx no longer renders JourneyTimeline directly (the long Today Journey timeline is gone)', !/<JourneyTimeline/.test(TODAY_SCREEN_SRC) && !TODAY_SCREEN_SRC.includes("import { JourneyTimeline }"));
 

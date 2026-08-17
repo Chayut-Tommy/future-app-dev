@@ -686,10 +686,21 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     // pushMoneyDetail (rapid-press guard + fresh scrollToRequestId from the
     // same shared monotonic counter); the underlying claim (genuinely reads
     // safeToSpendPresentation.action, still navigates to Money's existing
-    // AUP section) is unchanged and still proven.
+    // AUP section) is unchanged and still proven. Worth Knowing round —
+    // pushMoneyDetail's scrollTo type widened to also accept 'this_month'
+    // (WK-04's own destination); the underlying assertion is updated to
+    // match, not relaxed — it still requires the exact same guard/counter
+    // body between the signature and the navigate() call. Worth Knowing
+    // correction round — pushMoneyDetail gained an optional second `target`
+    // parameter (WK-01/WK-02's own inner-timeline destination) and the
+    // navigate() call now also passes targetDateKey/targetOccurrenceKeys
+    // through from it; handleBriefingAupPress itself still calls
+    // pushMoneyDetail with a single argument (no target), completely
+    // unaffected — the assertion below is updated to the new, still-exact
+    // signature/body shape, not relaxed.
     'handleBriefingAupPress genuinely reads safeToSpendPresentation.action (action ownership is real, not decorative) and still navigates to Money\'s existing AUP section — no duplicate setup route introduced',
     /if \(safeToSpendPresentation\.action\.kind === 'focus_money_section'\) \{\s*pushMoneyDetail\(safeToSpendPresentation\.action\.section\);\s*\}/.test(TODAY_SCREEN_SRC) &&
-      /function pushMoneyDetail\(scrollTo: 'aup' \| 'timeline'\) \{[\s\S]{0,300}navigation\.navigate\('MoneyDetail', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC)
+      /function pushMoneyDetail\(scrollTo: 'aup' \| 'timeline' \| 'this_month', target\?: \{ dateKey: string; occurrenceKeys: string\[\] \}\) \{[\s\S]{0,400}navigation\.navigate\('MoneyDetail', \{\s*scrollTo,\s*scrollToRequestId: focusRequestIdRef\.current,\s*targetDateKey: target\?\.dateKey,\s*targetOccurrenceKeys: target\?\.occurrenceKeys,\s*\}\);/.test(TODAY_SCREEN_SRC)
   );
 
   assert(

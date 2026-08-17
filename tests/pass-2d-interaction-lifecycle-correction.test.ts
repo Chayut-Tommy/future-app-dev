@@ -616,12 +616,12 @@ console.log('\n=== SECTION 5: Reliable AUP/timeline targeted navigation — real
   // 5c. A request stays pending (not fulfilled) before layout — no
   // hard-coded pixel offset, no timeout — until the target's own
   // measurement becomes available.
-  const beforeLayout = computeMoneySectionFocusFulfillment(aupReq, { aup: null, timeline: null });
+  const beforeLayout = computeMoneySectionFocusFulfillment(aupReq, { aup: null, timeline: null, this_month: null });
   assert('5c. AUP request remains pending (not fulfilled) before its section has reported layout', !beforeLayout.fulfilled && beforeLayout.scrollY === null);
 
   // 5d. Once measured, the SAME pending request is fulfilled with the exact
   // measured y — never a static/hard-coded number.
-  const afterLayout = computeMoneySectionFocusFulfillment(aupReq, { aup: 342, timeline: null });
+  const afterLayout = computeMoneySectionFocusFulfillment(aupReq, { aup: 342, timeline: null, this_month: null });
   assert('5d. once the AUP section reports layout (y=342), the SAME pending request is fulfilled with that exact measured y', afterLayout.fulfilled && afterLayout.scrollY === 342);
 
   // 5e. Stale/older requestIds cannot fulfil a newer request — the pending
@@ -632,8 +632,8 @@ console.log('\n=== SECTION 5: Reliable AUP/timeline targeted navigation — real
   // queued" contract MoneyScreen.tsx's own caller implements).
   const first = parseMoneySectionFocusRequest('aup', 10);
   const second = parseMoneySectionFocusRequest('aup', 11);
-  const resultForStale = computeMoneySectionFocusFulfillment(first, { aup: 100, timeline: null });
-  const resultForFresh = computeMoneySectionFocusFulfillment(second, { aup: 100, timeline: null });
+  const resultForStale = computeMoneySectionFocusFulfillment(first, { aup: 100, timeline: null, this_month: null });
+  const resultForFresh = computeMoneySectionFocusFulfillment(second, { aup: 100, timeline: null, this_month: null });
   assert(
     '5e. this module is a pure function of (pending, measurements) — a caller that always replaces its pending ref with the newest request (never queues) can never have a stale requestId fulfil a newer request, since only ONE pending value can ever exist at a time',
     resultForStale.fulfilled && resultForFresh.fulfilled && resultForStale.scrollY === resultForFresh.scrollY
@@ -647,20 +647,20 @@ console.log('\n=== SECTION 5: Reliable AUP/timeline targeted navigation — real
   const tap1 = parseMoneySectionFocusRequest('aup', 20);
   const tap2 = parseMoneySectionFocusRequest('aup', 21);
   assert('5f. two rapid taps on the same target produce two DISTINCT request objects (different requestId) — never treated as "no change"', tap1?.requestId !== tap2?.requestId);
-  const rapidResult = computeMoneySectionFocusFulfillment(tap2, { aup: 250, timeline: null });
+  const rapidResult = computeMoneySectionFocusFulfillment(tap2, { aup: 250, timeline: null, this_month: null });
   assert('5f-i. the LATEST of two rapid taps resolves deterministically to the one measured AUP position', rapidResult.fulfilled && rapidResult.scrollY === 250);
 
   // 5g. The timeline target is independently addressable — an aup
   // measurement alone does not fulfil a timeline request, and vice versa.
-  const timelinePending = computeMoneySectionFocusFulfillment(timelineReq, { aup: 999, timeline: null });
+  const timelinePending = computeMoneySectionFocusFulfillment(timelineReq, { aup: 999, timeline: null, this_month: null });
   assert('5g. a timeline request stays pending even when AUP is already measured — the two targets never cross-fulfil each other', !timelinePending.fulfilled);
-  const timelineFulfilled = computeMoneySectionFocusFulfillment(timelineReq, { aup: 999, timeline: 555 });
+  const timelineFulfilled = computeMoneySectionFocusFulfillment(timelineReq, { aup: 999, timeline: 555, this_month: null });
   assert('5g-i. the timeline request fulfils correctly once ITS OWN section measures', timelineFulfilled.fulfilled && timelineFulfilled.scrollY === 555);
 
   // 5h. No pending request at all -> never fulfilled, regardless of
   // measurements (an ordinary Money tab visit with fully-measured sections
   // must never spontaneously auto-scroll).
-  const noRequest = computeMoneySectionFocusFulfillment(null, { aup: 100, timeline: 200 });
+  const noRequest = computeMoneySectionFocusFulfillment(null, { aup: 100, timeline: 200, this_month: null });
   assert('5h. with no pending request, fulfilment is always false regardless of measurements — an ordinary Money tab visit never spontaneously scrolls', !noRequest.fulfilled);
 }
 

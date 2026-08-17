@@ -14,10 +14,13 @@ import { brand } from '../brand';
 // computeThisMonthRecordedSummary use. Extracted so there is exactly ONE
 // date-boundary implementation in this file, never two independently
 // maintained ones (PRD ask: "Do not introduce a second date filter").
-function monthToDateWindowStart(today: Date): Date {
+// Worth Knowing (Today, replacing Cashflow Focus) reuses these two exported
+// helpers for its own calendar-month category breakdown, rather than
+// re-deriving the month-to-date boundary a third time — see worthKnowing.ts.
+export function monthToDateWindowStart(today: Date): Date {
   return new Date(today.getFullYear(), today.getMonth(), 1);
 }
-function isWithinMonthToDate(dateISO: string, monthStart: Date, today: Date): boolean {
+export function isWithinMonthToDate(dateISO: string, monthStart: Date, today: Date): boolean {
   const d = new Date(dateISO);
   return d >= monthStart && d <= today;
 }

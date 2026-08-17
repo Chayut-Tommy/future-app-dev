@@ -257,16 +257,17 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   // --- Repeated-request support: requestId stamping ---
   // Pass 2E final correction — Score and Journey now push GrowDetail
   // (RootNavigator.tsx) instead of navigating within the Grow tab, via the
-  // new pushGrowDetail(scrollTo) helper; navigateToGrow itself is unchanged
-  // and still stamps a fresh id from the exact same shared counter for its
-  // remaining callers (Today's contextual-insight destinations, which never
-  // target 'score'/'journey' — see todayContextualInsight.ts). Every
-  // destination, pushed or in-tab, still goes through this one counter, so
-  // a fresh id is still stamped on every single focus request.
+  // new pushGrowDetail(scrollTo) helper. Worth Knowing correction round —
+  // navigateToGrow itself (the in-tab Grow-TAB path) was removed as dead
+  // code once its only caller, the old contextual-insight pool's
+  // safety_net/saving destinations, was retired from Today (see the
+  // single-selector correction). pushGrowDetail is now the ONLY Grow-bound
+  // focus-request issuer in TodayScreen.tsx, and it still stamps a fresh id
+  // from the same shared counter for both its destinations.
   assert(
-    'TodayScreen.tsx stamps every Grow-bound focus request (pushed or in-tab) with a fresh, monotonically increasing requestId from one shared counter',
+    'TodayScreen.tsx stamps every Grow-bound focus request with a fresh, monotonically increasing requestId from the shared counter — pushGrowDetail is now the only issuer, navigateToGrow was removed as dead code alongside its only caller',
     /const focusRequestIdRef = useRef\(0\);/.test(TODAY_SCREEN_SRC) &&
-      /function navigateToGrow\(scrollTo: string\) \{\s*focusRequestIdRef\.current \+= 1;\s*navigation\.navigate\('Grow', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);\s*\}/.test(TODAY_SCREEN_SRC) &&
+      !/function navigateToGrow/.test(TODAY_SCREEN_SRC) &&
       /function pushGrowDetail\(scrollTo: 'score' \| 'journey'\) \{[\s\S]{0,200}focusRequestIdRef\.current \+= 1;[\s\S]{0,200}navigation\.navigate\('GrowDetail', \{ scrollTo, scrollToRequestId: focusRequestIdRef\.current \}\);/.test(TODAY_SCREEN_SRC) &&
       /pushGrowDetail\('score'\);/.test(TODAY_SCREEN_SRC) &&
       /pushGrowDetail\('journey'\);/.test(TODAY_SCREEN_SRC)

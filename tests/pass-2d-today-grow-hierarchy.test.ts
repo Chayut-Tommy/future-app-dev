@@ -62,13 +62,22 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
   // The literal JSX tag, not the earlier doc-comment prose mention of
   // "Your goals" (plural, inside quotes) describing the goal-order source.
   const goalSnapshotIdx = TODAY_SCREEN_SRC.indexOf('>Your goal<');
-  // The literal onPress wiring inside the JSX, not the earlier function
-  // declaration in the component body (which necessarily appears before
-  // the JSX return block, regardless of where it's actually invoked).
-  const insightIdx = TODAY_SCREEN_SRC.indexOf('onPress={handleContextualInsightPress}');
+  // Correction round — the old `onPress={handleContextualInsightPress}`
+  // marker no longer exists (that handler/branch was removed along with the
+  // second, independently-eligible fallback selector). `worthKnowingInsight
+  // ? (` is the equivalent landmark for the now-single-selector slot.
+  const insightIdx = TODAY_SCREEN_SRC.indexOf('worthKnowingInsight ? (');
 
   assert('all six hierarchy landmarks are found in source (fixture sanity)', [greetingIdx, briefingIdx, journeyIdx, monthIdx, goalSnapshotIdx, insightIdx].every((i) => i !== -1));
-  assert('Today renders the six target sections in the correct order: greeting -> briefing -> journey -> this month -> goal snapshot -> contextual insight', greetingIdx < briefingIdx && briefingIdx < journeyIdx && journeyIdx < monthIdx && monthIdx < goalSnapshotIdx && goalSnapshotIdx < insightIdx);
+  // Worth Knowing round — the approved Today hierarchy moved the
+  // contextual-insight slot to sit BEFORE the goal snapshot (Worth Knowing
+  // is position 4, Goal is position 5), reversing this pass's original
+  // goal-then-insight order. See tests/worth-knowing.test.ts for the
+  // dedicated, current-state ordering proof and the new slot's own
+  // behaviour; this assertion is corrected in place (not deleted) so this
+  // file stays truthful about the shipped order rather than silently going
+  // stale.
+  assert('Today renders the six target sections in the correct order: greeting -> briefing -> journey -> this month -> contextual insight -> goal snapshot', greetingIdx < briefingIdx && briefingIdx < journeyIdx && journeyIdx < monthIdx && monthIdx < insightIdx && insightIdx < goalSnapshotIdx);
   assert(
     // Correction pass — this assertion previously only checked that
     // MoneyPictureChecklistCard's tag fell somewhere between journeyIdx and
@@ -91,27 +100,39 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
     })()
   );
   assert(
-    'the locked-Score unlock prompt and the money-picture checklist are genuinely preserved (same UNLOCK_COPY.lulu_score/MoneyPictureChecklistCard, same onAction/eligibility, no calculation or persistence change) but repositioned strictly after the contextual-insight slot (6) — never interleaved between any of the six canonical sections',
+    'the locked-Score unlock prompt and the money-picture checklist are genuinely preserved (same UNLOCK_COPY.lulu_score/MoneyPictureChecklistCard, same onAction/eligibility, no calculation or persistence change) but repositioned strictly after the goal snapshot — never interleaved between any of the six canonical sections',
     (() => {
-      const insightBlockEnd = TODAY_SCREEN_SRC.indexOf(') : null}', insightIdx);
       const unlockScoreIdx = TODAY_SCREEN_SRC.indexOf('UNLOCK_COPY.lulu_score.icon');
       const checklistIdx = TODAY_SCREEN_SRC.indexOf('<MoneyPictureChecklistCard');
       return (
-        insightBlockEnd !== -1 &&
-        unlockScoreIdx > insightBlockEnd &&
-        checklistIdx > insightBlockEnd &&
+        unlockScoreIdx > goalSnapshotIdx &&
+        checklistIdx > goalSnapshotIdx &&
         /onAction=\{\(\) => setIncomeModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC)
       );
     })()
   );
-  assert('one compact goal snapshot follows This Month — a single primaryActiveGoal lookup (first active goal, unsorted, the existing canonical order), not a rendered list/map over multiple goals', /const primaryActiveGoal = data\.goals\.find\(\(g\) => g\.status === 'active'\) \?\? null;/.test(TODAY_SCREEN_SRC) && !/visibleGoals\.map|activeGoals\.map/.test(TODAY_SCREEN_SRC));
+  assert('one compact goal snapshot follows the contextual-insight slot — a single primaryActiveGoal lookup (first active goal, unsorted, the existing canonical order), not a rendered list/map over multiple goals', /const primaryActiveGoal = data\.goals\.find\(\(g\) => g\.status === 'active'\) \?\? null;/.test(TODAY_SCREEN_SRC) && !/visibleGoals\.map|activeGoals\.map/.test(TODAY_SCREEN_SRC));
   assert(
-    'zero contextual insights produces no empty gap — the insight block is a single ternary that renders null in the else branch, not an always-mounted card with an empty interior',
-    /financialState\.key !== 'standard' \? \(\s*<FinancialStateCard/.test(TODAY_SCREEN_SRC) && /\) : contextualInsight \? \(/.test(TODAY_SCREEN_SRC) && /\) : null\}/.test(TODAY_SCREEN_SRC)
+    // Correction round — the insight slot is now a genuine two-tier tree,
+    // not a three-way ternary: Financial Rebuild overrides everything,
+    // otherwise `pickWorthKnowingInsight` (worthKnowing.ts's single
+    // exported decision function, called once as `worthKnowingInsight`) is
+    // the ONLY thing that can occupy the slot. There is no second,
+    // independently-eligible `contextualInsight` fallback branch any more —
+    // its removal is the direct fix for the "two competing selectors glued
+    // by view-layer ternary priority" defect. See tests/worth-knowing.test.ts
+    // for the calculation-level proof that showFinancialRebuild ===
+    // (financialState.key === 'financial_rebuild').
+    'zero eligible content produces no empty gap — the insight block is a single two-tier tree (Financial Rebuild -> Worth Knowing -> null), never a second independently-eligible fallback card',
+    /showFinancialRebuild \? \(\s*<FinancialStateCard/.test(TODAY_SCREEN_SRC) &&
+      /\) : worthKnowingInsight \? \(/.test(TODAY_SCREEN_SRC) &&
+      /\) : null\}/.test(TODAY_SCREEN_SRC) &&
+      !/contextualInsight/.test(TODAY_SCREEN_SRC) &&
+      !/<LuluCheckInCard/.test(TODAY_SCREEN_SRC)
   );
-  assert('one contextual insight appears after the goal snapshot (position 6, the final section)', (() => {
-    const block = TODAY_SCREEN_SRC.slice(goalSnapshotIdx);
-    return block.indexOf('contextualInsight') !== -1;
+  assert('the contextual-insight slot (Financial Rebuild / Worth Knowing / null) appears before the goal snapshot — the approved Worth Knowing hierarchy, reversing this pass\'s original goal-then-insight order', (() => {
+    const block = TODAY_SCREEN_SRC.slice(0, goalSnapshotIdx);
+    return block.indexOf('worthKnowingInsight') !== -1 && block.indexOf('showFinancialRebuild') !== -1;
   })());
   assert('Savings Coach is absent as a standalone Today card — no SavingsCoachCard import or mount in TodayScreen.tsx', !/SavingsCoachCard/.test(TODAY_SCREEN_SRC));
   assert('Money Fact is absent from Today — no SavingFactsCard import or mount in TodayScreen.tsx', !/SavingFactsCard/.test(TODAY_SCREEN_SRC));
@@ -145,7 +166,13 @@ console.log('\n=== GOALS (Structural + real import) ===');
   assert('goal progress/allocation calculation itself is unchanged and callable — real function proof, not a re-derived value', allocation.allocations.length === 1 && allocation.allocations[0].goal.id === 'g1');
 }
 
-console.log('\n=== CONTEXTUAL INSIGHT (real import) ===');
+// Correction round — pickTodayContextualInsight/buildInsightPool are no
+// longer called from TodayScreen.tsx at all (see the Worth Knowing
+// correction round's single-selector fix). The real-import proofs below
+// remain valid coverage of those functions themselves (they still exist,
+// still work, and tests/worth-knowing.test.ts's own real-import tests don't
+// duplicate them) — they are no longer proof of anything Today renders.
+console.log('\n=== CONTEXTUAL INSIGHT (real import — no longer wired to Today) ===');
 {
   // 1. Emergency-savings insight is factual and data-supported.
   {
@@ -359,16 +386,30 @@ console.log('\n=== FOCUS NAVIGATION (real import) ===');
     /function handleScoreChipPress\(\) \{\s*pushGrowDetail\('score'\);\s*\}/.test(TODAY_SCREEN_SRC) && /function handleJourneyPress\(\) \{\s*pushGrowDetail\('journey'\);\s*\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
-    "'safety_net' and 'saving' each have a real issuer — TodayScreen's contextual-insight tap delegates to pickTodayContextualInsight's own destination.target, which is typed to only ever be 'safety_net' or 'saving'",
-    /destination\.kind === 'grow_focus'\) navigateToGrow\(contextualInsight\.destination\.target\)/.test(TODAY_SCREEN_SRC) &&
-      /TodayContextualInsightDestination = \{ kind: 'grow_focus'; target: 'safety_net' \| 'saving' \}/.test(readFileSync('src/lib/calculations/todayContextualInsight.ts', 'utf8'))
+    // Correction round — pickTodayContextualInsight (and its
+    // 'safety_net'/'saving' destinations) is no longer called from
+    // TodayScreen.tsx at all: `navigateToGrow` and `handleContextualInsightPress`
+    // were removed together as dead code once the second, independently-
+    // eligible fallback selector was retired (see the Worth Knowing
+    // correction round). 'safety_net' and 'saving' join 'goals'/'learning'
+    // below as dead/unreachable Grow section-focus infrastructure from
+    // Today's perspective — the type itself (TodayContextualInsightDestination)
+    // still exists and is still real-import tested above, it simply has no
+    // live issuer anywhere in the app any more.
+    // Matches the same precise pattern the LuluRecommendationCard check
+    // below already uses (real import/call-site forms only, not prose that
+    // documents the removal by name) rather than a blanket string-absence
+    // check, which a doc comment explaining what was removed and why would
+    // otherwise always fail.
+    "'safety_net' and 'saving' are now ALSO dead infrastructure — TodayScreen.tsx no longer imports pickTodayContextualInsight, and no longer declares navigateToGrow or handleContextualInsightPress",
+    !/^import.*pickTodayContextualInsight/m.test(TODAY_SCREEN_SRC) &&
+      !/function navigateToGrow/.test(TODAY_SCREEN_SRC) &&
+      !/function handleContextualInsightPress/.test(TODAY_SCREEN_SRC) &&
+      !/onPress=\{handleContextualInsightPress\}/.test(TODAY_SCREEN_SRC)
   );
   assert(
     "'goals' and 'learning' are dead infrastructure as of this pass — typed, parsed, fulfilled, and measured (onLayout wiring exists in DiscoverScreen.tsx) but NO real onPress/navigateToGrow call site anywhere in the app issues either target. This is intentional plumbing built to satisfy the spec's typed-target requirement, not yet reachable by any customer action, and must not be reported or device-tested as reachable behaviour.",
-    !/navigateToGrow\('goals'\)/.test(TODAY_SCREEN_SRC) &&
-      !/navigateToGrow\('learning'\)/.test(TODAY_SCREEN_SRC) &&
-      !/navigateToGrow\('goals'\)/.test(DISCOVER_SCREEN_SRC) &&
-      !/navigateToGrow\('learning'\)/.test(DISCOVER_SCREEN_SRC)
+    !/navigateToGrow\('goals'\)/.test(DISCOVER_SCREEN_SRC) && !/navigateToGrow\('learning'\)/.test(DISCOVER_SCREEN_SRC)
   );
   assert(
     "'financial-learning' also has zero real issuers as of this pass — its only historical issuer, LuluRecommendationCard, was retired from Today by this pass's own relocation work, and nothing else in the app fires this target. Pre-existing plumbing, left intact per CLAUDE.md's scope-preservation rule (removing an existing typed target/measurement is an unauthorised deletion), but must be reported accurately as currently unreachable, not as tested customer behaviour.",

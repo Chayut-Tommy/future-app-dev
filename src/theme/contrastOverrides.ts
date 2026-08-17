@@ -48,3 +48,30 @@ export const HERO_SCRIM_OPACITY: Record<NaviloColorStyle, Record<'light' | 'dark
   purple: { light: 0.3, dark: 0.14 },
   sunrise: { light: 0.58, dark: 0.49 },
 };
+
+/**
+ * Worth Knowing correction round — WorthKnowingCard's own provenance line
+ * ("Based on what you've recorded") drew rgba(255,255,255,0.65) directly
+ * over palettes.ts's MUTED_INSIGHT_GRADIENT (naviloPalette.aiInsightSurfaceStart/
+ * End) with no scrim. A device test in the Sunrise/light style found the
+ * line "too faint" — confirmed genuine: the gradient's lighter (end) stop
+ * fails 4.5:1 at that opacity in 2 of the 6 style/scheme combinations —
+ * blue/light (4.30:1) and sunrise/light (3.51:1, the one the device test
+ * actually hit). Every other text weight on this card (label/headline/cta
+ * at full opacity, body at 0.85) already clears 4.5:1 in all 6 combinations
+ * and is untouched.
+ *
+ * Unlike HERO_SCRIM_OPACITY (a per-style/scheme scrim UNDER white text on a
+ * vivid, fast-sweeping gradient), this fix is a single flat opacity applied
+ * TO the text itself: MUTED_INSIGHT_GRADIENT's own stops are already close
+ * together in luminance within each style/scheme (a "muted... lower-
+ * saturation pair," per palettes.ts's own doc comment), so one value clears
+ * the worst case (sunrise/light) with margin (4.61:1 measured) while easily
+ * clearing every less-demanding combination too — a per-style/scheme table
+ * would add complexity this gradient pair doesn't need. Deliberately below
+ * INSIGHT_BODY_OPACITY (0.85, already-shipped and unchanged) so the
+ * provenance line stays visually the most subordinate text on the card,
+ * exactly as the original 0.65 intended — this raises it only as far as
+ * contrast requires, not up to body weight.
+ */
+export const INSIGHT_PROVENANCE_OPACITY = 0.83;

@@ -13,7 +13,6 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
-import { LuluCheckInCard } from '../../components/today/LuluCheckInCard';
 import { FinancialStateCard } from '../../components/today/FinancialStateCard';
 import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
@@ -29,8 +28,10 @@ import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
 import { useFinancialState } from '../../lib/calculations/financialState';
 import { computeAchievements } from '../../lib/calculations/achievements';
-import { pickTodayContextualInsight } from '../../lib/calculations/todayContextualInsight';
-import { timeAwareGreeting, computeCheckInLine } from '../../lib/calculations/greeting';
+import { pickWorthKnowingInsight } from '../../lib/calculations/worthKnowing';
+import { WorthKnowingCard } from '../../components/today/WorthKnowingCard';
+import { eventOccurrenceIdentity, reminderOccurrenceIdentity, occurrenceIdentityKey } from '../../lib/calculations/todayBriefing';
+import { timeAwareGreeting } from '../../lib/calculations/greeting';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
@@ -148,41 +149,55 @@ export function TodayScreen() {
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const journeySnapshot = useMemo(() => computeJourneySnapshot(achievements), [achievements]);
-  // Pass 2D — Today's single contextual-insight slot (final hierarchy §6).
-  // Only computed/shown when the financial state is standard — a non-
-  // standard state (cashflow tight / rebuilding) takes override priority
-  // over this slot entirely (see the JSX below), the same mutual-
-  // exclusivity the pre-Pass-2D FinancialStateCard/LuluRecommendationCard
-  // pairing already had. Still deduplicated against Journey's own "next
-  // milestone" via the exact same achievement-id comparison Pass 2B
-  // established (journeySnapshot.next?.id) — see
-  // todayContextualInsight.ts's own doc comment for why milestone/score
-  // entries are never eligible for this slot at all, by construction.
-  const contextualInsight = useMemo(
-    () => (financialState.key === 'standard' ? pickTodayContextualInsight(data, journeySnapshot.next?.id ?? null) : null),
-    [financialState.key, data, journeySnapshot.next]
+  // Worth Knowing round — Cashflow Focus's Today presentation is retired;
+  // Financial Rebuild (negative net wealth, a materially more serious state)
+  // is the only financialState key that still overrides the single
+  // contextual-insight slot below. financialState.ts/computeFinancialState/
+  // describeFinancialStateForWealthMap are completely unchanged — this is a
+  // Today-presentation-only narrowing (approved decision: preserve Wealth
+  // Map's own cashflow_focus copy untouched).
+  const showFinancialRebuild = financialState.key === 'financial_rebuild';
+
+  // Correction round — Today's single contextual-insight slot is now
+  // genuinely a two-tier tree with exactly ONE selector call: Financial
+  // Rebuild (above) overrides everything; otherwise `pickWorthKnowingInsight`
+  // — worthKnowing.ts's single exported decision function — is the ONLY
+  // thing that can occupy this slot. The pre-existing todayContextualInsight
+  // pool (emergency savings / savings-rate / goalImpact) and LuluCheckInCard
+  // are no longer called from Today at all — they were a second,
+  // independently-computed selector glued to this slot only by JSX ternary
+  // priority, which is not "one engine" merely because the two render into
+  // the same visual position (see worthKnowing.ts's own header comment).
+  // When pickWorthKnowingInsight returns null, this slot renders nothing —
+  // no generic fallback card — and Goal follows August so far directly.
+  // todayContextualInsight.ts/dailyInsight.ts/LuluCheckInCard.tsx remain in
+  // the repository (their own real-import tests still cover them) but are
+  // dead code from Today's perspective as of this round.
+
+  // Worth Knowing — what Today Briefing already shows, built from the exact
+  // same eventRows/topReminder Briefing itself renders (never re-derived
+  // independently), so Worth Knowing can never disagree with Briefing about
+  // what's already visible (spec §19). eventOccurrenceIdentity/
+  // occurrenceIdentityKey are the same identity primitives Briefing's own
+  // dedup (todayBriefing.ts) already uses against reminders/candidate
+  // events.
+  const worthKnowingContext = useMemo(() => {
+    const shownEventKeys = new Set<string>();
+    for (const row of briefingEventRows) {
+      const event = timelineEvents.find((e) => e.id === row.key);
+      if (!event) continue;
+      const key = occurrenceIdentityKey(eventOccurrenceIdentity(event));
+      if (key) shownEventKeys.add(key);
+    }
+    const reminderKey = topReminder ? occurrenceIdentityKey(reminderOccurrenceIdentity(topReminder)) : null;
+    return { shownEventKeys, reminderKey };
+  }, [briefingEventRows, timelineEvents, topReminder]);
+
+  const worthKnowingInsight = useMemo(
+    () => (!showFinancialRebuild ? pickWorthKnowingInsight(data, currentDate, timelineEvents, safeToSpend, worthKnowingContext) : null),
+    [showFinancialRebuild, data, currentDate, timelineEvents, safeToSpend, worthKnowingContext]
   );
 
-  // Real, in-session signal for "the user just did something" — not a
-  // fabricated claim (PRD ask: Lulu's check-in line must stay honest about
-  // what it's actually done).
-  const dataFingerprint = `${data.user.monthlyIncome}|${data.assets.length}|${data.liabilities.length}|${data.creditCards.length}|${data.goals.length}|${data.transactions.length}|${data.recurringItems.length}`;
-  const [actedThisSession, setActedThisSession] = useState(false);
-  const dataFingerprintRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (dataFingerprintRef.current === null) {
-      dataFingerprintRef.current = dataFingerprint;
-      return;
-    }
-    if (dataFingerprint !== dataFingerprintRef.current) {
-      dataFingerprintRef.current = dataFingerprint;
-      setActedThisSession(true);
-    }
-  }, [dataFingerprint]);
-  const checkInLine = useMemo(
-    () => computeCheckInLine({ firstOpenedAt: data.user.firstOpenedAt, actedThisSession }),
-    [data.user.firstOpenedAt, actedThisSession]
-  );
   // Pass 2D — the single active-goal snapshot (final hierarchy §3). The
   // exact same source and order Grow's own "Your goals" list already
   // reads (data.goals, creation order, no new ranking rule) — just the
@@ -297,10 +312,11 @@ export function TodayScreen() {
   // same section would navigate with an identical params object and React
   // Navigation would treat it as no change, silently swallowing the repeat
   // tap. The id makes every intentional tap a genuine, detectable change,
-  // even back-to-back taps on the exact same section. Still shared by every
-  // destination below — both the pushed MoneyDetail/GrowDetail routes
-  // (Pass 2E final correction) and the unrelated in-tab Grow contextual-
-  // insight/goal-snapshot destinations that navigateToGrow still serves.
+  // even back-to-back taps on the exact same section. Shared by the pushed
+  // MoneyDetail/GrowDetail routes below (Pass 2E final correction). The
+  // in-tab Grow navigateToGrow() destinations this comment used to also
+  // describe were removed in the Worth Knowing correction round alongside
+  // their only caller, handleContextualInsightPress.
   const focusRequestIdRef = useRef(0);
 
   // Pass 2E final correction (destination-reveal replacement) — guards
@@ -329,11 +345,24 @@ export function TodayScreen() {
   // section-focus effect already consumes (sectionFocus.ts/
   // moneySectionFocus.ts, unchanged) — only the destination ROUTE name
   // changed, not the focus-request contract itself.
-  function pushMoneyDetail(scrollTo: 'aup' | 'timeline') {
+  // Correction round — `target` is optional and additive: the pre-existing
+  // AUP/event-row/this_month callers below all still call this with a
+  // single argument, completely unaffected. Only Worth Knowing's WK-01/
+  // WK-02 destinations (handleWorthKnowingPress) supply one, so Money's
+  // own inner-timeline scroll (moneyTimeline's own SCROLL_BOX_HEIGHT once
+  // "What happens next" exceeds a handful of events — see
+  // MoneyTimelineCard.tsx/timelineFocus.ts) can land on the exact date
+  // group an insight is about, not merely the section heading.
+  function pushMoneyDetail(scrollTo: 'aup' | 'timeline' | 'this_month', target?: { dateKey: string; occurrenceKeys: string[] }) {
     if (navigatingToDetailRef.current) return;
     navigatingToDetailRef.current = true;
     focusRequestIdRef.current += 1;
-    navigation.navigate('MoneyDetail', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
+    navigation.navigate('MoneyDetail', {
+      scrollTo,
+      scrollToRequestId: focusRequestIdRef.current,
+      targetDateKey: target?.dateKey,
+      targetOccurrenceKeys: target?.occurrenceKeys,
+    });
   }
   function pushGrowDetail(scrollTo: 'score' | 'journey') {
     if (navigatingToDetailRef.current) return;
@@ -360,33 +389,44 @@ export function TodayScreen() {
   // pending-focus mechanism — see DiscoverScreen.tsx), never a hard-coded
   // pixel offset and never a new duplicate Score/Journey screen.
   //
-  // navigateToGrow (in-tab, unrelated targets only) — still used exactly as
-  // before by handleContextualInsightPress below for its own
-  // safety_net/saving/learning/goals/financial-learning destinations, which
-  // remain out of this pass's scope and must keep navigating to the Grow
-  // TAB, not a pushed route. Score and Journey are no longer routed through
-  // it (see pushGrowDetail above) — pickTodayContextualInsight never
-  // targets 'score'/'journey' (see that module's own doc comment), so the
-  // two mechanisms never compete for the same destination.
-  function navigateToGrow(scrollTo: string) {
-    focusRequestIdRef.current += 1;
-    navigation.navigate('Grow', { scrollTo, scrollToRequestId: focusRequestIdRef.current });
-  }
+  // Correction round — navigateToGrow (in-tab Grow-TAB navigation, distinct
+  // from pushGrowDetail's pushed-route destinations) was previously also
+  // used by handleContextualInsightPress for the old contextual-insight
+  // pool's safety_net/saving destinations. That pool is no longer called
+  // from Today (see the single-selector correction above), so navigateToGrow
+  // itself is removed as dead code alongside its only caller — Grow's own
+  // section-focus targets ('safety_net', 'saving', 'goals', 'learning',
+  // 'financial-learning') are all now dead/unreachable infrastructure from
+  // Today, same status the other three already had per this file's sibling
+  // structural test (tests/pass-2d-today-grow-hierarchy.test.ts).
   function handleScoreChipPress() {
     pushGrowDetail('score');
   }
   function handleJourneyPress() {
     pushGrowDetail('journey');
   }
-  // Pass 2D — the one contextual insight's own destination, computed by
-  // pickTodayContextualInsight (see that module's own doc comment for the
-  // three-source priority this reuses). 'transactions' routes to the exact
-  // same screen the retired LuluRecommendationCard's review_spending action
-  // already used for this identical goalImpact entry.
-  function handleContextualInsightPress() {
-    if (!contextualInsight) return;
-    if (contextualInsight.destination.kind === 'grow_focus') navigateToGrow(contextualInsight.destination.target);
-    else navigation.navigate('Transactions');
+
+  // Worth Knowing's own destination — reuses pushMoneyDetail's existing
+  // pushed-route mechanism (Pass 2E) for both Money-section destinations
+  // (timeline for WK-01/WK-02, this_month for WK-04); WK-03 (category
+  // concentration) routes to the same existing Transactions screen every
+  // other Today/Money "view spending" destination already uses.
+  function handleWorthKnowingPress() {
+    if (!worthKnowingInsight) return;
+    const destination = worthKnowingInsight.destination;
+    if (destination.kind === 'money_section') {
+      // Correction round — the 'timeline' destination (WK-01/WK-02) always
+      // carries its own targetDateKey/targetOccurrenceKeys (worthKnowing.ts's
+      // own type contract), built from the exact same data its materiality/
+      // count already used — passed straight through, never re-derived here.
+      if (destination.section === 'timeline') {
+        pushMoneyDetail('timeline', { dateKey: destination.targetDateKey, occurrenceKeys: destination.targetOccurrenceKeys });
+      } else {
+        pushMoneyDetail(destination.section);
+      }
+    } else {
+      navigation.navigate('Transactions');
+    }
   }
 
   const styles = useMemo(
@@ -503,7 +543,32 @@ export function TodayScreen() {
       </View>
       <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
 
-      {/* 5. Compact goal snapshot (Pass 2D) — exactly one active-goal
+      {/* 5. Contextual insight slot — Worth Knowing round. A genuine
+          two-tier tree, exactly one selector call deep: Financial Rebuild
+          (negative net wealth) overrides everything — the same
+          established, unmodified computeFinancialState signal and
+          FinancialStateCard presentation Today already used for that
+          state. Otherwise `worthKnowingInsight` (pickWorthKnowingInsight,
+          worthKnowing.ts's single exported decision function) is the ONLY
+          thing that can occupy this slot. There is no second,
+          independently-eligible fallback card — when worthKnowingInsight is
+          null, this slot renders nothing at all, and Goal (below) follows
+          August so far directly. See worthKnowing.ts's own header comment
+          for the full architecture rationale. */}
+      {showFinancialRebuild ? (
+        <FinancialStateCard state={financialState} actions={financialStateActions} hasActiveGoal={hasActiveGoal} />
+      ) : worthKnowingInsight ? (
+        <TouchableOpacity
+          onPress={handleWorthKnowingPress}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`Worth Knowing. ${worthKnowingInsight.title}. ${worthKnowingInsight.body} ${worthKnowingInsight.ctaLabel}.`}
+        >
+          <WorthKnowingCard insight={worthKnowingInsight} />
+        </TouchableOpacity>
+      ) : null}
+
+      {/* 6. Compact goal snapshot (Pass 2D) — exactly one active-goal
           summary, or one clear empty action; replaces the previous
           full-list-with-inline-quick-contribute-buttons presentation. The
           same existing goal source/order (data.goals, unsorted, first
@@ -512,7 +577,8 @@ export function TodayScreen() {
           nothing accepted is lost — only the long inline Today treatment
           is gone). Achieved/archived goals are never shown here (status
           filter is 'active' only, the exact same filter Grow's own list
-          already used). */}
+          already used). Worth Knowing round — moved to follow the
+          contextual-insight slot (5), per the approved Today hierarchy. */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle} accessibilityRole="header">Your goal</Text>
       </View>
@@ -554,24 +620,6 @@ export function TodayScreen() {
           onAction={() => setGoalModalVisible(true)}
         />
       )}
-
-      {/* 6. Contextual insight — zero or one only (Pass 2D). A non-standard
-          financial state (cashflow tight / rebuilding) takes override
-          priority over this slot — the same established, unmodified
-          computeFinancialState signal and FinancialStateCard presentation
-          Today already used, just repositioned into this final slot rather
-          than an earlier "recommendation" position. Otherwise, at most one
-          of the three established insight sources (emergency savings,
-          savings-rate, or an existing factual daily insight) renders via
-          the existing LuluCheckInCard presentation — nothing shows here at
-          all when neither applies, so no empty gap is left. */}
-      {financialState.key !== 'standard' ? (
-        <FinancialStateCard state={financialState} actions={financialStateActions} hasActiveGoal={hasActiveGoal} />
-      ) : contextualInsight ? (
-        <TouchableOpacity onPress={handleContextualInsightPress} activeOpacity={0.8} accessibilityRole="button" accessibilityHint="Opens the related section">
-          <LuluCheckInCard topLine={checkInLine.topLine} insight={contextualInsight} />
-        </TouchableOpacity>
-      ) : null}
 
       {/* Correction pass — recovery/first-run affordances (locked Score,
           incomplete first-run money picture) are genuinely necessary
