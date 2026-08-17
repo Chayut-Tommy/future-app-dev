@@ -39,7 +39,7 @@ function statusColor(colors: ReturnType<typeof useTheme>['colors'], status: Fact
  * sheet only formats and explains, never recalculates (PRD §A12).
  */
 export function ScoreExplanationSheet({ visible, onClose, result }: { visible: boolean; onClose: () => void; result: LuluScoreResult }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
   const { data } = useAppState();
   const movement = useMemo(() => (visible ? computeScoreMovement(data, result) : null), [visible, data, result]);
@@ -48,7 +48,7 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -90,7 +90,7 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
         closeText: { color: colors.textSecondary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom]
   );
 
   return (

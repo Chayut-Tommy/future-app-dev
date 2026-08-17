@@ -12,6 +12,7 @@ import { RootNavigator } from './src/navigation/RootNavigator';
 import i18n, { resolveDeviceLanguage } from './src/i18n';
 import { UnsavedChangesBanner } from './src/components/shared/UnsavedChangesBanner';
 import { ResetPendingOverlay } from './src/components/shared/ResetPendingOverlay';
+import { useFontBootstrap } from './src/theme/fonts';
 
 function AppShell() {
   const { colors, scheme } = useTheme();
@@ -61,6 +62,14 @@ function AppShell() {
 }
 
 export default function App() {
+  // Design 5.1 Wave 1A — locale-aware font bootstrap. The native splash is
+  // held only while loading is genuinely pending; on success or on failure
+  // it is released and the tree mounts. A font failure renders the app on
+  // platform defaults rather than blocking launch (handoff §8.1), so there
+  // is no timeout branch here by design.
+  const { shouldRenderApp } = useFontBootstrap();
+  if (!shouldRenderApp) return null;
+
   return (
     <SafeAreaProvider>
       <AppStateProvider>

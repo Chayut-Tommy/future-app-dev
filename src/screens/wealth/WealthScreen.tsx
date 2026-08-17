@@ -24,6 +24,7 @@ import { InfoSheet } from '../../components/shared/InfoSheet';
 import { getUnlockStatus } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType, CreditCard, Liability, LiabilityType } from '../../types/models';
+import { ON_FEATURED_POSITIVE, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 function formatMoney(value: number): string {
   const sign = value < 0 ? '-' : '';
@@ -155,24 +156,24 @@ export function WealthScreen() {
       StyleSheet.create({
         hero: { borderRadius: radius.card, padding: spacing.xl, marginBottom: spacing.md, ...glow(colors.navy) },
         heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-        heroLabel: { ...typography.micro, color: 'rgba(255,255,255,0.7)', marginBottom: 2 },
+        heroLabel: { ...typography.micro, color: onFeaturedAlpha(0.7), marginBottom: 2 },
         heroValue: { ...typography.title, fontSize: 38, color: colors.onNavy },
-        heroDeltaLabel: { ...typography.micro, fontSize: 10, color: 'rgba(255,255,255,0.7)', marginTop: spacing.sm, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
-        heroDelta: { ...typography.caption, fontSize: 13, marginTop: 2, color: 'rgba(255,255,255,0.85)' },
-        heroDeltaTap: { ...typography.micro, fontSize: 10, color: 'rgba(255,255,255,0.6)', fontWeight: '600' },
+        heroDeltaLabel: { ...typography.micro, fontSize: 10, color: onFeaturedAlpha(0.7), marginTop: spacing.sm, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
+        heroDelta: { ...typography.caption, fontSize: 13, marginTop: 2, color: onFeaturedAlpha(0.85) },
+        heroDeltaTap: { ...typography.micro, fontSize: 10, color: onFeaturedAlpha(0.6), fontWeight: '600' },
         breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
         breakdownLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
         breakdownValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        heroSupportive: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, color: 'rgba(255,255,255,0.85)', lineHeight: 18 },
+        heroSupportive: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, color: onFeaturedAlpha(0.85), lineHeight: 18 },
         heroSplitRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
         heroSplitBlock: {},
-        heroSplitLabel: { ...typography.micro, fontSize: 10, color: 'rgba(255,255,255,0.65)', marginBottom: 1 },
+        heroSplitLabel: { ...typography.micro, fontSize: 10, color: onFeaturedAlpha(0.65), marginBottom: 1 },
         heroSplitValue: { ...typography.heading, fontSize: 15, color: colors.onNavy },
         transferButton: {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 4,
-          backgroundColor: 'rgba(255,255,255,0.15)',
+          backgroundColor: onFeaturedAlpha(0.15),
           borderRadius: radius.pill,
           paddingVertical: 8,
           paddingHorizontal: spacing.md,
@@ -275,7 +276,7 @@ export function WealthScreen() {
             </View>
             <TouchableOpacity onPress={() => setWealthChangeSheetVisible(true)} activeOpacity={0.7}>
               <Text style={styles.heroDeltaLabel}>Estimated wealth change this month</Text>
-              <Text style={[styles.heroDelta, { color: plan.available >= 0 ? '#8FE0B8' : 'rgba(255,255,255,0.85)' }]}>
+              <Text style={[styles.heroDelta, { color: plan.available >= 0 ? ON_FEATURED_POSITIVE : onFeaturedAlpha(0.85) }]}>
                 {plan.available >= 0 ? '+' : ''}
                 {formatMoney(plan.available)}
                 <Text style={styles.heroDeltaTap}>  Tap for breakdown</Text>

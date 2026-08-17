@@ -22,13 +22,13 @@ export function InfoSheet({
   subtitle?: string;
   children: React.ReactNode;
 }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -43,7 +43,7 @@ export function InfoSheet({
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
         closeText: { color: colors.textSecondary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom]
   );
 
   return (

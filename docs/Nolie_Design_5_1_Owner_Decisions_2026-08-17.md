@@ -76,6 +76,126 @@ These are owner decisions. They override the plan's recommendations where they d
 
 There must be no calculation, persistence, navigation, Add, compliance-copy or customer-visible screen-composition change in Wave 1A.
 
+---
+
+## Implementation note — verified Wave 1B baseline (added 17 Aug 2026)
+
+This note records verified measurements only. **It does not change any owner policy above.**
+
+### Raw-colour baseline: 76 literals / 17 files → corrected to **74 / 16**
+
+Plan §C.2 lists **12 principal files** for colour migration. The Wave 1A scan reported **76 literals across 17 files**. Both figures are reconciled as follows:
+
+- The 5 additional files are the **"remainder" §C.2 already anticipates** ("Remainder — audit during W1"): `ScoreExplanationSheet.tsx`, `AskLuluSheet.tsx`, `DatePickerModal.tsx`, `InfoSheet.tsx`, `OptionsSheet.tsx`, `DebtCoachSheet.tsx` — each carrying a single sheet-backdrop scrim.
+- **Two of the 76 were false positives.** `MainTabNavigator.tsx` contained no colour at all: `#12755` and `#39514` are GitHub issue references in a comment, matched because the Wave 1A scanner used `#[0-9A-Fa-f]{3,8}`. A valid CSS/RN hex colour is exactly 3, 4, 6 or 8 digits, never 5.
+- One further match (`KeyboardSheet.tsx`) was a colour named inside a comment, not applied styling.
+
+**Verified baseline: 74 literals across 16 files, of which 73 were applied.** `MainTabNavigator.tsx` required no change and was not edited. The enforcement gate now uses strict hex lengths and strips comments before scanning.
+
+### Wave 1B delivery status against §5
+
+| §5 item | Status |
+|---|---|
+| 1. Feature-file colour migration | **Complete** — 0 raw colours outside `src/theme` |
+| 5. Zero-raw-colour enforcement | **Complete** — debt-budget ratchet replaced by an absolute gate |
+| 2. Global font-consumer migration | **Blocked** — see below |
+| 3. Legacy token deletion | **Blocked** — see below |
+| 4. `contrastOverrides.ts` retirement | **Blocked** — see below |
+
+### Blocker A — global font migration requires a 173-site weight-override conversion
+
+Giving the legacy `typography` roles a locale-aware `fontFamily` centrally in `ThemeContext` migrates all **549** `...typography.<role>` spreads with no call-site change. However **173 styles across 68 files** spread a role and then override `fontWeight`. Once the role carries a fixed-weight family (e.g. `Figtree_700Bold`), a local `fontWeight: '600'` cannot be honoured — iOS ignores the weight for a named family and Android synthesises it. Shipping the central change alone would render **90 sites at 700 that are currently 600**, a visible regression across Today, Money, Wealth, Grow and the Add forms.
+
+The central wiring was implemented, measured, and **reverted** rather than shipped half-complete. Completing it requires converting all 173 sites to declare the matching family — a mechanical but 68-file style pass, including screens and Add form components.
+
+**Additionally, 8 of those sites use `fontWeight: '800'`.** Design 5.1 defines no 800 weight and Wave 1A bundles only 400/500/600/700. Mapping 800 → 700 would be a new design decision, so it is referred rather than assumed.
+
+Unused-but-tested resolver API was retained in `typography.ts` (`resolveLegacyTypography`, `fontFamilyForWeight`, `moneyFontFamily`) so the conversion has a ready foundation.
+
+### Blocker B — legacy token deletion requires per-site visual decisions
+
+**1,205 `colors.<field>` references across 95 files.** The blocking case is `colors.accent` (green): Design 5.1 retires green as the brand accent and makes interactive Ocean Blue, but `accent` is currently the *interactive/selected* colour (Settings active row, Language selected option, links, `glow()`). Migrating it means deciding per call site whether each use means `interactive` or `success` — turning selected states from green to blue across every screen. That is the screen restyle assigned to Waves 2, 4 and 9, not a token rename. `naviloPalette` (9 files) and `aiAccentColor` (8 files) are the Today/Grow hero systems that Waves 5 and 8 replace outright.
+
+### Blocker C — `contrastOverrides.ts` is asserted by three existing tests
+
+`tests/pass-2e-contrast-corrections.test.ts` real-imports `WARNING_TEXT_LIGHT_OVERRIDE` and `HERO_SCRIM_OPACITY` and asserts contrast ratios against them; `tests/rendered/pass-2e-contrast-corrections.render.test.tsx` and `tests/worth-knowing.test.ts` also reference them. It has **5 live consumers**, 4 of which are Today components outside the colour-migration file set. Deleting the module breaks three existing tests, and editing existing test expectations is prohibited.
+
+---
+
+# Change control — Wave 1 completion and rephasing
+
+**Dated 17 August 2026. Owner-authorised after completing the Wave 1B device checklist.**
+
+This entry records new decisions. It does not rewrite any decision above.
+
+## Wave 1 accepted as complete
+
+Wave 1 ships:
+
+- semantic Design 5.1 foundations;
+- six-theme resolution;
+- computed contrast;
+- locale-aware font architecture with locally bundled font assets;
+- font boot with non-blocking failure handling;
+- named motion constants;
+- all raw colours outside `src/theme` migrated;
+- final zero-raw-colour enforcement;
+- all existing calculations, navigation contracts, Add behaviour and persistence preserved.
+
+### Corrected factual baseline
+
+| Figure | Superseded value | Correct value |
+|---|---|---|
+| Pre-existing legacy test files | 47 | **50** — the 47 was a report-parsing error; three files print `N/N assertions passed.`, which the summary grep missed |
+| Raw-colour literals / files | 76 across 17 | **74 across 16** — two were GitHub issue numbers in a `MainTabNavigator.tsx` comment, matched by an over-broad `#[0-9A-Fa-f]{3,8}` pattern |
+
+### Why the three remaining migrations were rephased
+
+The original Wave 1 assumed all three were bounded. Measurement disproved that:
+
+- font migration: **68 files, 173 conflicting weight overrides** (90 would visibly regress from 600 to 700);
+- legacy tokens: **95 files, 1,205 references** needing per-site semantic reinterpretation;
+- `contrastOverrides.ts`: **5 consumers and 3 existing tests** still depend on it.
+
+## Rephased — global font migration
+
+Migration moves into the owning waves:
+
+| Wave | Scope |
+|---|---|
+| 2 | navigation, dock and global shell consumers |
+| 3 | tray and Add-workspace consumers |
+| 4 | shared primitives and the seven form bodies |
+| 5–9 | each screen's remaining consumers |
+| End of 9 | zero-platform-default-font audit |
+| 11 | audit repeated as final verification |
+
+Rules:
+
+- No new unapproved platform-default font consumer from Wave 2 onward.
+- Every file a wave touches must migrate its applicable text to the Design 5.1 locale-aware resolver.
+- English textual roles → Figtree. Thai textual roles → Noto Sans Thai. Financial/numeric roles → Figtree in both locales.
+- Existing `fontWeight: '800'` sites are mapped **individually** to a documented semantic type role during their owning wave. **No blanket 800→700 substitution.**
+
+## Rephased — legacy-token migration
+
+Incremental across Waves 2–9:
+
+- every touched file migrates its applicable legacy colour and typography consumers;
+- no new legacy-token consumer may be introduced;
+- legacy definitions may remain only while verified consumers remain;
+- zero-consumer proof and deletion at the end of Wave 9; verified again in Wave 11.
+
+This does **not** authorise unrelated screen, logic or component restructuring earlier than its owning wave.
+
+## Rephased — `contrastOverrides.ts` retirement → Wave 5
+
+Its remaining consumers are primarily Today components and its existing tests assert current presentation. Wave 5 must: migrate all remaining consumers; rewrite **only** presentation-specific contrast assertions that are legitimately superseded; preserve all financial and behavioural expectations; prove all six-theme contrast floors; and delete the module only after zero-consumer proof.
+
+## Tracked item — Wealth delta treatment
+
+Wealth's positive/negative delta currently uses `ON_FEATURED_POSITIVE` on a gradient hero. Reassess against `movementPositive` / `movementNegative` during **Wave 7**. **Do not change it now.**
+
 ## Invariants
 
 All 20 functional and data invariants from the audit §14 remain preserved unchanged. Wave 1A is additive foundation work and touches no engine, no persistence path and no navigation contract.

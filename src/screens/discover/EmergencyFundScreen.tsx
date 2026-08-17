@@ -10,6 +10,7 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { computeEmergencyFund } from '../../lib/calculations/emergencyFund';
 import { computeMonthlySummary, describeCashflowMessage } from '../../lib/calculations/monthlySummary';
 import { brand } from '../../lib/brand';
+import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -45,10 +46,10 @@ export function EmergencyFundScreen() {
         },
         disclaimerText: { ...typography.micro, color: colors.textSecondary, flex: 1 },
         resultCard: { borderRadius: radius.card, alignItems: 'center', paddingVertical: spacing.xl, marginBottom: spacing.lg, ...glow(colors.accent) },
-        resultLabel: { ...typography.micro, color: 'rgba(255,255,255,0.75)', marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
-        resultTagline: { ...typography.body, fontSize: 13, fontStyle: 'italic', color: 'rgba(255,255,255,0.9)', marginBottom: spacing.sm },
-        resultValue: { ...typography.title, fontSize: 34, color: '#fff' },
-        resultCaption: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+        resultLabel: { ...typography.micro, color: onFeaturedAlpha(0.75), marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
+        resultTagline: { ...typography.body, fontSize: 13, fontStyle: 'italic', color: onFeaturedAlpha(0.9), marginBottom: spacing.sm },
+        resultValue: { ...typography.title, fontSize: 34, color: ON_FEATURED },
+        resultCaption: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.75), marginTop: 2 },
         emptyBox: { alignItems: 'center', paddingVertical: spacing.xl },
         emptyText: { ...typography.caption, fontSize: 13, color: colors.textMuted, marginTop: spacing.sm, textAlign: 'center', lineHeight: 18 },
         rowLabel: { ...typography.body, fontSize: 14, color: colors.textSecondary },

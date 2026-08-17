@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { CelebrationEvent } from '../../lib/celebrations';
 import { Button } from '../shared/Button';
+import { ON_FEATURED, onFeaturedAlpha, scrimAt } from '../../theme/semanticTokens';
 
 // RN's Modal onDismiss (native dismissal has actually finished) is iOS-only
 // — Android never fires it, so this approximates the same "wait for the
@@ -28,7 +29,7 @@ const ANDROID_DISMISS_FALLBACK_MS = 300;
  * completes) is what actually calls `onDismissed`, not the button press.
  */
 export function MediumCelebrationSheet({ event, onDismissed }: { event: CelebrationEvent; onDismissed: () => void }) {
-  const { colors, radius, spacing, typography, glow } = useTheme();
+  const { colors, scheme, radius, spacing, typography, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const bounce = useRef(new Animated.Value(0)).current;
   const [visible, setVisible] = useState(true);
@@ -49,22 +50,22 @@ export function MediumCelebrationSheet({ event, onDismissed }: { event: Celebrat
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.5)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: scrimAt(scheme, 0.5), justifyContent: 'flex-end' },
         sheet: { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, padding: spacing.xl, alignItems: 'center', ...glow(colors.gold) },
         iconBadge: {
           width: 72,
           height: 72,
           borderRadius: 36,
-          backgroundColor: 'rgba(255,255,255,0.22)',
+          backgroundColor: onFeaturedAlpha(0.22),
           alignItems: 'center',
           justifyContent: 'center',
           marginBottom: spacing.lg,
         },
-        title: { ...typography.title, fontSize: 20, color: '#fff', textAlign: 'center', marginBottom: spacing.xs },
-        subtitle: { ...typography.body, fontSize: 14, color: 'rgba(255,255,255,0.9)', textAlign: 'center', marginBottom: spacing.xl, lineHeight: 20 },
+        title: { ...typography.title, fontSize: 20, color: ON_FEATURED, textAlign: 'center', marginBottom: spacing.xs },
+        subtitle: { ...typography.body, fontSize: 14, color: onFeaturedAlpha(0.9), textAlign: 'center', marginBottom: spacing.xl, lineHeight: 20 },
         button: { alignSelf: 'stretch' },
       }),
-    [colors, radius, spacing, typography, glow]
+    [colors, scheme, radius, spacing, typography, glow]
   );
 
   return (
@@ -94,7 +95,7 @@ export function MediumCelebrationSheet({ event, onDismissed }: { event: Celebrat
               },
             ]}
           >
-            <Ionicons name={event.icon} size={32} color="#fff" />
+            <Ionicons name={event.icon} size={32} color={ON_FEATURED} />
           </Animated.View>
           <Text style={styles.title}>{event.title}</Text>
           {event.body ? <Text style={styles.subtitle}>{event.body}</Text> : null}

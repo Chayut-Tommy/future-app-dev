@@ -907,3 +907,32 @@ checkpoint: design 5.1 wave 1 semantic tokens and locale typography foundation
 This plan covers presentation, navigation, states, copy (approved rows only) and motion. It changes **no** calculation, engine, data model, persistence rule or compliance boundary. All 20 functional invariants from audit §14 are preserved unchanged throughout all eleven waves.
 
 Waves are not to be combined. Each wave ends with a reviewable diff, a passing full test suite, an owner-run device test, and a checkpoint commit — in that order.
+
+---
+
+# Change control — Wave 1 completion (17 August 2026)
+
+Appended after Wave 1 device approval. Historical sections above are unchanged; where they differ, this entry and the Owner Decisions record govern.
+
+## Wave 1 delivered
+
+Semantic Design 5.1 foundations; six-theme resolution; computed contrast; locale-aware font architecture with bundled assets; font boot with non-blocking failure handling; named motion constants; all raw colours outside `src/theme` migrated; final zero-raw-colour enforcement. All calculations, navigation contracts, Add behaviour and persistence preserved.
+
+## Factual corrections to this plan
+
+- **Legacy test files: 50** (as §A.1, §F.1 and §G already state — confirmed correct). The interim "47" reported during Wave 1A was a report-parsing error: three files print `N/N assertions passed.` rather than `N/N passed.`, so a summary grep under-counted them by 191 assertions. **True Wave 1 baseline: 50 files, 3,230/3,230 assertions.**
+- **Raw-colour debt: 74 literals across 16 files**, superseding the 76/17 figure in §C.2 and §H.9. Two of the 76 were GitHub issue references (`#12755`, `#39514`) in a `MainTabNavigator.tsx` comment; that file contained no colour and was never edited. §C.2's "Remainder — audit during W1" resolved to six sheet-backdrop scrims.
+
+## Rephasing of three §C/§E items
+
+Measurement during Wave 1B disproved the assumption that these were bounded Wave 1 work:
+
+| Item | Measured scope | Now owned by |
+|---|---|---|
+| Global font-consumer migration | 68 files, 173 conflicting `fontWeight` overrides (90 would regress 600→700), 8 sites at weight 800 with no Design 5.1 role | Waves 2–9, audited end of W9 and again in W11 |
+| Legacy-token deletion | 95 files, 1,205 `colors.*` references; `colors.accent` needs per-site interactive-vs-success reinterpretation | Waves 2–9, deleted end of W9, verified W11 |
+| `contrastOverrides.ts` retirement (§C.4, §H.2) | 5 consumers, asserted by 3 existing tests | Wave 5 |
+
+**Ratchet rule for Waves 2–9:** every file a wave touches migrates its own font and legacy-token consumers; no wave may introduce a new platform-default font consumer, a new legacy-token consumer, or a raw colour.
+
+**Tracked:** Wealth's positive/negative delta treatment is reassessed against `movementPositive`/`movementNegative` in Wave 7.

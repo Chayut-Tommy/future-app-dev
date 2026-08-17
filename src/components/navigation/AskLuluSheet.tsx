@@ -23,7 +23,7 @@ const DISMISS_VELOCITY = 0.6;
  * only way out).
  */
 export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { colors, radius, spacing, typography, aiAccentColor, aiAccentSoft } = useTheme();
+  const { colors, semantic, radius, spacing, typography, aiAccentColor, aiAccentSoft } = useTheme();
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(0)).current;
 
@@ -73,7 +73,7 @@ export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -120,7 +120,7 @@ export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: 
         closeButton: { alignSelf: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
         closeText: { color: colors.textSecondary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography, insets.bottom, aiAccentColor, aiAccentSoft]
+    [colors, semantic, radius, spacing, typography, insets.bottom, aiAccentColor, aiAccentSoft]
   );
 
   return (

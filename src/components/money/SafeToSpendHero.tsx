@@ -7,6 +7,7 @@ import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
 import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
 import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
+import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
   const { colors, spacing, typography } = useTheme();
@@ -105,7 +106,7 @@ export function SafeToSpendHero({
         card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, alignItems: 'center', ...glow(colors.accent) },
         cardWarning: { backgroundColor: colors.warningSoft },
         labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: spacing.sm },
-        label: { ...typography.micro, fontSize: 11, color: 'rgba(255,255,255,0.8)', fontWeight: '700', letterSpacing: 0.5 },
+        label: { ...typography.micro, fontSize: 11, color: onFeaturedAlpha(0.8), fontWeight: '700', letterSpacing: 0.5 },
         labelWarning: { color: colors.warning },
         labelRowActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         infoButton: { padding: 2 },
@@ -116,28 +117,28 @@ export function SafeToSpendHero({
         // an icon-only button is there; ≥44pt effective tap target via
         // hitSlop, matching the info button's own convention.
         manageBalancesButton: { flexDirection: 'row', alignItems: 'center', gap: 3, padding: 2 },
-        manageBalancesText: { ...typography.micro, fontSize: 11, color: 'rgba(255,255,255,0.85)', fontWeight: '700' },
+        manageBalancesText: { ...typography.micro, fontSize: 11, color: onFeaturedAlpha(0.85), fontWeight: '700' },
         manageBalancesTextWarning: { color: colors.warning },
-        line: { ...typography.body, fontSize: 14, color: 'rgba(255,255,255,0.9)', textAlign: 'center' },
+        line: { ...typography.body, fontSize: 14, color: onFeaturedAlpha(0.9), textAlign: 'center' },
         lineWarning: { color: colors.textSecondary, textAlign: 'center', lineHeight: 19 },
         value: { ...typography.title, fontSize: 40, color: colors.onNavy, marginVertical: 2 },
-        explainer: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: spacing.sm, lineHeight: 17 },
+        explainer: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.8), textAlign: 'center', marginTop: spacing.sm, lineHeight: 17 },
         reactionBox: {
           marginTop: spacing.md,
-          backgroundColor: 'rgba(255,255,255,0.14)',
+          backgroundColor: onFeaturedAlpha(0.14),
           borderRadius: radius.control,
           padding: spacing.sm,
           alignSelf: 'stretch',
         },
-        reactionText: { ...typography.caption, fontSize: 12, color: '#fff', textAlign: 'center', lineHeight: 17 },
+        reactionText: { ...typography.caption, fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
         ctaButton: {
           marginTop: spacing.md,
-          backgroundColor: 'rgba(255,255,255,0.2)',
+          backgroundColor: onFeaturedAlpha(0.2),
           borderRadius: radius.pill,
           paddingVertical: 9,
           paddingHorizontal: spacing.lg,
         },
-        ctaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
+        ctaText: { ...typography.caption, fontSize: 13, color: ON_FEATURED, fontWeight: '700' },
         warningCtaButton: {
           marginTop: spacing.md,
           backgroundColor: colors.warning,
@@ -145,7 +146,7 @@ export function SafeToSpendHero({
           paddingVertical: 9,
           paddingHorizontal: spacing.lg,
         },
-        warningCtaText: { ...typography.caption, fontSize: 13, color: '#fff', fontWeight: '700' },
+        warningCtaText: { ...typography.caption, fontSize: 13, color: ON_FEATURED, fontWeight: '700' },
         breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
         // Stacked, single-column presentation for the daily-estimate row
         // specifically (Stream A follow-up §2) — replaces the generic
@@ -184,7 +185,7 @@ export function SafeToSpendHero({
         accessibilityLabel="Manage balances"
         accessibilityHint="Opens the list of balances included in this estimate"
       >
-        <Ionicons name="wallet-outline" size={14} color={warning ? colors.warning : 'rgba(255,255,255,0.85)'} />
+        <Ionicons name="wallet-outline" size={14} color={warning ? colors.warning : onFeaturedAlpha(0.85)} />
         <Text style={[styles.manageBalancesText, warning ? styles.manageBalancesTextWarning : null]}>Manage balances</Text>
       </TouchableOpacity>
     );
@@ -433,7 +434,7 @@ export function SafeToSpendHero({
           <View style={styles.labelRowActions}>
             {renderManageBalancesButton()}
             <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color="rgba(255,255,255,0.85)" />
+              <Ionicons name="information-circle-outline" size={15} color={onFeaturedAlpha(0.85)} />
             </TouchableOpacity>
           </View>
         </View>

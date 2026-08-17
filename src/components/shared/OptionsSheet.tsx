@@ -51,7 +51,7 @@ export function OptionsSheet({
   options: SheetOption[];
   onSelect: (key: string) => void;
 }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(0)).current;
   const pendingSelectionRef = useRef<string | null>(null);
@@ -101,7 +101,7 @@ export function OptionsSheet({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -131,7 +131,7 @@ export function OptionsSheet({
         cancelButton: { alignSelf: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
         cancelText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom]
   );
 
   return (

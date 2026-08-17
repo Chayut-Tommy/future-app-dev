@@ -9,6 +9,7 @@ import { Button } from '../../components/shared/Button';
 import { ConfidenceLevel, MoneyGoal, UserProfile } from '../../types/models';
 import { MONEY_GOALS, CONFIDENCE_LEVELS } from '../../lib/profileOptions';
 import { brand } from '../../lib/brand';
+import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 type Step = 'welcome' | 'preview' | 'name' | 'goal' | 'confidence' | 'disclosure';
 
@@ -96,14 +97,14 @@ export function WelcomeFlow() {
           width: 72,
           height: 72,
           borderRadius: 36,
-          backgroundColor: 'rgba(255,255,255,0.18)',
+          backgroundColor: onFeaturedAlpha(0.18),
           alignItems: 'center',
           justifyContent: 'center',
           marginBottom: spacing.xl,
         },
-        title: { ...typography.title, fontSize: 28, color: '#fff', marginBottom: spacing.md },
-        subtitle: { ...typography.heading, fontSize: 17, color: 'rgba(255,255,255,0.95)', fontWeight: '700', marginBottom: spacing.sm },
-        body: { ...typography.body, fontSize: 16, color: 'rgba(255,255,255,0.9)', lineHeight: 24, marginBottom: spacing.md },
+        title: { ...typography.title, fontSize: 28, color: ON_FEATURED, marginBottom: spacing.md },
+        subtitle: { ...typography.heading, fontSize: 17, color: onFeaturedAlpha(0.95), fontWeight: '700', marginBottom: spacing.sm },
+        body: { ...typography.body, fontSize: 16, color: onFeaturedAlpha(0.9), lineHeight: 24, marginBottom: spacing.md },
         plainContainer: { flex: 1, backgroundColor: colors.background, paddingTop: insets.top + spacing.xxl, paddingHorizontal: spacing.xl },
         previewContainer: {
           flex: 1,
@@ -127,19 +128,19 @@ export function WelcomeFlow() {
         mockupGreetingLine: { width: 92, height: 8, borderRadius: 4, backgroundColor: colors.surfaceMuted, marginBottom: 6 },
         mockupGreetingLineShort: { width: 60, height: 8, borderRadius: 4, backgroundColor: colors.surfaceMuted, marginBottom: spacing.md },
         mockupAiCard: { borderRadius: 18, padding: spacing.md, marginBottom: spacing.md },
-        mockupAiTopLine: { width: 80, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.85)', marginBottom: 10 },
+        mockupAiTopLine: { width: 80, height: 7, borderRadius: 4, backgroundColor: onFeaturedAlpha(0.85), marginBottom: 10 },
         mockupRingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         mockupRing: {
           width: 44,
           height: 44,
           borderRadius: 22,
           borderWidth: 4,
-          borderColor: 'rgba(255,255,255,0.9)',
-          borderRightColor: 'rgba(255,255,255,0.35)',
-          borderBottomColor: 'rgba(255,255,255,0.35)',
+          borderColor: onFeaturedAlpha(0.9),
+          borderRightColor: onFeaturedAlpha(0.35),
+          borderBottomColor: onFeaturedAlpha(0.35),
         },
         mockupAiTextBlock: { flex: 1, gap: 6 },
-        mockupAiLine: { height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.7)' },
+        mockupAiLine: { height: 7, borderRadius: 4, backgroundColor: onFeaturedAlpha(0.7) },
         mockupStatRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 7 },
         mockupStatLabel: { width: 64, height: 7, borderRadius: 4, backgroundColor: colors.surfaceMuted },
         mockupStatValue: { width: 40, height: 10, borderRadius: 4 },
@@ -218,7 +219,7 @@ export function WelcomeFlow() {
     return (
       <LinearGradient colors={aiCardGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.container}>
         <View style={[styles.iconBadge, { alignSelf: 'center' }]}>
-          <Ionicons name="sparkles" size={32} color="#fff" />
+          <Ionicons name="sparkles" size={32} color={ON_FEATURED} />
         </View>
         <Text style={[styles.title, { textAlign: 'center' }]}>Meet {brand.name}</Text>
         <Text style={[styles.subtitle, { textAlign: 'center' }]}>Your money has a story.</Text>

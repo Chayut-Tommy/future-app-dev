@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { CelebrationEvent } from '../../lib/celebrations';
 import { Button } from '../shared/Button';
+import { ON_FEATURED, onFeaturedAlpha, scrimAt } from '../../theme/semanticTokens';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CONFETTI_COUNT = 24;
@@ -61,7 +62,7 @@ const ANDROID_DISMISS_FALLBACK_MS = 350;
  * never on button press directly.
  */
 export function BigCelebrationOverlay({ event, onDismissed }: { event: CelebrationEvent; onDismissed: () => void }) {
-  const { colors, radius, spacing, typography, glow } = useTheme();
+  const { colors, scheme, radius, spacing, typography, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const trophyBounce = useRef(new Animated.Value(0)).current;
   const confettiColors = [colors.gold, colors.accent, colors.purple, colors.market, colors.successBright];
@@ -84,28 +85,28 @@ export function BigCelebrationOverlay({ event, onDismissed }: { event: Celebrati
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(6,10,8,0.85)' },
+        backdrop: { flex: 1, backgroundColor: scrimAt(scheme, 0.85) },
         content: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
         iconBadge: {
           width: 96,
           height: 96,
           borderRadius: 48,
-          backgroundColor: 'rgba(255,255,255,0.16)',
+          backgroundColor: onFeaturedAlpha(0.16),
           alignItems: 'center',
           justifyContent: 'center',
           marginBottom: spacing.xl,
           ...glow(colors.gold),
         },
-        eyebrow: { ...typography.micro, color: 'rgba(255,255,255,0.75)', fontWeight: '700', letterSpacing: 1, marginBottom: spacing.sm },
-        title: { ...typography.title, fontSize: 26, color: '#fff', textAlign: 'center', marginBottom: spacing.sm },
-        body: { ...typography.body, fontSize: 15, color: 'rgba(255,255,255,0.9)', textAlign: 'center', lineHeight: 22, marginBottom: spacing.xxl },
+        eyebrow: { ...typography.micro, color: onFeaturedAlpha(0.75), fontWeight: '700', letterSpacing: 1, marginBottom: spacing.sm },
+        title: { ...typography.title, fontSize: 26, color: ON_FEATURED, textAlign: 'center', marginBottom: spacing.sm },
+        body: { ...typography.body, fontSize: 15, color: onFeaturedAlpha(0.9), textAlign: 'center', lineHeight: 22, marginBottom: spacing.xxl },
         // Deliberately `alignSelf: 'center'` with a minWidth, not `stretch`
         // + `maxWidth` — stretch clamped by maxWidth still anchors to the
         // container's start edge instead of centering the leftover space,
         // which read as a left-aligned button (PRD bug report).
         button: { alignSelf: 'center', minWidth: 200, paddingHorizontal: spacing.xl },
       }),
-    [colors, radius, spacing, typography, glow]
+    [colors, scheme, radius, spacing, typography, glow]
   );
 
   return (

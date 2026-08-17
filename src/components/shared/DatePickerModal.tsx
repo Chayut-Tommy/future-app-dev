@@ -50,7 +50,7 @@ export function DatePickerModal({
   onChange: (date: Date) => void;
   onClose: () => void;
 }) {
-  const { colors, radius, spacing, typography, scheme } = useTheme();
+  const { colors, semantic, radius, spacing, typography, scheme } = useTheme();
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export function DatePickerModal({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -73,7 +73,7 @@ export function DatePickerModal({
         footer: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.md },
         doneButton: { paddingHorizontal: spacing.xl, flex: 0 },
       }),
-    [colors, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom]
   );
 
   if (Platform.OS !== 'ios') {

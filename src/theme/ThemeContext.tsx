@@ -2,6 +2,7 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { useColorScheme } from 'react-native';
 import { ColorTokens, darkColors, lightColors, radius, spacing, typography, minTouchTarget } from './tokens';
 import { NaviloColorStyle, NaviloPalette, selectNaviloPalette } from './palettes';
+import { DesignColorStyle, SemanticColors, resolveSemanticColors, toDesignColorStyle } from './semanticTokens';
 import { ThemePreference } from '../types/models';
 import { useAppState } from '../state/AppStateContext';
 
@@ -47,6 +48,18 @@ interface ThemeContextValue {
    * resolved for the current style AND the current light/dark scheme. See
    * palettes.ts for the complete mapping. */
   naviloPalette: NaviloPalette;
+  /** Design 5.1 Wave 1A — ADDITIVE. The semantic role set for the current
+   * style + scheme, resolved from src/theme/semanticTokens.ts. Nothing
+   * consumes this yet: every existing surface continues to read `colors`,
+   * `naviloPalette` and `aiAccentColor` exactly as before. It is exposed
+   * now so Wave 1B and the screen waves can migrate one surface at a time
+   * against a foundation that is already wired and already tested, rather
+   * than introducing the plumbing and the migration in the same diff. */
+  semantic: SemanticColors;
+  /** The Design 5.1 name for the active colour style ('blue' -> 'ocean').
+   * The stored preference itself is NOT renamed — that would be a
+   * persistence change, which Wave 1A forbids. */
+  designColorStyle: DesignColorStyle;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -70,6 +83,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const onAiAccent = naviloColorStyle === 'blue' ? colors.onAiBlue : naviloColorStyle === 'purple' ? colors.onPurple : colors.onSunrise;
   const aiCardGradient = naviloColorStyle === 'blue' ? colors.aiGradientBlue : naviloColorStyle === 'purple' ? colors.aiGradient : colors.sunriseGradient;
   const naviloPalette = useMemo(() => selectNaviloPalette(naviloColorStyle, scheme, colors), [naviloColorStyle, scheme, colors]);
+  // Design 5.1 Wave 1A — resolved alongside, never instead of, the legacy
+  // palette above. Same two inputs, so the six combinations stay in step.
+  const designColorStyle = toDesignColorStyle(naviloColorStyle);
+  const semantic = useMemo(() => resolveSemanticColors(designColorStyle, scheme), [designColorStyle, scheme]);
 
   const cardShadow = useMemo(
     () =>
@@ -113,8 +130,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       aiCardGradient,
       naviloColorStyle,
       naviloPalette,
+      semantic,
+      designColorStyle,
     }),
-    [colors, scheme, preference, updateUser, cardShadow, glow, aiAccentColor, aiAccentSoft, onAiAccent, aiCardGradient, naviloColorStyle, naviloPalette]
+    [colors, scheme, preference, updateUser, cardShadow, glow, aiAccentColor, aiAccentSoft, onAiAccent, aiCardGradient, naviloColorStyle, naviloPalette, semantic, designColorStyle]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

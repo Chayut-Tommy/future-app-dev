@@ -149,7 +149,7 @@ export function KeyboardSheet({
   animateContentEntrance?: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing, typography } = useTheme();
   const translateY = useRef(new Animated.Value(0)).current;
   const windowHeight = useWindowDimensions().height;
   // Pass 2E — Reduce Motion: no native Modal slide, zero-duration dismissal,
@@ -373,10 +373,12 @@ export function KeyboardSheet({
         // can be opacity-animated (native-driver-compatible) for the opt-in
         // entrance transition without touching backdrop's own flex layout.
         // `backdropOpacity` is pinned at 1 unless animateContentEntrance is
-        // true, so this renders the exact same static rgba(10,12,20,0.45)
-        // every existing caller already sees.
+        // true, so this renders the same static scrim every existing
+        // caller already sees (Design 5.1 Wave 1B: the literal became the
+        // scheme-aware `semantic.scrim` role; the opacity animation and
+        // every other behaviour here are unchanged).
         backdropTint: {
-          backgroundColor: 'rgba(10,12,20,0.45)',
+          backgroundColor: semantic.scrim,
         },
         sheet: {
           backgroundColor: colors.surface,
@@ -419,7 +421,7 @@ export function KeyboardSheet({
           flexShrink: 0,
         },
       }),
-    [colors, radius, spacing, typography]
+    [colors, semantic, radius, spacing, typography]
   );
 
   return (

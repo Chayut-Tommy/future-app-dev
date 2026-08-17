@@ -6,6 +6,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { MoneyOpportunity } from '../../lib/calculations/moneyOpportunities';
 import { brand } from '../../lib/brand';
 import { HERO_SCRIM_OPACITY } from '../../theme/contrastOverrides';
+import { ON_FEATURED, featuredScrimAt, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 const COLLAPSED_COUNT = 3;
 
@@ -33,26 +34,26 @@ export function MoneyOpportunitiesHero({
     () =>
       StyleSheet.create({
         card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, ...glow(aiAccentColor) },
-        scrim: { ...StyleSheet.absoluteFillObject, borderRadius: radius.card, backgroundColor: `rgba(0,0,0,${scrimOpacity})` },
+        scrim: { ...StyleSheet.absoluteFillObject, borderRadius: radius.card, backgroundColor: featuredScrimAt(scrimOpacity) },
         headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-        eyebrow: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '700' },
-        title: { ...typography.title, fontSize: 19, color: '#fff', fontWeight: '800', marginBottom: spacing.xs },
-        subtitle: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.8)', marginBottom: spacing.md },
-        itemRow: { flexDirection: 'row', gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.18)' },
-        itemNumber: { ...typography.heading, fontSize: 14, color: 'rgba(255,255,255,0.6)', width: 18 },
+        eyebrow: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.85), fontWeight: '700' },
+        title: { ...typography.title, fontSize: 19, color: ON_FEATURED, fontWeight: '800', marginBottom: spacing.xs },
+        subtitle: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.8), marginBottom: spacing.md },
+        itemRow: { flexDirection: 'row', gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: onFeaturedAlpha(0.18) },
+        itemNumber: { ...typography.heading, fontSize: 14, color: onFeaturedAlpha(0.6), width: 18 },
         itemTextBlock: { flex: 1 },
-        itemTitle: { ...typography.body, fontSize: 14, color: '#fff', fontWeight: '700', marginBottom: 2 },
-        itemDetail: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.85)', lineHeight: 16 },
-        itemAction: { ...typography.micro, fontSize: 11, color: '#fff', fontWeight: '700', marginTop: 4 },
+        itemTitle: { ...typography.body, fontSize: 14, color: ON_FEATURED, fontWeight: '700', marginBottom: 2 },
+        itemDetail: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.85), lineHeight: 16 },
+        itemAction: { ...typography.micro, fontSize: 11, color: ON_FEATURED, fontWeight: '700', marginTop: 4 },
         exploreButton: {
           alignSelf: 'center',
           marginTop: spacing.md,
-          backgroundColor: 'rgba(255,255,255,0.18)',
+          backgroundColor: onFeaturedAlpha(0.18),
           borderRadius: radius.pill,
           paddingVertical: 9,
           paddingHorizontal: spacing.lg,
         },
-        exploreButtonText: { ...typography.caption, fontSize: 12, color: '#fff', fontWeight: '700' },
+        exploreButtonText: { ...typography.caption, fontSize: 12, color: ON_FEATURED, fontWeight: '700' },
       }),
     [colors, radius, spacing, typography, glow, aiAccentColor, scrimOpacity]
   );

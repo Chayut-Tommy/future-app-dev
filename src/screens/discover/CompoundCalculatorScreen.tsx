@@ -8,6 +8,7 @@ import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { computeCompoundGrowth, ContributionFrequency } from '../../lib/calculations/compoundCalculator';
 import { brand } from '../../lib/brand';
+import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -63,14 +64,14 @@ export function CompoundCalculatorScreen() {
         },
         disclaimerText: { ...typography.micro, color: colors.textSecondary, flex: 1 },
         resultCard: { borderRadius: radius.card, alignItems: 'center', paddingVertical: spacing.xl, marginBottom: spacing.lg, ...glow(colors.accent) },
-        resultLabel: { ...typography.micro, color: 'rgba(255,255,255,0.75)', marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
-        resultTagline: { ...typography.body, fontSize: 13, fontStyle: 'italic', color: 'rgba(255,255,255,0.9)', marginBottom: spacing.sm },
-        resultValue: { ...typography.title, fontSize: 34, color: '#fff' },
-        resultCaption: { ...typography.caption, fontSize: 12, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
+        resultLabel: { ...typography.micro, color: onFeaturedAlpha(0.75), marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
+        resultTagline: { ...typography.body, fontSize: 13, fontStyle: 'italic', color: onFeaturedAlpha(0.9), marginBottom: spacing.sm },
+        resultValue: { ...typography.title, fontSize: 34, color: ON_FEATURED },
+        resultCaption: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.75), marginTop: 2 },
         resultSubRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
         resultSubBlock: { alignItems: 'center' },
-        resultSubLabel: { ...typography.micro, color: 'rgba(255,255,255,0.7)', marginBottom: 2 },
-        resultSubValue: { ...typography.heading, fontSize: 14, color: '#fff' },
+        resultSubLabel: { ...typography.micro, color: onFeaturedAlpha(0.7), marginBottom: 2 },
+        resultSubValue: { ...typography.heading, fontSize: 14, color: ON_FEATURED },
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
         input: {
           backgroundColor: colors.surfaceMuted,

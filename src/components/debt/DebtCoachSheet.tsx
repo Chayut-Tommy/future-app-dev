@@ -42,7 +42,7 @@ const DEBT_TYPE_OPTIONS: { type: LiabilityType | 'credit_card'; label: string; e
 export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { data, updateUser } = useAppState();
   const { celebrate } = useCelebration();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
   const [addLiabilityType, setAddLiabilityType] = useState<LiabilityType | null>(null);
   const [addCardVisible, setAddCardVisible] = useState(false);
@@ -65,7 +65,7 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: 'rgba(10,12,20,0.45)', justifyContent: 'flex-end' },
+        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
@@ -95,7 +95,7 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
         closeText: { color: colors.textSecondary, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom]
   );
 
   return (
