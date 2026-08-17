@@ -485,11 +485,12 @@ export function TodayScreen() {
 
       {/* 1. Greeting and settings — the emotional handshake, kept outside
           the card so it doesn't read like dashboard content (PRD ask).
-          Settings access is the floating overlay button above; the AI and
-          Add controls are mounted at the navigator level (FloatingLuluButton
-          / the global + button), not owned by this screen. No financial-
-          health claim is ever added here — greeting wording is unchanged
-          from the accepted Pass 2A-2C copy (timeAwareGreeting). */}
+          Settings access is the floating overlay button above; the global
+          "+"/quick-actions FAB (which now also owns Ask Nolie's fallback
+          entry point, see quickActions.ts) is mounted at the navigator
+          level, not owned by this screen. No financial-health claim is
+          ever added here — greeting wording is unchanged from the accepted
+          Pass 2A-2C copy (timeAwareGreeting). */}
       <Text style={styles.greeting}>{greeting}</Text>
 
       {/* 2. Your Today Briefing (Pass 2A, extended Pass 2B) — unchanged:

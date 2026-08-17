@@ -50,6 +50,11 @@ const TODAY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/
 const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
 const CONTROLLER_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/addAssetTransitionController.ts', 'utf-8');
 const GEOMETRY_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/addWorkspaceGeometry.ts', 'utf-8');
+// Floating navigation design pass — focusElement was extracted out of
+// AddAnythingSheet.tsx into this shared module so QuickActionsTray.tsx
+// could reuse the exact same iOS/Android focus-movement logic rather than
+// duplicating it; its own logic is unchanged, just relocated.
+const A11Y_FOCUS_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/a11yFocus.ts', 'utf-8');
 
 console.log('=== 1. Exactly two AddWealthItemModal instances in AddAnythingSheet.tsx — asset and liability, each correctly scoped (Class C) ===');
 {
@@ -119,8 +124,8 @@ console.log('\n=== 6. The asset-type transition controller module is genuinely p
 console.log('\n=== 7. Correction pass (§2) — accessibility focus wiring for the Add Asset heading and per-tile refs (Class C) ===');
 {
   assert(
-    "7a. focusElement uses AccessibilityInfo.setAccessibilityFocus on iOS and AccessibilityInfo.sendAccessibilityEvent(..., 'focus') on Android — and accessibilityLiveRegion is never used as an actual JSX prop anywhere (only mentioned in an explanatory comment, which is fine)",
-    /if \(Platform\.OS === 'ios'\) \{\s*\n\s*const tag = findNodeHandle\(node as never\);\s*\n\s*if \(tag != null\) AccessibilityInfo\.setAccessibilityFocus\(tag\);\s*\n\s*\} else \{\s*\n\s*AccessibilityInfo\.sendAccessibilityEvent\(node as never, 'focus'\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC) &&
+    "7a. focusElement (now in the shared src/lib/a11yFocus.ts module, floating navigation design pass — see that file's own doc comment) uses AccessibilityInfo.setAccessibilityFocus on iOS and AccessibilityInfo.sendAccessibilityEvent(..., 'focus') on Android — and accessibilityLiveRegion is never used as an actual JSX prop anywhere in AddAnythingSheet.tsx (only mentioned in an explanatory comment, which is fine)",
+    /if \(Platform\.OS === 'ios'\) \{\s*\n\s*const tag = findNodeHandle\(node as never\);\s*\n\s*if \(tag != null\) AccessibilityInfo\.setAccessibilityFocus\(tag\);\s*\n\s*\} else \{\s*\n\s*AccessibilityInfo\.sendAccessibilityEvent\(node as never, 'focus'\);\s*\n\s*\}/.test(A11Y_FOCUS_SRC) &&
       !/accessibilityLiveRegion=/.test(ADD_ANYTHING_SRC)
   );
   assert('7b. exactly one announceForAccessibility call exists, gated behind the single shared focus-consumption effect (never a second, redundant announcement source)', (ADD_ANYTHING_SRC.match(/AccessibilityInfo\.announceForAccessibility\(/g) || []).length === 1);

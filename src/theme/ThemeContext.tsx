@@ -26,9 +26,10 @@ interface ThemeContextValue {
    * `colors.purple`/`colors.aiBlue` directly, so the styles never mix (PRD
    * ask). Unrelated to `naviloPalette` below — this stays at its original
    * vivid intensity for the surfaces that already used it (WelcomeFlow,
-   * MoneyOpportunitiesHero, ProfileNudgeCard, FloatingLuluButton,
-   * AskLuluSheet); `naviloPalette` is the separate, additional token set
-   * the Today Briefing hero/tiles/AI insight banner read instead, tuned
+   * MoneyOpportunitiesHero, ProfileNudgeCard, FloatingAddButton's
+   * quick-actions tray, AskLuluSheet); `naviloPalette` is the separate,
+   * additional token set the Today Briefing hero/tiles/AI insight banner
+   * read instead, tuned
    * specifically for that composition (translucent tiles, a muted insight
    * banner, attention/progress tokens) — see palettes.ts's own doc
    * comment for why these are deliberately two token sets, not one. */

@@ -14,6 +14,7 @@ import { QuickAddModal, QuickAddModalHandle } from '../dashboard/QuickAddModal';
 import { AddCreditCardModal, AddCreditCardModalHandle } from '../credit/AddCreditCardModal';
 import { AddGoalModal, AddGoalModalHandle } from '../goals/AddGoalModal';
 import { AssetType, LiabilityType } from '../../types/models';
+import { focusElement } from '../../lib/a11yFocus';
 import { decideAssetTileSelection } from './addAssetTransitionController';
 import {
   AddWorkspaceRoute,
@@ -156,26 +157,10 @@ const ROUTE_TILE_KEY: Partial<Record<AddWorkspaceRoute, AddAnythingKind>> = {
   goal: 'goal',
 };
 
-// Correction pass — accessibility focus movement. iOS VoiceOver and Android
-// TalkBack need genuinely different native calls (there is no single RN API
-// that moves focus correctly on both): AccessibilityInfo.setAccessibilityFocus
-// posts a real UIAccessibility focus notification but is iOS-only (per RN's
-// own type/behaviour) and needs a legacy numeric node handle
-// (findNodeHandle); AccessibilityInfo.sendAccessibilityEvent(handle,'focus')
-// is the modern, correctly-typed way to dispatch a native TalkBack focus
-// event on Android, taking the host instance directly. Deliberately not
-// using accessibilityLiveRegion for either platform — the correction
-// explicitly requires not assuming that alone handles iOS focus, and it
-// does not.
-function focusElement(node: React.Component<unknown> | React.ElementRef<any> | null) {
-  if (!node) return;
-  if (Platform.OS === 'ios') {
-    const tag = findNodeHandle(node as never);
-    if (tag != null) AccessibilityInfo.setAccessibilityFocus(tag);
-  } else {
-    AccessibilityInfo.sendAccessibilityEvent(node as never, 'focus');
-  }
-}
+// focusElement (accessibility focus movement, iOS VoiceOver vs Android
+// TalkBack) now lives in src/lib/a11yFocus.ts, shared with
+// QuickActionsTray.tsx (floating navigation design pass) — see that file's
+// own doc comment for why the two platforms need genuinely different calls.
 
 // Correction pass (§3) — asset-type switching. Reuses Alert.alert directly,
 // in the exact cancel/destructive shape confirmDiscardIfDirty already
@@ -265,6 +250,7 @@ export function AddAnythingSheet({
   visible,
   onClose,
   onlyBalances,
+  initialKind,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -279,6 +265,16 @@ export function AddAnythingSheet({
    * grid entirely, not merely hidden. Absent/false renders the full,
    * unscoped chooser exactly as before. */
   onlyBalances?: boolean;
+  /** Floating navigation design pass — lets a caller (QuickActionsTray's
+   * per-tile actions) land directly on a specific destination instead of
+   * the chooser grid, by programmatically firing the exact same
+   * `handleTilePress` a real tap on that tile would — never a second,
+   * duplicate entry path into any destination's own form. Applied once
+   * per fresh open, immediately after the same reset effect every other
+   * open already runs (below), so a stale value from a previous open can
+   * never re-fire. Ignored while `onlyBalances` is set (that scoped
+   * journey has its own fixed entry: the balance-only chooser grid). */
+  initialKind?: AddAnythingKind;
 }) {
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
 
@@ -449,6 +445,18 @@ export function AddAnythingSheet({
       state.setTitle(initialTitles[route]);
       state.setInstanceKey((k) => k + 1);
     });
+    // Floating navigation design pass — fires the SAME tile-press path a
+    // real tap would, immediately after the resets above land, so it
+    // behaves exactly like "the chooser opened and the user instantly
+    // tapped this tile" rather than a separate entry mechanism. Guarded by
+    // handleTilePress's own selectionLockRef (just cleared above) and the
+    // reducer's own FORWARD precondition, so this can never double-fire or
+    // race a real tap. `onlyBalances` always wins (it has its own fixed,
+    // scoped entry surface — the balance-only chooser grid, not a specific
+    // destination).
+    if (initialKind && !onlyBalances) {
+      handleTilePress(initialKind);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 

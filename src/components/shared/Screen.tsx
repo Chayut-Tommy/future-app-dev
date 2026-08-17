@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import type { RefObject } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { screenBottomClearance } from '../../navigation/floatingNavGeometry';
 
 /**
  * Shared screen shell: handles the iPhone safe-area top inset (notch /
@@ -51,7 +52,13 @@ export function Screen({
         },
         paddedContent: {
           paddingHorizontal: spacing.lg,
-          paddingBottom: spacing.xxl * 2,
+          // Floating navigation design pass — the dock/FAB assembly now
+          // floats over the bottom of every screen; content needs at least
+          // its own clearance to stay fully reachable rather than ending
+          // flush behind it. screenBottomClearance already includes a
+          // cushion beyond the assembly's own height, so this replaces
+          // (not adds to) the previous flat spacing.xxl*2 value.
+          paddingBottom: screenBottomClearance(insets.bottom),
         },
         paddedFlexContent: {
           paddingHorizontal: spacing.lg,
@@ -106,7 +113,7 @@ export function Screen({
           elevation: 10,
         },
       }),
-    [colors, spacing, typography]
+    [colors, spacing, typography, insets.bottom]
   );
 
   const header = title ? (

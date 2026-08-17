@@ -17,7 +17,6 @@ import { SavingsComparisonScreen } from '../screens/discover/SavingsComparisonSc
 import { CompoundCalculatorScreen } from '../screens/discover/CompoundCalculatorScreen';
 import { EmergencyFundScreen } from '../screens/discover/EmergencyFundScreen';
 import { HomeLoanCalculatorScreen } from '../screens/discover/HomeLoanCalculatorScreen';
-import { FloatingLuluButton } from '../components/navigation/FloatingLuluButton';
 import { FloatingAddButton } from '../components/navigation/FloatingAddButton';
 import { WelcomeFlow } from '../screens/welcome/WelcomeFlow';
 
@@ -26,7 +25,7 @@ const RootStack = createNativeStackNavigator();
 // No forced onboarding wizard (PRD §2.1, §20): every user lands straight on
 // the main experience as a Guest. The only gate is a one-time, skippable
 // welcome (WelcomeFlow) — not a data-collection form, just a hello. The
-// floating "Talk to Lulu" button lives here, outside the tab navigator, so
+// global "+"/quick-actions FAB lives here, outside the tab navigator, so
 // it persists across every tab and screen.
 export function RootNavigator() {
   const { data, isLoading } = useAppState();
@@ -92,11 +91,14 @@ export function RootNavigator() {
         <RootStack.Screen name="HomeLoanCalculator" component={HomeLoanCalculatorScreen} />
         <RootStack.Screen name="ResetLulu" component={ResetLuluScreen} />
       </RootStack.Navigator>
-      {/* "+" = add/update my money, Lulu = ask for guidance (PRD ask) — the
-          larger + button is the primary action; the smaller Lulu bubble
-          sits beside it, not stacked, so the two don't visually compete. */}
+      {/* Floating navigation design pass — the standalone "Ask Lulu" bubble
+          (FloatingLuluButton, its own separate corner button opening a
+          "Coming with Premium" teaser sheet) is retired: the quick-actions
+          tray's own centre tile now owns that slot (falling back to
+          "Add anything" while Ask Nolie itself remains unbuilt — see
+          src/lib/askNolie.ts), and the two buttons would otherwise overlap
+          in the same bottom-right corner this FAB now occupies. */}
       <FloatingAddButton />
-      <FloatingLuluButton />
     </View>
   );
 }

@@ -79,15 +79,34 @@ console.log('=== 1. The old dismiss-and-defer fallback is fully retired — no t
     !/function choose\(|function runPendingSelection\(|handoffInProgressRef|pendingKindRef|androidFallbackTimerRef|const ANDROID_DISMISS_FALLBACK_MS/.test(ADD_ANYTHING_SRC)
   );
   assert('1c. no dismissAnimationType/onDismiss prop remains on the outer KeyboardSheet (nothing is deferred past this Modal\'s own dismissal anymore)', !/dismissAnimationType/.test(ADD_ANYTHING_SRC) && !/<KeyboardSheet[\s\S]*?onDismiss=/.test(ADD_ANYTHING_SRC));
+  // Floating navigation design pass — FLOATING_ADD_BUTTON_SRC now also
+  // mounts <QuickActionsTray onSelect={...}> (a genuinely new component,
+  // nothing to do with the retired dismiss-and-defer fallback), so 1d's
+  // "no onSelect" check below is scoped to ONLY the <AddAnythingSheet .../>
+  // JSX block itself, not the whole file.
+  //
+  // Correction round (modal-stacking device defect) — `visible` is now
+  // derived from the pure floatingAddTransition.ts phase machine
+  // (`isSheetOpen(phase)`) rather than a separate `sheetVisible` boolean
+  // state, specifically so AddAnythingSheet only ever opens once the tray's
+  // own close animation has genuinely finished (never racing a still-
+  // presented native Modal) — see QuickActionsTray.tsx's and
+  // floatingAddTransition.ts's own doc comments for the confirmed root
+  // cause this replaces. The literal prop text this assertion pins to
+  // changed accordingly; the invariant it protects (no onSelect prop, no
+  // retired standalone modal) is unchanged.
+  const addAnythingSheetJsxMatch = FLOATING_ADD_BUTTON_SRC.match(/<AddAnythingSheet\b[\s\S]*?\/>/);
   assert(
-    '1d. FloatingAddButton.tsx mounts exactly one component from ./AddAnythingSheet and passes it no onSelect prop — every one of the eight former standalone fallback Modals (AddIncomeModal/QuickAddModal x2/AddRecurringItemModal/AddWealthItemModal x2/TransferModal/AddGoalModal/AddCreditCardModal) is gone from this file',
-    /<AddAnythingSheet visible=\{sheetVisible\} onClose=\{\(\) => setSheetVisible\(false\)\} \/>/.test(FLOATING_ADD_BUTTON_SRC) &&
-      !/\bonSelect\s*[:=(]/.test(FLOATING_ADD_BUTTON_SRC) &&
+    '1d. FloatingAddButton.tsx mounts exactly one component from ./AddAnythingSheet, deriving `visible` from the phase machine\'s isSheetOpen (not a raw onSelect callback) — every one of the eight former standalone fallback Modals (AddIncomeModal/QuickAddModal x2/AddRecurringItemModal/AddWealthItemModal x2/TransferModal/AddGoalModal/AddCreditCardModal) is gone from this file. The sheet also receives onlyBalances/initialKind (still not onSelect: quick-actions tray tiles route into a destination via AddAnythingSheet\'s own tile-press entry, not a callback the old dismiss-and-defer fallback used).',
+    !!addAnythingSheetJsxMatch &&
+      /visible=\{isSheetOpen\(phase\)\}/.test(addAnythingSheetJsxMatch[0]) &&
+      (FLOATING_ADD_BUTTON_SRC.match(/<AddAnythingSheet\b/g) || []).length === 1 &&
+      !/\bonSelect\s*[:=(]/.test(addAnythingSheetJsxMatch[0]) &&
       !/<AddIncomeModal|<QuickAddModal|<AddRecurringItemModal|<TransferModal|<AddGoalModal|<AddCreditCardModal/.test(FLOATING_ADD_BUTTON_SRC)
   );
   assert(
-    '1e. FloatingAddButton.tsx no longer imports any of the eight retired standalone-modal components, or AddAnythingKind (no longer needed without onSelect)',
-    !/AddIncomeModal|QuickAddModal|AddRecurringItemModal|AddWealthItemModal|AddCreditCardModal|AddGoalModal|TransferModal|AddAnythingKind/.test(FLOATING_ADD_BUTTON_SRC)
+    '1e. FloatingAddButton.tsx no longer imports any of the eight retired standalone-modal components. Floating navigation design pass — it now legitimately imports AddAnythingKind (to type the quick-actions tray\'s per-tile initialKind selection, see quickActions.ts), which is a different, new capability from the old onSelect callback this assertion originally guarded against.',
+    !/AddIncomeModal|QuickAddModal|AddRecurringItemModal|AddWealthItemModal|AddCreditCardModal|AddGoalModal|TransferModal/.test(FLOATING_ADD_BUTTON_SRC)
   );
 }
 

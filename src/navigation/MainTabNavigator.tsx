@@ -1,14 +1,13 @@
-import React, { useMemo } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { TodayScreen } from '../screens/today/TodayScreen';
 import { WealthScreen } from '../screens/wealth/WealthScreen';
 import { MoneyScreen } from '../screens/money/MoneyScreen';
 import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
-import { useTheme } from '../theme/ThemeContext';
 import { useReduceMotion } from '../hooks/useReduceMotion';
 import { tabScrollRefs } from './tabScrollRefs';
+import { FloatingNavBar } from '../components/navigation/FloatingNavBar';
 
 const Tab = createBottomTabNavigator();
 
@@ -42,36 +41,28 @@ const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: k
 // a dedicated tab. Grow (formerly Discover) is Lulu's coaching/education
 // hub — renamed so it reads as "Lulu growing me," not a content library.
 export function MainTabNavigator() {
-  const { colors } = useTheme();
   // Read once here, at the top of the whole tab session, and threaded down
   // to the tab-hosted Money/Grow instances as a prop — the same pattern
   // RootNavigator.tsx's own MoneyDetail/GrowDetail routes use for their own,
   // separately-mounted pushed instances (each calls useReduceMotion() fresh,
   // since a push is a brand new screen instance every time, not a long-lived
-  // lazily-mounted tab).
+  // lazily-mounted tab). Also threaded into FloatingNavBar's own tabBar
+  // prop below, for its selected-tab pill transition.
   const reduceMotion = useReduceMotion();
-
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        tabBar: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          height: Platform.OS === 'ios' ? 88 : 64,
-          paddingTop: 10,
-        },
-        label: { fontSize: 10.5, fontWeight: '600' },
-        // Explicit equal-width flex per tab — without this, label/icon
-        // width differences ("Wealth" vs "Grow") can make the four tabs
-        // read as unevenly spaced (PRD bug report).
-        item: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-      }),
-    [colors]
-  );
 
   return (
     <Tab.Navigator
+      // Floating navigation design pass — replaces ONLY the default tab
+      // bar's visual presentation with FloatingNavBar's rounded capsule.
+      // Route names/order/navigation state are untouched; `tabBarIcon`
+      // below is still the single source of truth FloatingNavBar reads via
+      // `descriptors[route.key].options.tabBarIcon` (React Navigation's own
+      // custom-tab-bar contract), so the outline/filled icon mapping is
+      // never duplicated. `tabBarActiveTintColor`/`tabBarInactiveTintColor`/
+      // `tabBarStyle`/`tabBarLabelStyle`/`tabBarItemStyle` are the DEFAULT
+      // tab bar's own styling hooks — meaningless once a custom `tabBar` is
+      // supplied, so they're deliberately no longer set here.
+      tabBar={(props) => <FloatingNavBar {...props} reduceMotion={reduceMotion} />}
       screenOptions={({ route }) => ({
         headerShown: false,
         // Animated bottom-tab transitions ('fade'/'shift') were trialled in
@@ -81,11 +72,6 @@ export function MainTabNavigator() {
         // `animation` is intentionally left unset (bottom-tabs' own
         // documented default is 'none') to retain the accepted,
         // non-animated behaviour — do not re-enable 'fade' or 'shift' here.
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: styles.label,
-        tabBarStyle: styles.tabBar,
-        tabBarItemStyle: styles.item,
         tabBarIcon: ({ focused, color, size }) => (
           <Ionicons name={focused ? ICONS[route.name].filled : ICONS[route.name].outline} size={size ?? 22} color={color} />
         ),

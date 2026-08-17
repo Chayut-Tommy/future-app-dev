@@ -37,9 +37,10 @@ import { DailyInsight } from '../../lib/calculations/dailyInsight';
  * so it reads as subordinate to the Briefing rather than a second
  * competing banner. Deliberately does NOT read `aiAccentColor`/
  * `aiCardGradient` any more — those stay exactly as they were for every
- * other consumer (WelcomeFlow, MoneyOpportunitiesHero, FloatingLuluButton,
- * etc.), unaffected by this card's own toned-down treatment. The
- * milestone-derived deduplication (dailyInsight.ts) is untouched — this
+ * other consumer (WelcomeFlow, MoneyOpportunitiesHero, FloatingAddButton's
+ * quick-actions tray, etc.), unaffected by this card's own toned-down
+ * treatment. The milestone-derived deduplication (dailyInsight.ts) is
+ * untouched — this
  * component still only renders whatever `insight` it's given.
  */
 export function LuluCheckInCard({
