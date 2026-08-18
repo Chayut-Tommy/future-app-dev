@@ -71,8 +71,14 @@ console.log('\n=== 2. Forward — every route, from a settled chooser (real impo
   for (const route of ALL_ROUTES) {
     const next = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route });
     assert(
-      `2. FORWARD into '${route}' from chooser: current becomes '${route}', outgoing becomes 'chooser', status 'transitioning', direction 'forward', returnStack defaults to ['chooser'] when omitted`,
-      next.current === route && next.outgoing === 'chooser' && next.status === 'transitioning' && next.direction === 'forward' && JSON.stringify(next.returnStack) === JSON.stringify(['chooser'])
+      // INVERTED BY DESIGN 5.1 WAVE 3 (audit D5-001). The old contract was
+      // "an omitted returnStack defaults to ['chooser']" — and that default
+      // WAS the defect: a direct quick action inherited a chooser step and
+      // its Back revealed a catalogue the customer never opened. An omitted
+      // stack now means "no return step"; the chooser is seeded only by an
+      // explicit catalogue selection. Every other field is unchanged.
+      `2. FORWARD into '${route}' from chooser: current becomes '${route}', outgoing becomes 'chooser', status 'transitioning', direction 'forward', returnStack defaults to [] when omitted`,
+      next.current === route && next.outgoing === 'chooser' && next.status === 'transitioning' && next.direction === 'forward' && JSON.stringify(next.returnStack) === JSON.stringify([])
     );
   }
 }
@@ -85,14 +91,14 @@ console.log("\n=== 3. Forward into 'chooser' itself is rejected (not a valid des
 
 console.log('\n=== 4. Rapid repeated Forward is ignored (first accepted action wins) ===');
 {
-  const afterFirst = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'goal' });
-  const afterSecond = reduceAddWorkspaceTransition(afterFirst, { type: 'FORWARD', route: 'creditCard' });
+  const afterFirst = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'goal', returnStack: ['chooser'] });
+  const afterSecond = reduceAddWorkspaceTransition(afterFirst, { type: 'FORWARD', route: 'creditCard', returnStack: ['chooser'] });
   assert('4a. a second Forward (different route) while transitioning is ignored — current stays goal', afterSecond.current === 'goal' && afterSecond === afterFirst);
 }
 
 console.log('\n=== 5. Transition completion unlocks the controller ===');
 {
-  const afterForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  const afterForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   const settled = reduceAddWorkspaceTransition(afterForward, { type: 'TRANSITION_COMPLETE' });
   assert('5a. TRANSITION_COMPLETE settles: current stays bill, outgoing null, status idle, direction null', settled.current === 'bill' && settled.outgoing === null && settled.status === 'idle' && settled.direction === null);
 }
@@ -132,7 +138,7 @@ console.log('\n=== 9. Rapid repeated Back is ignored ===');
 console.log('\n=== 10. Forward/Back are rejected from the wrong settled step ===');
 {
   const onGoal: AddWorkspaceTransitionState = { current: 'goal', outgoing: null, status: 'idle', direction: null, returnStack: ['chooser'] };
-  const forwardWhileOnGoal = reduceAddWorkspaceTransition(onGoal, { type: 'FORWARD', route: 'creditCard' });
+  const forwardWhileOnGoal = reduceAddWorkspaceTransition(onGoal, { type: 'FORWARD', route: 'creditCard', returnStack: ['chooser'] });
   assert('10a. FORWARD while settled on a non-chooser route is rejected (must Back to chooser first — no direct destination-to-destination hop)', forwardWhileOnGoal === onGoal);
   const backWhileOnChooser = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'BACK' });
   assert('10b. BACK while settled on chooser is rejected (already covered by 8a, re-confirmed here alongside 10a for symmetry)', backWhileOnChooser === initialAddWorkspaceTransitionState);
@@ -140,7 +146,7 @@ console.log('\n=== 10. Forward/Back are rejected from the wrong settled step ===
 
 console.log('\n=== 11. Interrupted transition — a Back arriving mid-Forward is rejected, not queued ===');
 {
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'incomeSource' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'incomeSource', returnStack: ['chooser'] });
   const backDuring = reduceAddWorkspaceTransition(midForward, { type: 'BACK' });
   assert('11a. BACK arriving while a Forward is still transitioning is rejected outright', backDuring === midForward);
 }
@@ -149,13 +155,13 @@ console.log('\n=== 12. Interrupted transition — a Forward arriving mid-Back is
 {
   const settled: AddWorkspaceTransitionState = { current: 'expense', outgoing: null, status: 'idle', direction: null, returnStack: ['chooser'] };
   const midBack = reduceAddWorkspaceTransition(settled, { type: 'BACK' });
-  const forwardDuring = reduceAddWorkspaceTransition(midBack, { type: 'FORWARD', route: 'bill' });
+  const forwardDuring = reduceAddWorkspaceTransition(midBack, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   assert('12a. FORWARD arriving while a Back is still transitioning is rejected outright', forwardDuring === midBack);
 }
 
 console.log('\n=== 13. Host dismissal during a transition / reopening — RESET ===');
 {
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'incomeReceived' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'incomeReceived', returnStack: ['chooser'] });
   const reset = reduceAddWorkspaceTransition(midForward, { type: 'RESET' });
   assert('13a. RESET from a mid-transition state returns exactly the initial state', reset.current === 'chooser' && reset.outgoing === null && reset.status === 'idle' && reset.direction === null);
   assert('13b. RESET returns a value equal to initialAddWorkspaceTransitionState (same shape)', JSON.stringify(reset) === JSON.stringify(initialAddWorkspaceTransitionState));
@@ -163,16 +169,16 @@ console.log('\n=== 13. Host dismissal during a transition / reopening — RESET 
 
 console.log('\n=== 14. Reopening does not retain a stale transition lock — fresh Forward works normally after RESET ===');
 {
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability', returnStack: ['chooser'] });
   const reset = reduceAddWorkspaceTransition(midForward, { type: 'RESET' });
-  const freshForward = reduceAddWorkspaceTransition(reset, { type: 'FORWARD', route: 'goal' });
+  const freshForward = reduceAddWorkspaceTransition(reset, { type: 'FORWARD', route: 'goal', returnStack: ['chooser'] });
   assert('14a. a fresh Forward after RESET is accepted normally (not permanently locked by the interrupted prior transition)', freshForward.current === 'goal' && freshForward.status === 'transitioning');
 }
 
 console.log('\n=== 15. Reduced-motion progression — synchronous FORWARD immediately followed by TRANSITION_COMPLETE ===');
 {
   let state = initialAddWorkspaceTransitionState;
-  state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route: 'creditCard' });
+  state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route: 'creditCard', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   assert('15a. reduced-motion Forward settles immediately on creditCard, idle, no direction — same reducer, no special-cased branch needed', state.current === 'creditCard' && state.outgoing === null && state.status === 'idle' && state.direction === null);
   state = reduceAddWorkspaceTransition(state, { type: 'BACK' });
@@ -182,7 +188,7 @@ console.log('\n=== 15. Reduced-motion progression — synchronous FORWARD immedi
 
 console.log('\n=== 16. isRouteActiveInTransition — real import ===');
 {
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   assert("16a. the entering route ('bill') is active during its own Forward", isRouteActiveInTransition(midForward, 'bill'));
   assert("16b. the exiting route ('chooser') is active during that same Forward", isRouteActiveInTransition(midForward, 'chooser'));
   assert("16c. an unrelated, uninvolved route ('goal') is NOT active during bill's transition", !isRouteActiveInTransition(midForward, 'goal'));
@@ -202,7 +208,7 @@ console.log('\n=== 17. isRouteSettledFront — real import (the ONLY state that 
   for (const route of ALL_ROUTES) {
     assert(`17b. '${route}' is NOT settled-front in the initial (chooser-settled) state`, !isRouteSettledFront(initialAddWorkspaceTransitionState, route));
   }
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'creditCard' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'creditCard', returnStack: ['chooser'] });
   assert('17c. mid-Forward, the entering route is NOT yet settled-front (status is transitioning, not idle)', !isRouteSettledFront(midForward, 'creditCard'));
   assert('17d. mid-Forward, chooser is NOT settled-front either (it is exiting)', !isRouteSettledFront(midForward, 'chooser'));
   const settled = reduceAddWorkspaceTransition(midForward, { type: 'TRANSITION_COMPLETE' });
@@ -213,7 +219,10 @@ console.log('\n=== 18. Every route is independently reachable and returnable —
 {
   for (const route of ALL_ROUTES) {
     let state = initialAddWorkspaceTransitionState;
-    state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route });
+    // Wave 3: a Back-to-chooser round trip is by definition a CATALOGUE
+    // journey, so the chooser step is now seeded explicitly rather than
+    // relying on the removed implicit default (D5-001).
+    state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route, returnStack: ['chooser'] });
     state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
     state = reduceAddWorkspaceTransition(state, { type: 'BACK' });
     state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
@@ -221,12 +230,14 @@ console.log('\n=== 18. Every route is independently reachable and returnable —
   }
 }
 
-console.log("\n=== 19. Nested-handoff amendment — FORWARD accepts an explicit returnStack override, defaulting to ['chooser'] when omitted ===");
+console.log("\n=== 19. Nested-handoff amendment — FORWARD accepts an explicit returnStack override, defaulting to [] when omitted ===");
 {
   const withReturnStack = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability', returnStack: ['bill', 'chooser'] });
   assert("19a. FORWARD with returnStack:['bill','chooser'] stores it verbatim on the new state", JSON.stringify(withReturnStack.returnStack) === JSON.stringify(['bill', 'chooser']));
   const withoutReturnStack = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'creditCard' });
-  assert("19b. FORWARD with no returnStack defaults to ['chooser'] (every ordinary tile entry, unchanged)", JSON.stringify(withoutReturnStack.returnStack) === JSON.stringify(['chooser']));
+  // INVERTED BY WAVE 3 (D5-001): an omitted stack now means "no return
+  // step". The chooser is seeded only by an explicit catalogue selection.
+  assert("19b. FORWARD with no returnStack defaults to [] — the chooser step is seeded only by an explicit catalogue selection", JSON.stringify(withoutReturnStack.returnStack) === JSON.stringify([]));
 }
 
 console.log("\n=== 20. FORCE_TO_CHOOSER — host-only orchestration primitive for a handoff's intermediate step ===");
@@ -236,7 +247,7 @@ console.log("\n=== 20. FORCE_TO_CHOOSER — host-only orchestration primitive fo
   assert('20a. FORCE_TO_CHOOSER from a settled non-chooser route always targets chooser, regardless of returnStack', forced.current === 'chooser' && forced.outgoing === 'bill' && forced.status === 'transitioning' && forced.direction === 'back' && forced.returnStack.length === 0);
   const rejected = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORCE_TO_CHOOSER' });
   assert('20b. FORCE_TO_CHOOSER from chooser itself is a no-op, exactly like BACK', rejected === initialAddWorkspaceTransitionState);
-  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'goal' });
+  const midForward = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'goal', returnStack: ['chooser'] });
   const rejectedMidTransition = reduceAddWorkspaceTransition(midForward, { type: 'FORCE_TO_CHOOSER' });
   assert('20c. FORCE_TO_CHOOSER while already transitioning is rejected, exactly like BACK', rejectedMidTransition === midForward);
 }
@@ -247,7 +258,7 @@ console.log('\n=== 21. Single-level handoff (Bill -> Liability) — BACK returns
   // FORWARD with an explicit returnStack override) — see
   // AddAnythingSheet.tsx's handoffToRoute for the full host-level sequence
   // this unit test exercises the reducer's own contribution to.
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   assert("21a. settled on bill with returnStack ['chooser']", state.current === 'bill' && JSON.stringify(state.returnStack) === JSON.stringify(['chooser']));
   // Captured BEFORE forcing to chooser — this is exactly what the host
@@ -275,7 +286,7 @@ console.log('\n=== 21. Single-level handoff (Bill -> Liability) — BACK returns
 
 console.log('\n=== 22. A destination later re-entered directly from the chooser gets a fresh returnStack, even if it still holds a draft originally opened via a handoff ===');
 {
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   const billReturnStack = state.returnStack; // captured BEFORE forcing to chooser, same as 21 above
   state = reduceAddWorkspaceTransition(state, { type: 'FORCE_TO_CHOOSER' });
@@ -291,7 +302,7 @@ console.log('\n=== 22. A destination later re-entered directly from the chooser 
   // — even though its underlying draft still exists from the handoff
   // session, THIS forward transition's own returnStack correctly reflects
   // the current navigation path, not the draft's original origin.
-  state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route: 'liability' });
+  state = reduceAddWorkspaceTransition(state, { type: 'FORWARD', route: 'liability', returnStack: ['chooser'] });
   assert("22b. re-entering liability directly from chooser sets returnStack to ['chooser'], not the stale ['bill']", JSON.stringify(state.returnStack) === JSON.stringify(['chooser']));
 }
 
@@ -303,7 +314,7 @@ console.log('\n=== 23. REQUIRED — full nested handoff chain: chooser -> bill -
   // fix. This is the real-import proof that the array-based returnStack
   // design actually preserves every ancestor level through a two-level-
   // deep handoff, not just the immediate parent.
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   assert("23a. chooser -> bill: settled with returnStack ['chooser']", state.current === 'bill' && JSON.stringify(state.returnStack) === JSON.stringify(['chooser']));
 
@@ -348,12 +359,12 @@ console.log('\n=== 23. REQUIRED — full nested handoff chain: chooser -> bill -
 
 console.log('\n=== 24. Direct Liability or Credit Card entry (no handoff) still Backs directly to the chooser ===');
 {
-  let liabilityState = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability' });
+  let liabilityState = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability', returnStack: ['chooser'] });
   liabilityState = reduceAddWorkspaceTransition(liabilityState, { type: 'TRANSITION_COMPLETE' });
   liabilityState = reduceAddWorkspaceTransition(liabilityState, { type: 'BACK' });
   assert('24a. direct-entry Liability Backs straight to chooser', liabilityState.current === 'chooser' && liabilityState.outgoing === 'liability');
 
-  let creditCardState = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'creditCard' });
+  let creditCardState = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'creditCard', returnStack: ['chooser'] });
   creditCardState = reduceAddWorkspaceTransition(creditCardState, { type: 'TRANSITION_COMPLETE' });
   creditCardState = reduceAddWorkspaceTransition(creditCardState, { type: 'BACK' });
   assert('24b. direct-entry Credit Card Backs straight to chooser', creditCardState.current === 'chooser' && creditCardState.outgoing === 'creditCard');

@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { focusElement } from '../../lib/a11yFocus';
 import { combinedAssemblyWidth, HORIZONTAL_MARGIN, trayBottomOffset } from '../../navigation/floatingNavGeometry';
-import { buildQuickActionTiles, QuickActionKey } from './quickActions';
-import { askNolieCapability } from '../../lib/askNolie';
+import { buildQuickActionTiles, QuickActionKey, QuickActionTile } from './quickActions';
+import { designLayout } from '../../theme/semanticTokens';
 import { brand } from '../../lib/brand';
 import { TrayPhase } from './floatingAddTransition';
 
@@ -68,9 +68,9 @@ export function QuickActionsTray({
    * AddAnythingSheet. Never a guessed timeout. */
   onClosed: () => void;
 }) {
-  const { colors, spacing, radius, typography, cardShadow, glow, aiAccentColor, onAiAccent, minTouchTarget } = useTheme();
+  const { colors, semantic, spacing, radius, typography, cardShadow, glow, aiAccentColor, onAiAccent, minTouchTarget } = useTheme();
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
 
   const progress = useRef(new Animated.Value(0)).current;
   const panelRef = useRef<View>(null);
@@ -154,7 +154,10 @@ export function QuickActionsTray({
     onRequestDismiss();
   }
 
-  const tiles = useMemo(() => buildQuickActionTiles(askNolieCapability, brand.assistantName), []);
+  const tiles = useMemo(() => buildQuickActionTiles(), []);
+  // <=360pt is the Design 5.1 compact breakpoint; large accessibility text
+  // needs the same taller-tile treatment so two-line labels never truncate.
+  const compactLayout = windowWidth <= designLayout.breakpoints.compactMax || fontScale >= 1.3;
   const trayWidth = combinedAssemblyWidth(windowWidth);
 
   const styles = useMemo(
@@ -174,6 +177,17 @@ export function QuickActionsTray({
           ...cardShadow,
         },
         row: { flexDirection: 'row' },
+        // Dashed, neutral container: distinct from the five actions without
+        // reading as disabled (doc A p.4).
+        tileMore: {
+          borderWidth: 1.5,
+          borderStyle: 'dashed',
+          borderColor: semantic.border,
+          borderRadius: radius.control,
+          backgroundColor: 'transparent',
+        },
+        tileIconMore: { backgroundColor: semantic.bgRaised },
+        tileLabelMore: { color: semantic.textSecondary },
         tile: {
           flex: 1,
           minHeight: Math.max(minTouchTarget, 72),
@@ -218,7 +232,13 @@ export function QuickActionsTray({
     ],
   };
 
-  const rows = [tiles.slice(0, 3), tiles.slice(3, 6), tiles.slice(6, 9)];
+  // Design 5.1 doc A p.4/p.15 — 3x2 standard; at compact widths and
+  // accessibility text sizes it reflows to 2x3 with taller tiles so labels
+  // wrap instead of truncating. Purely a layout choice: the tile list, its
+  // order and every destination are identical in both shapes.
+  const columns = compactLayout ? 2 : 3;
+  const rows: QuickActionTile[][] = [];
+  for (let i = 0; i < tiles.length; i += columns) rows.push(tiles.slice(i, i + columns));
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={interactive ? 'box-none' : 'none'}>
@@ -244,16 +264,16 @@ export function QuickActionsTray({
             {row.map((tile) => (
               <TouchableOpacity
                 key={tile.key}
-                style={styles.tile}
+                style={[styles.tile, tile.isMore && styles.tileMore]}
                 onPress={() => handleSelect(tile.key)}
                 activeOpacity={0.7}
                 accessibilityRole="menuitem"
                 accessibilityLabel={tile.label}
               >
-                <View style={[styles.tileIcon, tile.ambient && styles.tileIconAmbient]}>
-                  <Ionicons name={tile.icon as never} size={18} color={tile.ambient ? onAiAccent : colors.textPrimary} importantForAccessibility="no" />
+                <View style={[styles.tileIcon, tile.isMore && styles.tileIconMore]}>
+                  <Ionicons name={tile.icon as never} size={18} color={tile.isMore ? semantic.textSecondary : semantic.textPrimary} importantForAccessibility="no" />
                 </View>
-                <Text style={[styles.tileLabel, tile.ambient && styles.tileLabelAmbient]} numberOfLines={2}>
+                <Text style={[styles.tileLabel, tile.isMore && styles.tileLabelMore]} numberOfLines={2}>
                   {tile.label}
                 </Text>
               </TouchableOpacity>

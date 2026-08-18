@@ -162,10 +162,17 @@ console.log('\n=== 8. Premium-transition correction — the height-measurement p
       !/AddWealthItemModal|TransferForm/.test(GEOMETRY_SRC)
   );
   assert(
-    '8d. no new guessed/fixed pixel height constant was introduced anywhere in AddAnythingSheet.tsx — the only remaining literal-pixel height in the file is the pre-existing, unrelated 44px iconBadge',
+    // The intent here is that no GUESSED sheet/workspace height is
+    // reintroduced (the pilot removed those). Wave 3's canonical catalogue
+    // adds two DOCUMENTED Design 5.1 dimensions — the 52pt task row (doc A
+    // p.5) and the 28pt leading icon tile (doc B p.3) — which are specified
+    // values, not guesses. They are allow-listed explicitly rather than by
+    // relaxing the pattern, so any genuinely new literal height still fails.
+    '8d. no new guessed/fixed pixel height constant was introduced anywhere in AddAnythingSheet.tsx — only the pre-existing 44px iconBadge and the documented Design 5.1 catalogue row/icon dimensions',
     (() => {
-      const matches = ADD_ANYTHING_SRC.match(/\b(min)?[Hh]eight:\s*\d+/g) || [];
-      return matches.length === 1 && matches[0] === 'height: 44';
+      const allowed: string[] = ['height: 44', 'minHeight: 52', 'height: 28'];
+      const matches: string[] = ADD_ANYTHING_SRC.match(/\b(min)?[Hh]eight:\s*\d+/g) ?? [];
+      return matches.every((m) => allowed.includes(m)) && matches.includes('height: 44');
     })()
   );
   assert(

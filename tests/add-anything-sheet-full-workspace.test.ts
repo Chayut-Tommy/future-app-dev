@@ -45,6 +45,17 @@
 
 import { readFileSync } from 'fs';
 
+// DESIGN 5.1 WAVE 3 — signatures widened, behaviour NOT changed.
+// enterRoute/reselectOrEnter/chooseAssetTile now take an explicit
+// `fromCatalogue` flag so a directly-entered task (quick tile or contextual
+// screen action) seeds an EMPTY return stack instead of inheriting
+// ['chooser'] — audit D5-001, where a direct quick action's Back revealed a
+// catalogue the customer never opened. These assertions match source SHAPE,
+// so their patterns are widened to the new signature; every behavioural
+// guarantee they protect (first-tap-wins lock, guard-before-transition
+// ordering, one-reset-one-transition, chooser-vs-handoff branching) is
+// asserted unchanged. No financial, persistence or phase expectation moved.
+
 let failures = 0;
 let total = 0;
 function assert(label: string, pass: boolean) {
@@ -155,15 +166,15 @@ console.log("\n=== 3. Tile-to-route mapping — every tile reaches exactly one d
   );
   assert(
     '3c. handleTilePress dispatches: asset presets -> chooseAssetTile (its own global-guard-then-decision path), transfer -> a dirty-check into presentSwitchGuard or enterTransfer directly, every other tile -> reselectOrEnter via TILE_TO_ROUTE — a single, exhaustive dispatch table, not one handler per tile',
-    /function handleTilePress\(key: AddAnythingKind\) \{\s*\n\s*const assetPresetType = ASSET_PRESET_MAP\[key\];\s*\n\s*if \(assetPresetType\) \{\s*\n\s*chooseAssetTile\(key\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*if \(key === 'transfer'\) \{\s*\n\s*const dirty = findParkedDirtyDraft\(\);\s*\n\s*if \(dirty\) \{\s*\n\s*presentSwitchGuard\(/.test(ADD_ANYTHING_SRC)
+    /function handleTilePress\(key: AddAnythingKind, fromCatalogue = true\) \{\s*\n\s*const assetPresetType = ASSET_PRESET_MAP\[key\];\s*\n\s*if \(assetPresetType\) \{\s*\n\s*chooseAssetTile\(key, fromCatalogue\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*if \(key === 'transfer'\) \{\s*\n\s*const dirty = findParkedDirtyDraft\(\);\s*\n\s*if \(dirty\) \{\s*\n\s*presentSwitchGuard\(/.test(ADD_ANYTHING_SRC)
   );
   assert('3d. every tile onPress calls handleTilePress(o.key) — one call site, not a per-tile inline branch', /onPress=\{\(\) => handleTilePress\(o\.key\)\}/.test(ADD_ANYTHING_SRC));
 }
 
 console.log('\n=== 4. Rapid-tap locking — every entry/handoff path checks selectionLockRef before doing anything else (Class C) ===');
 {
-  assert('4a. enterRoute checks selectionLockRef first, synchronously, before onCommit/beginForwardTransition', /function enterRoute\(route: AddWorkspaceRoute, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins\s*\n\s*selectionLockRef\.current = true;/.test(ADD_ANYTHING_SRC));
-  assert('4b. proceedIntoAddAsset (Asset\'s own entry point) checks the SAME selectionLockRef first', /function proceedIntoAddAsset\(tileKey: AddAnythingKind, presetType: AssetType, freshInstance: boolean\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins/.test(ADD_ANYTHING_SRC));
+  assert('4a. enterRoute checks selectionLockRef first, synchronously, before onCommit/beginForwardTransition', /function enterRoute\(route: AddWorkspaceRoute, fromCatalogue: boolean, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins\s*\n\s*selectionLockRef\.current = true;/.test(ADD_ANYTHING_SRC));
+  assert('4b. proceedIntoAddAsset (Asset\'s own entry point) checks the SAME selectionLockRef first', /function proceedIntoAddAsset\(tileKey: AddAnythingKind, presetType: AssetType, freshInstance: boolean, fromCatalogue: boolean\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins/.test(ADD_ANYTHING_SRC));
   assert('4c. backToChooser and handoffToRoute each have their own dedicated returningToChooserRef re-entrancy guard (cannot reuse selectionLockRef, which is legitimately still held)', (ADD_ANYTHING_SRC.match(/if \(returningToChooserRef\.current\) return;/g) || []).length === 2);
   assert(
     '4d. handoffToRoute deliberately does NOT check/release selectionLockRef between its BACK and FORWARD halves — the lock stays continuously held for the whole handoff (no interactive chooser rest state in between)',
@@ -254,7 +265,7 @@ console.log("\n=== 9. \"Reselecting the same destination restores; a different o
 {
   assert(
     '9a. reselectOrEnter restores an already-entered destination directly (no guard) and only routes a genuinely-new entry through the presentSwitchGuard-based dirty check',
-    /function reselectOrEnter\(route: Exclude<AddWorkspaceRoute, 'chooser' \| 'transfer' \| 'asset'>\) \{[\s\S]{0,300}?if \(state\.everEnteredRef\.current\) \{\s*\n\s*enterRoute\(route, commit\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*const dirty = findParkedDirtyDraft\(\);/.test(ADD_ANYTHING_SRC)
+    /function reselectOrEnter\(route: Exclude<AddWorkspaceRoute, 'chooser' \| 'transfer' \| 'asset'>, fromCatalogue: boolean\) \{[\s\S]{0,300}?if \(state\.everEnteredRef\.current\) \{\s*\n\s*enterRoute\(route, fromCatalogue, commit\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*const dirty = findParkedDirtyDraft\(\);/.test(ADD_ANYTHING_SRC)
   );
   assert(
     "9b. presentSwitchGuard's caller in reselectOrEnter checks ALL eight draft-holding destinations (via draftDestinations/findParkedDirtyDraft) — not just Asset's own dirty state as the Option B pilot's guardNavigateAwayFromAddAsset did",
@@ -263,7 +274,7 @@ console.log("\n=== 9. \"Reselecting the same destination restores; a different o
   );
   assert(
     "9c. the confirmation copy is looked up per-destination via routeDisplayName, not one generic message for every case, and presented through presentSwitchGuard (Keep editing reopens the source; Discard & continue resets it once and proceeds once)",
-    /presentSwitchGuard\(\s*\n\s*routeDisplayName\(dirty\.route\),\s*\n\s*routeDisplayName\(route\),\s*\n\s*\(\) => reopenSource\(dirty\.route\),\s*\n\s*\(\) => \{\s*\n\s*resetDraft\(dirty\.route\);\s*\n\s*enterRoute\(route, commit\);/.test(ADD_ANYTHING_SRC)
+    /presentSwitchGuard\(\s*\n\s*routeDisplayName\(dirty\.route\),\s*\n\s*routeDisplayName\(route\),\s*\n\s*\(\) => reopenSource\(dirty\.route\),\s*\n\s*\(\) => \{\s*\n\s*resetDraft\(dirty\.route\);\s*\n\s*enterRoute\(route, fromCatalogue, commit\);/.test(ADD_ANYTHING_SRC)
   );
 }
 
@@ -360,7 +371,7 @@ console.log('\n=== 14. Asset (Option B pilot) behaviour genuinely unchanged, jus
   assert(
     '14e. chooseAssetTile\'s inner type-vs-type decision (proceedWithAssetTileDecision) is preserved exactly as the already-tested Option B pilot logic, unchanged by this correction',
     (() => {
-      const start = ADD_ANYTHING_SRC.indexOf('function proceedWithAssetTileDecision(tileKey: AddAnythingKind, presetType: AssetType)');
+      const start = ADD_ANYTHING_SRC.indexOf('function proceedWithAssetTileDecision(tileKey: AddAnythingKind, presetType: AssetType, fromCatalogue: boolean)');
       const end = ADD_ANYTHING_SRC.indexOf('\n  // Successful Save', start);
       const body = ADD_ANYTHING_SRC.slice(start, end === -1 ? undefined : end);
       return /decideAssetTileSelection/.test(body) && !/presentSwitchGuard/.test(body);
@@ -368,7 +379,7 @@ console.log('\n=== 14. Asset (Option B pilot) behaviour genuinely unchanged, jus
   );
   assert(
     "14f. discard-orchestration correction, item 7 — the previously-disclosed Asset gap is now closed: chooseAssetTile checks findParkedDirtyDraft('asset') (excluding Asset's own dirty state, a separate concern) BEFORE reaching the inner decision, and presents the same presentSwitchGuard confirmation every other tile uses when some OTHER destination is dirty",
-    /function chooseAssetTile\(tileKey: AddAnythingKind\) \{[\s\S]{0,300}?const otherDirty = findParkedDirtyDraft\('asset'\);\s*\n\s*if \(otherDirty\) \{\s*\n\s*presentSwitchGuard\(/.test(ADD_ANYTHING_SRC)
+    /function chooseAssetTile\(tileKey: AddAnythingKind, fromCatalogue: boolean\) \{[\s\S]{0,300}?const otherDirty = findParkedDirtyDraft\('asset'\);\s*\n\s*if \(otherDirty\) \{\s*\n\s*presentSwitchGuard\(/.test(ADD_ANYTHING_SRC)
   );
 }
 

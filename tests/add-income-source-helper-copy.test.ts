@@ -86,20 +86,30 @@ console.log('\n=== 3. "Record income received" chooser tile already wraps cleanl
   // found no code change was needed here: the label already wraps freely.
   assert(
     "3a. the 'Record income received' tile label is declared exactly as expected, in AddAnythingSheet.tsx's GROUPS list",
-    /\{ key: 'income_received', label: 'Record income received', emoji: '💰' \}/.test(ADD_ANYTHING_SRC)
+    // Wave 3 added the Design 5.1 'one-off' qualifier alongside the label
+    // (doc A p.5). The LABEL ITSELF — what this assertion exists to protect —
+    // is unchanged; only a sibling field was added to the same entry.
+    /\{ key: 'income_received', label: 'Record income received', qualifier: 'one-off', emoji: '💰' \}/.test(ADD_ANYTHING_SRC)
   );
   assert(
-    "3b. styles.tileLabel itself sets no numberOfLines-equivalent, no fixed width, and no fixed height — the actual reason every tile label (including 'Record income received', the longest) is already free to wrap onto a second line",
+    // Wave 3 replaced the tile grid with full-width catalogue rows (doc A
+    // p.5). The protected intent is unchanged: the longest label, 'Record
+    // income received', must never be squeezed onto one truncated line. The
+    // row label now flexes to fill the row and carries no fixed width or
+    // height, which is what guarantees it.
+    "3b. styles.rowLabel sets no fixed width and no fixed height, and flexes — so every catalogue label (including 'Record income received', the longest) is free to wrap",
     (() => {
-      const styleMatch = ADD_ANYTHING_SRC.match(/tileLabel: \{[^}]*\}/);
+      const styleMatch = ADD_ANYTHING_SRC.match(/rowLabel: \{[^}]*\}/);
       if (!styleMatch) return false;
       const style = styleMatch[0];
-      return !/numberOfLines/.test(style) && !/\bwidth:/.test(style) && !/\bheight:/.test(style);
+      return /flex: 1/.test(style) && !/\bwidth:/.test(style) && !/\bheight:/.test(style);
     })()
   );
   assert(
-    "3c. the tile label Text element itself has no numberOfLines prop applied at the JSX call site either (the constraint-free style in 3b isn't overridden by a prop)",
-    /<Text style=\{styles\.tileLabel\}>\{o\.label\}<\/Text>/.test(ADD_ANYTHING_SRC)
+    // The row label may wrap to TWO lines — wrapping, not truncating to one.
+    // A single-line cap is what this assertion exists to prevent.
+    "3c. the catalogue label Text allows wrapping to a second line and is never capped at one line",
+    /<Text style=\{styles\.rowLabel\} numberOfLines=\{2\}>/.test(ADD_ANYTHING_SRC) && !/numberOfLines=\{1\}/.test(ADD_ANYTHING_SRC)
   );
 }
 

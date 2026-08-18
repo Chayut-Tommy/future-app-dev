@@ -59,33 +59,32 @@ console.log('=== 1. floatingNavGeometry.ts — shared layout math (Class A) ==='
 
 console.log('\n=== 2. quickActions.ts — tray tile -> AddAnythingSheet destination mapping (Class A) ===');
 {
-  assert('2a. QUICK_ACTION_ORDER has exactly 9 tiles (the 3x3 grid)', QUICK_ACTION_ORDER.length === 9);
-  assert('2b. QUICK_ACTION_ORDER has no duplicate keys', new Set(QUICK_ACTION_ORDER).size === 9);
+  // SUPERSEDED BY DESIGN 5.1 WAVE 3 (authorised; handoff §2, doc A p.4-5).
+  // This block previously asserted the nine-tile 3x3 tray. Wave 3 replaces it
+  // with exactly six tiles and moves the removed actions into the canonical
+  // catalogue, because:
+  //   - `addAsset` resolved to the narrow `investment`/ETF form despite its
+  //     broad label (audit D5-003);
+  //   - `addAccount` opened a second scoped chooser behind a "quick" action;
+  //   - `addDebt` competed with the catalogue's own taxonomy (D5-010);
+  //   - the centre "Add anything" tile duplicated the catalogue title and was
+  //     the Ask Nolie placeholder, which doc A p.16 removes from the IA.
+  // Only presentation/navigation expectations changed here. No financial,
+  // phase-machine or persistence expectation was touched, and the destination
+  // for every RETAINED tile is asserted unchanged below.
+  // Full Wave 3 coverage: tests/design5-add-architecture.test.ts.
+  assert('2a. QUICK_ACTION_ORDER has exactly 6 tiles (the 3x2 grid)', QUICK_ACTION_ORDER.length === 6);
+  assert('2b. QUICK_ACTION_ORDER has no duplicate keys', new Set(QUICK_ACTION_ORDER).size === 6);
   assert(
-    "2c. Record income opens AddAnythingSheet at 'income_received' (a recorded payment, not a new recurring income source)",
-    resolveQuickAction('recordIncome', false).sheet?.initialKind === 'income_received'
+    "2c. Income received opens AddAnythingSheet at 'income_received' (a recorded payment, not a new recurring income source) — unchanged destination",
+    resolveQuickAction('income_received').sheet?.initialKind === 'income_received'
   );
-  assert("2d. Record spending opens AddAnythingSheet at 'expense'", resolveQuickAction('recordSpending', false).sheet?.initialKind === 'expense');
-  assert("2e. Add bill opens AddAnythingSheet at 'bill'", resolveQuickAction('addBill', false).sheet?.initialKind === 'bill');
-  assert(
-    '2f. Add account opens the existing balance-scoped chooser (onlyBalances) — reuses Select Balances\' own "Add a money balance" entry point, not a new form',
-    resolveQuickAction('addAccount', false).sheet?.onlyBalances === true && resolveQuickAction('addAccount', false).sheet?.initialKind === undefined
-  );
-  assert("2g. Move money opens AddAnythingSheet at 'transfer'", resolveQuickAction('moveMoney', false).sheet?.initialKind === 'transfer');
-  assert(
-    "2h. Add debt opens AddAnythingSheet at 'liability' — that route's own internal type picker already includes credit card/BNPL/car loan/personal loan/mortgage (existing behaviour, not duplicated here)",
-    resolveQuickAction('addDebt', false).sheet?.initialKind === 'liability'
-  );
-  assert("2i. Add asset opens AddAnythingSheet at a concrete asset preset ('investment'), landing in the existing always-visible type-chip form", resolveQuickAction('addAsset', false).sheet?.initialKind === 'investment');
-  assert("2j. Add goal opens AddAnythingSheet at 'goal'", resolveQuickAction('addGoal', false).sheet?.initialKind === 'goal');
-  assert(
-    '2k. centreAction falls back to the generic Add Anything chooser (no initialKind, no onlyBalances) when Ask Nolie is not enabled',
-    (() => {
-      const r = resolveQuickAction('centerAction', false).sheet;
-      return r !== null && r?.initialKind === undefined && r?.onlyBalances === undefined;
-    })()
-  );
-  assert('2l. centreAction opens nothing (sheet: null) when Ask Nolie IS enabled — the caller routes to the real capability instead', resolveQuickAction('centerAction', true).sheet === null);
+  assert("2d. Record spending opens AddAnythingSheet at 'expense' — unchanged destination", resolveQuickAction('record_spending').sheet?.initialKind === 'expense');
+  assert("2e. Add bill opens AddAnythingSheet at 'bill' — unchanged destination", resolveQuickAction('add_bill').sheet?.initialKind === 'bill');
+  assert("2g. Move money opens AddAnythingSheet at 'transfer' — unchanged destination", resolveQuickAction('move_money').sheet?.initialKind === 'transfer');
+  assert("2j. Add goal opens AddAnythingSheet at 'goal' — unchanged destination", resolveQuickAction('add_goal').sheet?.initialKind === 'goal');
+  assert('2k. More opens the catalogue (no initialKind) and is the only tile that seeds the chooser return step', resolveQuickAction('more').sheet?.initialKind === undefined && resolveQuickAction('more').opensCatalogue === true);
+  assert('2l. every direct quick action is marked as NOT opening the catalogue', QUICK_ACTION_ORDER.filter((k) => k !== 'more').every((k) => resolveQuickAction(k).opensCatalogue === false));
 }
 
 console.log('\n=== 3. askNolie.ts — typed capability/feature-flag integration point (Class A) ===');
@@ -107,26 +106,20 @@ console.log('\n=== 3. askNolie.ts — typed capability/feature-flag integration 
   );
 }
 
-console.log('\n=== 4. buildQuickActionTiles — tile copy/ambient-styling resolution (Class A) ===');
+console.log('\n=== 4. buildQuickActionTiles — tile copy resolution (Class A) ===');
 {
-  const disabledTiles = buildQuickActionTiles({ enabled: false }, 'Nolie');
-  const enabledTiles = buildQuickActionTiles({ enabled: true }, 'Nolie');
-  assert('4a. exactly 9 tiles are built, in QUICK_ACTION_ORDER order', disabledTiles.length === 9 && disabledTiles.every((t, i) => t.key === QUICK_ACTION_ORDER[i]));
-  assert(
-    '4b. the centre tile reads "Add anything" and is NOT ambient-styled while Ask Nolie is disabled — the strongest branded treatment is reserved for the real capability, never shown for the fallback',
-    (() => {
-      const center = disabledTiles.find((t) => t.key === 'centerAction')!;
-      return center.label === 'Add anything' && center.ambient === false;
-    })()
-  );
-  assert(
-    '4c. the centre tile reads "Ask Nolie" and IS ambient-styled once the capability is enabled',
-    (() => {
-      const center = enabledTiles.find((t) => t.key === 'centerAction')!;
-      return center.label === 'Ask Nolie' && center.ambient === true;
-    })()
-  );
-  assert('4d. no tile other than the centre one is ever ambient-styled, in either capability state', [...disabledTiles, ...enabledTiles].filter((t) => t.key !== 'centerAction').every((t) => t.ambient === false));
+  // SUPERSEDED BY DESIGN 5.1 WAVE 3 (authorised; doc A p.4/p.16). The old
+  // 4b-4d asserted the centre tile's "Add anything" / "Ask Nolie" swap and
+  // its ambient branding. Ask Nolie is now ABSENT from the production IA —
+  // no tile, no disabled teaser — so buildQuickActionTiles no longer takes a
+  // capability at all. The tray's sixth tile is `more`, which is visually
+  // distinct without reading as disabled. Presentation only; no financial,
+  // phase or persistence expectation changed.
+  const tiles = buildQuickActionTiles();
+  assert('4a. exactly 6 tiles are built, in QUICK_ACTION_ORDER order', tiles.length === 6 && tiles.every((t, i) => t.key === QUICK_ACTION_ORDER[i]));
+  assert('4b. the final tile is More, flagged for its distinct (never disabled) treatment', tiles[5].key === 'more' && tiles[5].label === 'More' && tiles[5].isMore === true);
+  assert('4c. no other tile carries the More treatment', tiles.slice(0, 5).every((t) => t.isMore === false));
+  assert('4d. Ask Nolie is unreachable from the tray — no tile label or key mentions it', tiles.every((t) => !/ask/i.test(t.label) && !/ask/i.test(t.key)));
 }
 
 console.log('\n=== 5. Correction round — structural evidence for backgrounding/foregrounding safety (Class C) ===');

@@ -65,6 +65,12 @@
 import { readFileSync } from 'fs';
 import { reduceAddWorkspaceTransition, initialAddWorkspaceTransitionState, AddWorkspaceRoute, AddWorkspaceTransitionState } from '../src/components/navigation/addWorkspaceTransitionController';
 
+// WAVE 3 (D5-001): these journeys all start from the CATALOGUE — every one
+// asserts that Back eventually lands on the chooser — so the chooser step is
+// now seeded explicitly instead of relying on the removed implicit default.
+// The nested parent stacks (['bill', ...], ['liability', ...]) and every
+// unwind assertion are unchanged.
+
 let failures = 0;
 let total = 0;
 function assert(label: string, pass: boolean) {
@@ -166,7 +172,7 @@ console.log('\n=== 2. Fresh-loan round trip: settled current layer is always exa
   // to the exact same ROUTE-level BACK once on the picker — this file's
   // own §6b/§7a already prove the picker's own internal Back never
   // touches route state) -> Bill.
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   const billReturnStack = state.returnStack;
   state = reduceAddWorkspaceTransition(state, { type: 'FORCE_TO_CHOOSER' });
@@ -201,7 +207,7 @@ console.log('\n=== 2. Fresh-loan round trip: settled current layer is always exa
 console.log('\n=== 3. Three repeated round trips produce byte-identical, correct geometry (required test 3) ===');
 {
   for (let cycle = 1; cycle <= 3; cycle++) {
-    let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+    let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
     state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
     const billReturnStack = state.returnStack;
     state = reduceAddWorkspaceTransition(state, { type: 'FORCE_TO_CHOOSER' });
@@ -224,7 +230,7 @@ console.log('\n=== 3. Three repeated round trips produce byte-identical, correct
 
 console.log('\n=== 4. Full Bill -> Liability -> Credit Card nested chain — every settled layer correct at every level (required test 6) ===');
 {
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   const billReturnStack = state.returnStack;
   state = reduceAddWorkspaceTransition(state, { type: 'FORCE_TO_CHOOSER' });
@@ -256,7 +262,7 @@ console.log('\n=== 4. Full Bill -> Liability -> Credit Card nested chain — eve
 
 console.log('\n=== 5. Direct (non-handoff) entry is geometrically unaffected — Back-to-chooser still uses the original, unchanged activeDestinationTranslateX formula (required test 5) ===');
 {
-  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability' });
+  let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'liability', returnStack: ['chooser'] });
   state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' });
   const midBack = reduceAddWorkspaceTransition(state, { type: 'BACK' });
   assert('5a. direct-entry liability Backs straight to chooser (current becomes chooser, not liability)', midBack.current === 'chooser' && midBack.outgoing === 'liability');
@@ -307,7 +313,7 @@ console.log('\n=== 8. Reduce Motion and rapid-tap behaviour (required test 5) ==
   assert(
     "8b. under reduced motion, the mirrored settled geometry is identical to the ordinary-motion settled geometry (workspaceProgress jumps straight to toValue with no intermediate frames to diverge) — verified by reusing the exact same mirrorTranslateX call the ordinary-motion sections above already use, at the same settledProgress",
     (() => {
-      let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill' });
+      let state = reduceAddWorkspaceTransition(initialAddWorkspaceTransitionState, { type: 'FORWARD', route: 'bill', returnStack: ['chooser'] });
       state = reduceAddWorkspaceTransition(state, { type: 'TRANSITION_COMPLETE' }); // reduced-motion: TRANSITION_COMPLETE fires synchronously, same call
       return mirrorTranslateX(state, 'bill', progressAt('forward', 'end')) === 0;
     })()

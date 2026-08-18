@@ -11,7 +11,6 @@ import { focusElement } from '../../lib/a11yFocus';
 import { AddAnythingSheet, AddAnythingKind } from './AddAnythingSheet';
 import { QuickActionsTray } from './QuickActionsTray';
 import { QuickActionKey, resolveQuickAction } from './quickActions';
-import { askNolieCapability } from '../../lib/askNolie';
 import { INITIAL_FLOATING_ADD_PHASE, isSheetOpen, isTrayMounted, isTrayInteractive, reduceFloatingAddPhase } from './floatingAddTransition';
 
 const ICON_ROTATE_MS_OPEN = 220;
@@ -59,6 +58,7 @@ export function FloatingAddButton({ routeHidden = false }: { routeHidden?: boole
   // chooser instead of the intended destination. Reading the ref directly
   // during render is synchronous with `visible` turning true, in the exact
   // same render — no lag possible.
+  const pendingOpensCatalogueRef = useRef(false);
   const pendingSheetPropsRef = useRef<SheetProps | null>(null);
 
   const fabRef = useRef<React.ElementRef<typeof TouchableOpacity>>(null);
@@ -116,16 +116,15 @@ export function FloatingAddButton({ routeHidden = false }: { routeHidden?: boole
   }
 
   function handleTileSelect(key: QuickActionKey) {
-    const resolution = resolveQuickAction(key, askNolieCapability.enabled);
-    if (resolution.sheet === null) {
-      // The centre tile with Ask Nolie enabled — no sheet is ever involved,
-      // so this behaves exactly like an ordinary dismiss: no second modal
-      // is ever at risk of racing anything.
-      askNolieCapability.open?.();
-      dispatch('REQUEST_DISMISS');
-      return;
-    }
+    // Wave 3 — every tile now opens the same canonical workspace; Ask Nolie
+    // is absent from the production IA (doc A p.16) so there is no longer a
+    // tile that resolves to "no sheet at all". The SELECT_ACTION dispatch,
+    // the phase machine and the onClosed handoff below are untouched.
+    const resolution = resolveQuickAction(key);
     pendingSheetPropsRef.current = resolution.sheet;
+    // A direct quick action must never reveal the catalogue on Back
+    // (audit D5-001); only `more` seeds the chooser return step.
+    pendingOpensCatalogueRef.current = resolution.opensCatalogue;
     dispatch('SELECT_ACTION');
   }
 

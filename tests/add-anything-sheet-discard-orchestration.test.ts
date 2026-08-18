@@ -22,6 +22,17 @@
 
 import { readFileSync } from 'fs';
 
+// DESIGN 5.1 WAVE 3 — signatures widened, behaviour NOT changed.
+// enterRoute/reselectOrEnter/chooseAssetTile now take an explicit
+// `fromCatalogue` flag so a directly-entered task (quick tile or contextual
+// screen action) seeds an EMPTY return stack instead of inheriting
+// ['chooser'] — audit D5-001, where a direct quick action's Back revealed a
+// catalogue the customer never opened. These assertions match source SHAPE,
+// so their patterns are widened to the new signature; every behavioural
+// guarantee they protect (first-tap-wins lock, guard-before-transition
+// ordering, one-reset-one-transition, chooser-vs-handoff branching) is
+// asserted unchanged. No financial, persistence or phase expectation moved.
+
 let failures = 0;
 let total = 0;
 function assert(label: string, pass: boolean) {
@@ -76,24 +87,24 @@ console.log('\n=== 2. Dirty destination -> Back -> chooser: no Alert, draft pres
 
 console.log('\n=== 3. Same tile restores the draft without Alert (Class C) ===');
 {
-  const body = functionBody('function reselectOrEnter(route: Exclude<AddWorkspaceRoute, \'chooser\' | \'transfer\' | \'asset\'>)');
+  const body = functionBody('function reselectOrEnter(route: Exclude<AddWorkspaceRoute, \'chooser\' | \'transfer\' | \'asset\'>, fromCatalogue: boolean)');
   assert('3a. reselectOrEnter is found', body.length > 0);
   const ifAlreadyEntered = body.match(/if \(state\.everEnteredRef\.current\) \{([\s\S]*?)\}/);
   assert('3b. the already-entered branch is found', !!ifAlreadyEntered);
   assert(
     '3c. the already-entered (same destination) branch calls enterRoute directly — no presentSwitchGuard, no Alert, in that branch',
-    !!ifAlreadyEntered && !/presentSwitchGuard|Alert\.alert/.test(ifAlreadyEntered[1]) && /enterRoute\(route, commit\);/.test(ifAlreadyEntered[1])
+    !!ifAlreadyEntered && !/presentSwitchGuard|Alert\.alert/.test(ifAlreadyEntered[1]) && /enterRoute\(route, fromCatalogue, commit\);/.test(ifAlreadyEntered[1])
   );
 }
 
 console.log('\n=== 4. A different tile warns BEFORE the forward transition starts (Class C) ===');
 {
-  const body = functionBody('function reselectOrEnter(route: Exclude<AddWorkspaceRoute, \'chooser\' | \'transfer\' | \'asset\'>)');
+  const body = functionBody('function reselectOrEnter(route: Exclude<AddWorkspaceRoute, \'chooser\' | \'transfer\' | \'asset\'>, fromCatalogue: boolean)');
   assert(
     '4a. presentSwitchGuard is called BEFORE enterRoute(route, commit) in the discard branch — the warning is shown before any transition begins, not after',
     (() => {
       const guardIdx = body.indexOf('presentSwitchGuard(');
-      const secondEnterRouteIdx = body.indexOf('enterRoute(route, commit);', body.indexOf('if (dirty)'));
+      const secondEnterRouteIdx = body.indexOf('enterRoute(route, fromCatalogue, commit);', body.indexOf('if (dirty)'));
       return guardIdx !== -1 && secondEnterRouteIdx !== -1 && guardIdx < secondEnterRouteIdx;
     })()
   );
@@ -110,7 +121,7 @@ console.log('\n=== 5. "Keep editing" reopens the exact dirty source draft (Class
 {
   assert(
     "5a. reopenSource is a plain enterRoute(route) restore when the dismissal originated from the chooser (the same \"same destination reselect\" path every ordinary tile-driven Keep-editing uses) — correction pass: it now ALSO handles being invoked from within another active, non-chooser destination (handleRequestLoanFromBill, called while Bill itself is current), where a plain enterRoute would silently no-op against the reducer's own chooser-origin FORWARD precondition, by reusing the same handoff mechanism an ordinary cross-destination handoff already uses in that case",
-    /function reopenSource\(route: Exclude<AddWorkspaceRoute, 'chooser'>\) \{\s*\n\s*if \(transition\.current === 'chooser'\) \{\s*\n\s*enterRoute\(route\);\s*\n\s*\} else \{\s*\n\s*handoffToRoute\(route, \(\) => \{\}\);\s*\n\s*\}\s*\n\s*\}/.test(SRC)
+    /function reopenSource\(route: Exclude<AddWorkspaceRoute, 'chooser'>\) \{\s*\n\s*if \(transition\.current === 'chooser'\) \{[\s\S]{0,200}?enterRoute\(route, true\);\s*\n\s*\} else \{\s*\n\s*handoffToRoute\(route, \(\) => \{\}\);\s*\n\s*\}\s*\n\s*\}/.test(SRC)
   );
   assert(
     "5b. reselectOrEnter's Keep-editing callback is () => reopenSource(dirty.route) — reopens the SOURCE, not the requested target",
@@ -126,11 +137,13 @@ console.log('\n=== 6. "Discard & continue" resets the source exactly once and op
 {
   assert(
     "6a. reselectOrEnter's Discard-and-continue callback calls resetDraft(dirty.route) exactly once, then enterRoute(route, commit) exactly once — one reset, one transition",
-    /\(\) => \{\s*\n\s*resetDraft\(dirty\.route\);\s*\n\s*enterRoute\(route, commit\);\s*\n\s*\}/.test(SRC)
+    /\(\) => \{\s*\n\s*resetDraft\(dirty\.route\);\s*\n\s*enterRoute\(route, fromCatalogue, commit\);\s*\n\s*\}/.test(SRC)
   );
   assert(
     "6b. resetDraft bumps the destination's own instanceKey exactly once per call — forces a full unmount+remount, the only complete reset mechanism available",
-    /function resetDraft\(route: Exclude<AddWorkspaceRoute, 'chooser' \| 'transfer'>\) \{\s*\n\s*draftStateFor\(route\)\.setInstanceKey\(\(k\) => k \+ 1\);\s*\n\s*\}/.test(SRC)
+    // Wave 3: 'transfer' is no longer excluded — it parks and resets like
+    // every other draft. The exactly-once instanceKey bump is unchanged.
+    /function resetDraft\(route: Exclude<AddWorkspaceRoute, 'chooser'>\) \{\s*\n\s*draftStateFor\(route\)\.setInstanceKey\(\(k\) => k \+ 1\);\s*\n\s*\}/.test(SRC)
   );
   assert(
     "6c. presentSwitchGuard's Discard & continue button handler is generation-guarded before calling onDiscardAndContinue — a stale alert cannot fire a reset+transition after being superseded",
@@ -140,7 +153,7 @@ console.log('\n=== 6. "Discard & continue" resets the source exactly once and op
 
 console.log('\n=== 7. Asset tiles use the SAME global dirty-destination guard (Class C, closes the previously-disclosed gap) ===');
 {
-  const body = functionBody('function chooseAssetTile(tileKey: AddAnythingKind)');
+  const body = functionBody('function chooseAssetTile(tileKey: AddAnythingKind, fromCatalogue: boolean)');
   assert('7a. chooseAssetTile is found', body.length > 0);
   assert(
     "7b. chooseAssetTile checks findParkedDirtyDraft('asset') (excluding Asset's own dirty state) BEFORE reaching the inner type-vs-type decision",
@@ -148,7 +161,7 @@ console.log('\n=== 7. Asset tiles use the SAME global dirty-destination guard (C
   );
   assert(
     '7c. when another destination is dirty, chooseAssetTile presents the SAME presentSwitchGuard confirmation (reopen on Keep editing, reset-once on Discard & continue) before proceeding to the inner decision',
-    /if \(otherDirty\) \{\s*\n\s*presentSwitchGuard\(\s*\n\s*routeDisplayName\(otherDirty\.route\),\s*\n\s*routeDisplayName\('asset', presetType\),\s*\n\s*\(\) => reopenSource\(otherDirty\.route\),\s*\n\s*\(\) => \{\s*\n\s*resetDraft\(otherDirty\.route\);\s*\n\s*proceedWithAssetTileDecision\(tileKey, presetType\);/.test(body)
+    /if \(otherDirty\) \{\s*\n\s*presentSwitchGuard\(\s*\n\s*routeDisplayName\(otherDirty\.route\),\s*\n\s*routeDisplayName\('asset', presetType\),\s*\n\s*\(\) => reopenSource\(otherDirty\.route\),\s*\n\s*\(\) => \{\s*\n\s*resetDraft\(otherDirty\.route\);\s*\n\s*proceedWithAssetTileDecision\(tileKey, presetType, fromCatalogue\);/.test(body)
   );
 }
 
@@ -168,8 +181,11 @@ console.log('\n=== 8. Full-sheet dismissal still warns before closing, and now r
     /if \(!wasActive\) reopenSource\(dirtyRoute\);/.test(SRC)
   );
   assert(
-    "8d. presentDismissGuard's Discard handler resets the dirty route exactly once (skipped for 'transfer', which has no instanceKey/reset concept) and closes the whole journey exactly once via handleRequestClose",
-    /if \(dirtyRoute !== 'transfer'\) resetDraft\(dirtyRoute\); \/\/ transfer has no instanceKey\/reset concept\s*\n\s*handleRequestClose\(\);/.test(SRC)
+    "8d. presentDismissGuard's Discard handler resets the dirty route exactly once (now including 'transfer') and closes the whole journey exactly once via handleRequestClose",
+    // Wave 3: the transfer carve-out is gone — Move money now has its own
+    // instanceKey, so the Discard handler resets EVERY dirty route the same
+    // way. Still exactly one reset and exactly one journey close.
+    /resetDraft\(dirtyRoute\); \/\/ transfer now parks and resets like every other draft\s*\n\s*handleRequestClose\(\);/.test(SRC)
   );
   assert(
     "8e. presentDismissGuard uses the SAME per-destination DISCARD_COPY table every other discard path uses (e.g. 'Discard this card?') — not a generic fallback",
@@ -254,7 +270,7 @@ console.log('\n=== 11. Rapid taps cannot produce duplicate alerts or transitions
     '11a. presentSwitchGuard checks pendingSwitchRef.current !== null and returns immediately — a second tap while an alert is already showing is a no-op, never a second Alert.alert call',
     /function presentSwitchGuard\(sourceLabel: string, targetLabel: string, onKeepEditing: \(\) => void, onDiscardAndContinue: \(\) => void\) \{\s*\n\s*if \(pendingSwitchRef\.current !== null\) return; \/\/ an alert is already showing — rapid-tap guard/.test(SRC)
   );
-  assert('11b. enterRoute still checks selectionLockRef first, synchronously, before any transition begins — unchanged first-tap-wins guard for the transition itself', /function enterRoute\(route: AddWorkspaceRoute, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins/.test(SRC));
+  assert('11b. enterRoute still checks selectionLockRef first, synchronously, before any transition begins — unchanged first-tap-wins guard for the transition itself', /function enterRoute\(route: AddWorkspaceRoute, fromCatalogue: boolean, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins/.test(SRC));
 }
 
 console.log('\n=== 12. Stale Alert callbacks cannot open an old pending destination (Class C) ===');
@@ -293,12 +309,19 @@ console.log('\n=== 13. Credit Card -> Liability and Liability -> Bill reverse ha
 console.log('\n=== 14. Direct destination entry still returns to the chooser (Class C) ===');
 {
   assert(
-    '14a. enterRoute (used by every ordinary tile entry, and by reopenSource) calls beginForwardTransition(route) with NO returnStack argument — the reducer defaults it to [\'chooser\']',
-    /function enterRoute\(route: AddWorkspaceRoute, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins\s*\n\s*selectionLockRef\.current = true;\s*\n\s*onCommit\?\.\(\);\s*\n\s*beginForwardTransition\(route\);\s*\n\s*\}/.test(SRC)
+    // INVERTED (Wave 3, D5-001): the obsolete contract asserted that a
+    // missing returnStack defaults to ['chooser']. That default WAS the
+    // defect. enterRoute now passes the stack explicitly from origin.
+    '14a. enterRoute passes the return stack EXPLICITLY from origin — ["chooser"] only for a catalogue selection, [] for a direct quick/contextual entry',
+    /function enterRoute\(route: AddWorkspaceRoute, fromCatalogue: boolean, onCommit\?: \(\) => void\) \{\s*\n\s*if \(selectionLockRef\.current\) return; \/\/ synchronous first-tap-wins\s*\n\s*selectionLockRef\.current = true;\s*\n\s*onCommit\?\.\(\);\s*\n\s*beginForwardTransition\(route, fromCatalogue \? \['chooser'\] : \[\]\);\s*\n\s*\}/.test(SRC)
   );
   assert(
-    "14b. proceedIntoAddAsset (Asset's own direct-entry path) likewise calls beginForwardTransition('asset') with no returnStack override — direct Asset entry also returns to chooser",
-    /beginForwardTransition\('asset'\);\s*\n\s*\}/.test(SRC)
+    // INVERTED (Wave 3 closure): the six asset destinations reach the
+    // workspace through proceedIntoAddAsset rather than enterRoute, so they
+    // need the SAME explicit origin seeding. Omitting it is exactly what left
+    // a catalogue-selected "Add everyday account" with no Back on device.
+    "14b. proceedIntoAddAsset seeds the return stack from origin too — ['chooser'] for a catalogue selection, [] for a direct entry",
+    /beginForwardTransition\('asset', fromCatalogue \? \['chooser'\] : \[\]\);\s*\n\s*\}/.test(SRC)
   );
 }
 

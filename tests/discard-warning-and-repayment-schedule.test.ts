@@ -127,7 +127,7 @@ console.log("\n=== 4. Keep editing reopens the exact dirty draft even when trigg
   assert('4a. reopenSource is found', body.length > 0);
   assert(
     "4b. reopenSource now branches on transition.current: a plain enterRoute when already on chooser (every pre-existing caller, unchanged), or the SAME handoff mechanism an ordinary cross-destination handoff uses when triggered from within another active destination (e.g. Bill's own grid) — a plain enterRoute there would silently no-op against the reducer's own chooser-origin FORWARD precondition, which is exactly why 'Keep editing' needed this fix",
-    /if \(transition\.current === 'chooser'\) \{\s*\n\s*enterRoute\(route\);\s*\n\s*\} else \{\s*\n\s*handoffToRoute\(route, \(\) => \{\}\);\s*\n\s*\}/.test(body)
+    /if \(transition\.current === 'chooser'\) \{[\s\S]{0,200}?enterRoute\(route, true\);\s*\n\s*\} else \{\s*\n\s*handoffToRoute\(route, \(\) => \{\}\);\s*\n\s*\}/.test(body)
   );
 }
 

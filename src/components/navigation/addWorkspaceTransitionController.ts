@@ -94,7 +94,7 @@ export type AddWorkspaceTransitionAction =
    * computes this as [leavingRoute, ...leavingRoute's own returnStack]
    * before forcing the intermediate bounce through chooser — see
    * AddAnythingSheet.tsx's handoffToRoute); omitted (every ordinary tile
-   * entry) defaults to ['chooser']. */
+   * entry) defaults to [] — see the FORWARD case. */
   | { type: 'FORWARD'; route: AddWorkspaceRoute; returnStack?: AddWorkspaceRoute[] }
   | { type: 'BACK' }
   /** Host-only orchestration primitive for a cross-destination handoff's
@@ -129,7 +129,13 @@ export function reduceAddWorkspaceTransition(
       // transition) or already on a non-chooser route — the first
       // accepted Forward wins; every other concurrent Forward is a no-op.
       if (state.status === 'transitioning' || state.current !== 'chooser' || action.route === 'chooser') return state;
-      return { current: action.route, outgoing: 'chooser', status: 'transitioning', direction: 'forward', returnStack: action.returnStack ?? ['chooser'] };
+      // Design 5.1 Wave 3 (audit D5-001): a MISSING stack now means "no
+      // return step", not "return to the chooser". The old ['chooser']
+      // default is what made a direct quick action reveal the full catalogue
+      // on Back — a surface the customer never opened. The chooser step is
+      // now seeded ONLY when a task was genuinely selected from the
+      // catalogue, which AddAnythingSheet passes explicitly.
+      return { current: action.route, outgoing: 'chooser', status: 'transitioning', direction: 'forward', returnStack: action.returnStack ?? [] };
     case 'BACK': {
       // Only accepted from a settled non-chooser route. Ignored while
       // already transitioning (rapid repeated Back, or a Back arriving

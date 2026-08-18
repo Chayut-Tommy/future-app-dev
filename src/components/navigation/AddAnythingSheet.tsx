@@ -25,6 +25,7 @@ import {
   EmbeddedCloseReason,
 } from './addWorkspaceTransitionController';
 import { computeAddWorkspaceGeometry } from './addWorkspaceGeometry';
+import { designRadius } from '../../theme/semanticTokens';
 
 export type AddAnythingKind =
   | 'income'
@@ -46,6 +47,10 @@ interface AddAnythingOption {
   key: AddAnythingKind;
   label: string;
   emoji: string;
+  /** Design 5.1 doc A p.5 — the small right-aligned qualifier that
+   * disambiguates two similar tasks (recurring vs one-off income, the debt
+   * subtypes, super). Presentation only. */
+  qualifier?: string;
 }
 
 interface AddAnythingGroup {
@@ -60,30 +65,30 @@ interface AddAnythingGroup {
 // cash only, never silently becomes a recurring salary).
 const GROUPS: AddAnythingGroup[] = [
   {
-    title: 'Money',
+    title: 'Everyday money',
     options: [
-      { key: 'expense', label: 'Add expense', emoji: '🛒' },
-      { key: 'income', label: 'Add income source', emoji: '💼' },
-      { key: 'income_received', label: 'Record income received', emoji: '💰' },
+      { key: 'expense', label: 'Record spending', emoji: '🛒' },
+      { key: 'income', label: 'Add income source', qualifier: 'recurring', emoji: '💼' },
+      { key: 'income_received', label: 'Record income received', qualifier: 'one-off', emoji: '💰' },
       { key: 'bill', label: 'Add bill', emoji: '📅' },
-      { key: 'transfer', label: 'Transfer money', emoji: '🔁' },
+      { key: 'transfer', label: 'Move money', emoji: '🔁' },
     ],
   },
   {
-    title: 'Wealth',
+    title: 'Accounts and wealth',
     options: [
       { key: 'cash', label: 'Add cash', emoji: '💵' },
       { key: 'savings', label: 'Add savings', emoji: '🏦' },
       { key: 'everyday', label: 'Add everyday account', emoji: '🏧' },
       { key: 'investment', label: 'Add investment', emoji: '📈' },
       { key: 'property', label: 'Add property', emoji: '🏠' },
-      { key: 'retirement', label: 'Add retirement savings', emoji: '🛡' },
+      { key: 'retirement', label: 'Add retirement savings', qualifier: 'super', emoji: '🛡' },
     ],
   },
   {
     title: 'Debt and planning',
     options: [
-      { key: 'liability', label: 'Add liability', emoji: '📄' },
+      { key: 'liability', label: 'Add debt', qualifier: 'loan / BNPL', emoji: '📄' },
       { key: 'creditCard', label: 'Add credit card', emoji: '💳' },
       { key: 'goal', label: 'Add goal', emoji: '🎯' },
     ],
@@ -276,7 +281,7 @@ export function AddAnythingSheet({
    * journey has its own fixed entry: the balance-only chooser grid). */
   initialKind?: AddAnythingKind;
 }) {
-  const { colors, radius, spacing, typography, cardShadow } = useTheme();
+  const { colors, semantic, radius, spacing, typography, cardShadow, minTouchTarget } = useTheme();
 
   // Correction round, 2026-08-10 — the balance-only tile set for the
   // scoped "Add a money balance" journey, derived from the SAME GROUPS
@@ -353,6 +358,14 @@ export function AddAnythingSheet({
   // logic" exclusion), so no everEnteredRef/useEmbeddedDestinationState
   // bundle for it. ----
   const transferFormRef = useRef<TransferFormHandle>(null);
+  // Design 5.1 Wave 3 — Move money now parks like every other task (handoff
+  // §2: "Transfer drafts are parked like all others"). It gains the SAME
+  // useEmbeddedDestinationState the other seven destinations use — including
+  // instanceKey, which is what makes a confirmed discard a genuine full
+  // remount rather than a partial field clear. No new persistence: the draft
+  // lives exactly where every other parked draft lives, in the still-mounted
+  // form behind the chooser.
+  const transferState = useEmbeddedDestinationState('Move money');
   const [transferCanSave, setTransferCanSave] = useState(false);
   const [transferIsDirty, setTransferIsDirty] = useState(false);
   const transferHeadingRef = useRef<Text>(null);
@@ -455,7 +468,9 @@ export function AddAnythingSheet({
     // scoped entry surface — the balance-only chooser grid, not a specific
     // destination).
     if (initialKind && !onlyBalances) {
-      handleTilePress(initialKind);
+      // `initialKind` means the workspace was entered DIRECTLY — a quick tile
+      // or a contextual screen action. No chooser step, no Back control.
+      handleTilePress(initialKind, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -533,8 +548,10 @@ export function AddAnythingSheet({
     }
   }
 
-  function draftStateFor(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>): EmbeddedDestinationState {
+  function draftStateFor(route: Exclude<AddWorkspaceRoute, 'chooser'>): EmbeddedDestinationState {
     switch (route) {
+      case 'transfer':
+        return transferState;
       case 'asset':
         return assetState;
       case 'expense':
@@ -556,8 +573,10 @@ export function AddAnythingSheet({
 
   // Full-workspace extension — every destination that can hold a draft
   // across Back (i.e. every one except Transfer, which is exempt).
-  function draftDestinations(): { route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>; state: EmbeddedDestinationState }[] {
-    return (['asset', 'expense', 'incomeSource', 'incomeReceived', 'bill', 'liability', 'creditCard', 'goal'] as const).map((route) => ({
+  function draftDestinations(): { route: Exclude<AddWorkspaceRoute, 'chooser'>; state: EmbeddedDestinationState }[] {
+    // 'transfer' joins the parked-draft set in Wave 3 — it is no longer
+    // the one destination excluded from switch/discard/parking protection.
+    return (['asset', 'expense', 'incomeSource', 'incomeReceived', 'bill', 'liability', 'creditCard', 'goal', 'transfer'] as const).map((route) => ({
       route,
       state: draftStateFor(route),
     }));
@@ -673,7 +692,7 @@ export function AddAnythingSheet({
   // a full unmount+remount (see useEmbeddedDestinationState's own
   // instanceKey comment) — the ONLY thing "Discard & continue" ever does
   // to the source besides transitioning away from it.
-  function resetDraft(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer'>) {
+  function resetDraft(route: Exclude<AddWorkspaceRoute, 'chooser'>) {
     draftStateFor(route).setInstanceKey((k) => k + 1);
   }
 
@@ -692,7 +711,8 @@ export function AddAnythingSheet({
   // handoff already uses for exactly this reason.
   function reopenSource(route: Exclude<AddWorkspaceRoute, 'chooser'>) {
     if (transition.current === 'chooser') {
-      enterRoute(route);
+      // Reopening a parked draft is by definition a catalogue-origin entry.
+      enterRoute(route, true);
     } else {
       handoffToRoute(route, () => {});
     }
@@ -737,7 +757,7 @@ export function AddAnythingSheet({
         onPress: () => {
           if (pendingDismissRef.current !== myGeneration) return;
           pendingDismissRef.current = null;
-          if (dirtyRoute !== 'transfer') resetDraft(dirtyRoute); // transfer has no instanceKey/reset concept
+          resetDraft(dirtyRoute); // transfer now parks and resets like every other draft
           handleRequestClose();
         },
       },
@@ -795,15 +815,24 @@ export function AddAnythingSheet({
     });
   }
 
-  function enterRoute(route: AddWorkspaceRoute, onCommit?: () => void) {
+  /**
+   * Design 5.1 Wave 3 — origin-aware entry (audit D5-001).
+   *
+   * `fromCatalogue` IS the origin contract. A task picked from the catalogue
+   * seeds ['chooser'], so Back returns there with the draft parked. A task
+   * entered directly — a quick tile or a contextual screen action — seeds [],
+   * so it renders no Back control at all and the catalogue it never opened
+   * can never be revealed.
+   */
+  function enterRoute(route: AddWorkspaceRoute, fromCatalogue: boolean, onCommit?: () => void) {
     if (selectionLockRef.current) return; // synchronous first-tap-wins
     selectionLockRef.current = true;
     onCommit?.();
-    beginForwardTransition(route);
+    beginForwardTransition(route, fromCatalogue ? ['chooser'] : []);
   }
 
-  function enterTransfer() {
-    enterRoute('transfer');
+  function enterTransfer(fromCatalogue: boolean) {
+    enterRoute('transfer', fromCatalogue);
   }
 
   // "Reselecting the same destination restores its draft; selecting a
@@ -816,13 +845,13 @@ export function AddAnythingSheet({
   // presentSwitchGuard confirms BEFORE any transition starts — the current
   // settled route (chooser, always, for this call site) stays visually
   // stationary until the user answers.
-  function reselectOrEnter(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer' | 'asset'>) {
+  function reselectOrEnter(route: Exclude<AddWorkspaceRoute, 'chooser' | 'transfer' | 'asset'>, fromCatalogue: boolean) {
     const state = draftStateFor(route);
     const commit = () => {
       state.everEnteredRef.current = true;
     };
     if (state.everEnteredRef.current) {
-      enterRoute(route, commit);
+      enterRoute(route, fromCatalogue, commit);
       return;
     }
     const dirty = findParkedDirtyDraft();
@@ -833,12 +862,12 @@ export function AddAnythingSheet({
         () => reopenSource(dirty.route),
         () => {
           resetDraft(dirty.route);
-          enterRoute(route, commit);
+          enterRoute(route, fromCatalogue, commit);
         }
       );
       return;
     }
-    enterRoute(route, commit);
+    enterRoute(route, fromCatalogue, commit);
   }
 
   // Discard-orchestration correction — Back pops transition.returnStack[0]
@@ -958,7 +987,7 @@ export function AddAnythingSheet({
   // ---- Asset (cash/savings/investment/property/retirement) — Option B
   // pilot logic, unchanged in behaviour, replumbed onto the shared
   // primitives above. ----
-  function proceedIntoAddAsset(tileKey: AddAnythingKind, presetType: AssetType, freshInstance: boolean) {
+  function proceedIntoAddAsset(tileKey: AddAnythingKind, presetType: AssetType, freshInstance: boolean, fromCatalogue: boolean) {
     if (selectionLockRef.current) return; // synchronous first-tap-wins
     selectionLockRef.current = true;
     if (freshInstance) {
@@ -967,7 +996,12 @@ export function AddAnythingSheet({
     setAssetPresetType(presetType);
     assetOriginTileKeyRef.current = tileKey;
     assetState.everEnteredRef.current = true;
-    beginForwardTransition('asset');
+    // Design 5.1 Wave 3 — the six asset destinations (cash, savings,
+    // everyday, investment, property, retirement) reach the workspace
+    // through this path rather than enterRoute, so they need the SAME
+    // origin seeding. Omitting it here is what left a catalogue-selected
+    // "Add everyday account" with no Back control on device.
+    beginForwardTransition('asset', fromCatalogue ? ['chooser'] : []);
   }
 
   // Correction pass (§3) — the chooser tile's own onPress target for the
@@ -989,7 +1023,7 @@ export function AddAnythingSheet({
   //    uses, before ever reaching the inner decision above, so tapping an
   //    asset tile can no longer silently bypass a dirty Expense/Income/
   //    Bill/Liability/Credit Card/Goal draft.
-  function chooseAssetTile(tileKey: AddAnythingKind) {
+  function chooseAssetTile(tileKey: AddAnythingKind, fromCatalogue: boolean) {
     const presetType = ASSET_PRESET_MAP[tileKey];
     if (!presetType) return;
 
@@ -1001,15 +1035,15 @@ export function AddAnythingSheet({
         () => reopenSource(otherDirty.route),
         () => {
           resetDraft(otherDirty.route);
-          proceedWithAssetTileDecision(tileKey, presetType);
+          proceedWithAssetTileDecision(tileKey, presetType, fromCatalogue);
         }
       );
       return;
     }
-    proceedWithAssetTileDecision(tileKey, presetType);
+    proceedWithAssetTileDecision(tileKey, presetType, fromCatalogue);
   }
 
-  function proceedWithAssetTileDecision(tileKey: AddAnythingKind, presetType: AssetType) {
+  function proceedWithAssetTileDecision(tileKey: AddAnythingKind, presetType: AssetType, fromCatalogue: boolean) {
     const outcome = decideAssetTileSelection({
       everEntered: assetState.everEnteredRef.current,
       currentPresetType: assetPresetType,
@@ -1019,17 +1053,17 @@ export function AddAnythingSheet({
 
     switch (outcome.action) {
       case 'proceed':
-        proceedIntoAddAsset(tileKey, presetType, false);
+        proceedIntoAddAsset(tileKey, presetType, false, fromCatalogue);
         return;
       case 'switchClean':
-        proceedIntoAddAsset(tileKey, presetType, true);
+        proceedIntoAddAsset(tileKey, presetType, true, fromCatalogue);
         return;
       case 'confirmSwitch': {
         const currentPresetType = assetPresetType;
         const currentOriginTileKey = assetOriginTileKeyRef.current ?? tileKey;
         confirmSwitchAssetType(
-          () => proceedIntoAddAsset(tileKey, presetType, true),
-          () => proceedIntoAddAsset(currentOriginTileKey, currentPresetType, false)
+          () => proceedIntoAddAsset(tileKey, presetType, true, fromCatalogue),
+          () => proceedIntoAddAsset(currentOriginTileKey, currentPresetType, false, fromCatalogue)
         );
         return;
       }
@@ -1063,10 +1097,10 @@ export function AddAnythingSheet({
   // the remaining seven share one generic reselectOrEnter path. Every
   // branch here routes through the SAME presentSwitchGuard primitive
   // before starting any transition (discard-orchestration correction).
-  function handleTilePress(key: AddAnythingKind) {
+  function handleTilePress(key: AddAnythingKind, fromCatalogue = true) {
     const assetPresetType = ASSET_PRESET_MAP[key];
     if (assetPresetType) {
-      chooseAssetTile(key);
+      chooseAssetTile(key, fromCatalogue);
       return;
     }
     if (key === 'transfer') {
@@ -1078,12 +1112,12 @@ export function AddAnythingSheet({
           () => reopenSource(dirty.route),
           () => {
             resetDraft(dirty.route);
-            enterTransfer();
+            enterTransfer(fromCatalogue);
           }
         );
         return;
       }
-      enterTransfer();
+      enterTransfer(fromCatalogue);
       return;
     }
     const route = TILE_TO_ROUTE[key];
@@ -1096,7 +1130,7 @@ export function AddAnythingSheet({
       // reselectOrEnter below) preserves whatever intent it already had.
       setLiabilityHandoffType(null);
     }
-    reselectOrEnter(route);
+    reselectOrEnter(route, fromCatalogue);
   }
 
   // KeyboardSheet's own backdrop/swipe/Android-Back path — always closes
@@ -1122,6 +1156,24 @@ export function AddAnythingSheet({
     if (transition.current === 'transfer') return transferIsDirty;
     return draftStateFor(transition.current).isDirty;
   })();
+  // The first genuine parent step, if any. 'chooser' is deliberately not a
+  // parent — returning to the catalogue is not a nested journey.
+  const nestedParentRoute = (() => {
+    const parent = transition.returnStack.find((r) => r !== 'chooser');
+    return parent && transition.current !== 'chooser' ? parent : null;
+  })();
+  // A catalogue row shows DRAFT when its destination is holding a parked,
+  // dirty draft — the same state findParkedDirtyDraft already tracks.
+  function hasParkedDraft(key: AddAnythingKind): boolean {
+    if (key === 'transfer') return transition.current !== 'transfer' && transferState.isDirty;
+    const assetPreset = ASSET_PRESET_MAP[key];
+    if (assetPreset) {
+      return transition.current !== 'asset' && assetState.isDirty && assetPresetType === assetPreset;
+    }
+    const route = TILE_TO_ROUTE[key];
+    if (!route) return false;
+    return transition.current !== route && draftStateFor(route).isDirty;
+  }
   const parkedDirtyDraft = findParkedDirtyDraft();
   const sheetIsDirty = activeRouteIsDirty || !!parkedDirtyDraft;
 
@@ -1285,6 +1337,46 @@ export function AddAnythingSheet({
       StyleSheet.create({
         body: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 19, marginBottom: spacing.lg },
         groupTitle: { ...typography.caption, fontSize: 12, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: spacing.sm, marginTop: spacing.md },
+        // Design 5.1 doc A p.5 — the catalogue is full-width rows grouped in
+        // cards, not a tile grid: 52pt rows, leading icon, label, qualifier,
+        // trailing DRAFT badge.
+        rowGroup: {
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          overflow: 'hidden',
+          marginBottom: spacing.md,
+        },
+        taskRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          minHeight: 52,
+          paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
+          gap: spacing.sm,
+        },
+        taskRowDivided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border },
+        rowIcon: {
+          width: 28,
+          height: 28,
+          borderRadius: designRadius.tile,
+          backgroundColor: semantic.interactiveTint,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        rowLabel: { ...typography.body, fontSize: 15, fontWeight: '600', color: semantic.textPrimary, flex: 1 },
+        rowQualifier: { ...typography.micro, fontSize: 11, color: semantic.textTertiary },
+        draftBadge: {
+          paddingHorizontal: 6,
+          paddingVertical: 2,
+          borderRadius: 5,
+          backgroundColor: semantic.bgRaised,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+        },
+        draftBadgeText: { ...typography.micro, fontSize: 9, fontWeight: '700', color: semantic.textSecondary, letterSpacing: 0.5 },
+        rowChevron: { ...typography.body, fontSize: 18, color: semantic.textTertiary },
         grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
         tile: {
           flexBasis: '30%',
@@ -1306,6 +1398,12 @@ export function AddAnythingSheet({
         },
         emoji: { fontSize: 20 },
         tileLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
+        // Design 5.1 doc A p.5 — the disambiguating qualifier ("recurring",
+        // "one-off", "super", "loan / BNPL"), quieter than the label itself.
+        breadcrumbText: { ...typography.micro, fontSize: 11, color: semantic.textTertiary },
+        headerCloseButton: { minWidth: minTouchTarget, minHeight: minTouchTarget, alignItems: 'flex-end', justifyContent: 'center' },
+        headerCloseLabel: { ...typography.body, fontSize: 15, fontWeight: '600', color: semantic.interactive },
+        tileQualifier: { ...typography.micro, fontSize: 10, color: semantic.textTertiary, textAlign: 'center', marginTop: 1 },
         viewport: { flex: 1, overflow: 'hidden' },
         pushLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: colors.surface },
         pushLayerScroll: { flex: 1 },
@@ -1385,10 +1483,16 @@ export function AddAnythingSheet({
         importantForAccessibility={settled ? 'auto' : 'no-hide-descendants'}
       >
         <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <TouchableOpacity style={styles.backRow} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={onBack}>
-            <Ionicons name="chevron-back" size={18} color={colors.accentStrong} />
-            <Text style={styles.backRowText}>Back</Text>
-          </TouchableOpacity>
+          {/* Design 5.1 doc A p.5 — a Back control exists ONLY when there is
+              a genuine previous step. A direct quick or contextual entry
+              renders nothing here: not a hidden control, not an empty
+              container, so it never reaches the accessibility tree. */}
+          {transition.returnStack.length > 0 ? (
+            <TouchableOpacity style={styles.backRow} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={onBack} accessibilityRole="button" accessibilityLabel="Back">
+              <Ionicons name="chevron-back" size={18} color={colors.accentStrong} />
+              <Text style={styles.backRowText}>Back</Text>
+            </TouchableOpacity>
+          ) : null}
           <Text ref={headingRef} style={styles.body} accessibilityRole="header">
             {title}
           </Text>
@@ -1405,6 +1509,37 @@ export function AddAnythingSheet({
       title={activeChrome.title}
       isDirty={sheetIsDirty}
       onRequestDismiss={handleRequestDismiss}
+      breadcrumb={
+        // Only a GENUINE nested handoff gets a breadcrumb: the return stack
+        // must contain a real parent workspace step. A catalogue-origin task
+        // has only ['chooser'] — a chooser is not a parent step, so no
+        // fabricated "Add to Nolie ·" crumb is ever shown. A workspace root
+        // (empty stack) shows nothing at all.
+        nestedParentRoute ? (
+          <Text style={styles.breadcrumbText} accessibilityRole="text">
+            {`${routeDisplayName(nestedParentRoute)} · ${destinationTitleFor(transition.current)}`}
+          </Text>
+        ) : null
+      }
+      headerRight={
+        // Design 5.1 doc A p.5 — the catalogue carries a VISIBLE Close.
+        // Swipe-down and Android Back already worked but are invisible
+        // affordances, so the recording showed no way out of the catalogue.
+        // Routes through the same journey-level dismiss path everything else
+        // uses, so the existing dirty-discard protection applies unchanged;
+        // no new dismissal state, no timeout.
+        transition.current === 'chooser' ? (
+          <TouchableOpacity
+            onPress={handleRequestDismiss}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.headerCloseButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Text style={styles.headerCloseLabel}>Close</Text>
+          </TouchableOpacity>
+        ) : null
+      }
       footer={
         activeChrome.showFooter ? (
           <>
@@ -1424,30 +1559,46 @@ export function AddAnythingSheet({
             importantForAccessibility={isRouteSettledFront(transition, 'chooser') ? 'auto' : 'no-hide-descendants'}
           >
             <ScrollView style={styles.pushLayerScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-              <Text style={styles.body}>{onlyBalances ? 'Which kind of balance would you like to add?' : 'What would you like to update?'}</Text>
+              {/* Design 5.1 doc A p.5 — the catalogue's own standing
+                  subtitle. Scoped choosers (e.g. Money's "Add a balance")
+                  keep their existing narrower prompt. */}
+              <Text style={styles.body}>{onlyBalances ? 'Which kind of balance would you like to add?' : 'Everything you can record, in one place.'}</Text>
               {visibleGroups.map((group) => (
                 <View key={group.title}>
                   <Text style={styles.groupTitle}>{group.title}</Text>
-                  <View style={styles.grid}>
-                    {group.options.map((o) => (
-                      <TouchableOpacity
-                        key={o.key}
-                        ref={(el) => {
-                          // Correction pass — accessibility focus restoration
-                          // target for Back (§2). Harmless for every tile
-                          // never looked up by key.
-                          assetTileRefs.current[o.key] = el;
-                        }}
-                        style={styles.tile}
-                        activeOpacity={0.8}
-                        onPress={() => handleTilePress(o.key)}
-                      >
-                        <View style={styles.iconBadge}>
-                          <Text style={styles.emoji}>{o.emoji}</Text>
-                        </View>
-                        <Text style={styles.tileLabel}>{o.label}</Text>
-                      </TouchableOpacity>
-                    ))}
+                  <View style={styles.rowGroup}>
+                    {group.options.map((o, i) => {
+                      const parked = hasParkedDraft(o.key);
+                      return (
+                        <TouchableOpacity
+                          key={o.key}
+                          ref={(el) => {
+                            // Accessibility focus restoration target for Back.
+                            assetTileRefs.current[o.key] = el;
+                          }}
+                          style={[styles.taskRow, i > 0 && styles.taskRowDivided]}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          // One announcement per row: label, qualifier, draft.
+                          accessibilityLabel={[o.label, o.qualifier, parked ? 'draft saved' : null].filter(Boolean).join(', ')}
+                          onPress={() => handleTilePress(o.key)}
+                        >
+                          <View style={styles.rowIcon}>
+                            <Text style={styles.emoji}>{o.emoji}</Text>
+                          </View>
+                          <Text style={styles.rowLabel} numberOfLines={2}>
+                            {o.label}
+                          </Text>
+                          {o.qualifier ? <Text style={styles.rowQualifier}>{o.qualifier}</Text> : null}
+                          {parked ? (
+                            <View style={styles.draftBadge}>
+                              <Text style={styles.draftBadgeText}>DRAFT</Text>
+                            </View>
+                          ) : null}
+                          <Text style={styles.rowChevron}>›</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
               ))}
@@ -1462,10 +1613,17 @@ export function AddAnythingSheet({
           'Move money',
           () => transferFormRef.current?.requestClose('back'),
           <TransferForm
+            key={transferState.instanceKey}
             ref={transferFormRef}
             embedded
-            onCanSaveChange={setTransferCanSave}
-            onDirtyChange={setTransferIsDirty}
+            onCanSaveChange={(v) => {
+              setTransferCanSave(v);
+              transferState.setCanSave(v);
+            }}
+            onDirtyChange={(v) => {
+              setTransferIsDirty(v);
+              transferState.setIsDirty(v);
+            }}
             onSaveSuccess={handleSaveSuccessClose}
             onConfirmedClose={handleConfirmedClose}
           />

@@ -107,7 +107,14 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     expect(todayAfter.props.accessibilityState?.selected ?? false).toBe(false);
   });
 
-  test('the FAB opens the quick-actions tray with all 9 destinations, and its own accessibility label toggles Open/Close', async () => {
+  // SUPERSEDED BY DESIGN 5.1 WAVE 3 (authorised; handoff §2, doc A p.4-5,
+  // p.16). The nine-tile tray became six: Add account, Add debt and Add asset
+  // moved into the canonical catalogue (Add asset had resolved to the narrow
+  // investment/ETF form despite its broad label — audit D5-003), and the
+  // centre "Add anything"/Ask Nolie tile was removed from the production IA.
+  // Presentation/navigation only — no financial, phase-machine or persistence
+  // expectation changed here.
+  test('the FAB opens the quick-actions tray with all 6 destinations, and its own accessibility label toggles Open/Close', async () => {
     const user = userEvent.setup();
     await render(<Harness />);
 
@@ -115,7 +122,7 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(fab);
 
     await screen.findByRole('button', { name: 'Close quick actions' });
-    for (const label of ['Record income', 'Record spending', 'Add bill', 'Add account', 'Add anything', 'Move money', 'Add debt', 'Add asset', 'Add goal']) {
+    for (const label of ['Record spending', 'Income received', 'Add bill', 'Move money', 'Add goal', 'More']) {
       await screen.findByRole('menuitem', { name: label });
     }
   });
@@ -164,28 +171,6 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     // this pass), so this targets the specific one that proves the real
     // Move Money form actually mounted.
     await screen.findByRole('header', { name: 'Move money' });
-  });
-
-  test('selecting "Add account" opens the existing balance-scoped chooser ("Add a money balance"), not the full 13-destination grid', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Add account' }));
-
-    await screen.findByText('Add a money balance');
-  });
-
-  test('the centre tile reads "Add anything" (not "Ask Nolie") while the Ask Nolie capability is disabled, and opens the full generic chooser', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await screen.findByRole('menuitem', { name: 'Add anything' });
-    expect(screen.queryByRole('menuitem', { name: 'Ask Nolie' })).toBeNull();
-
-    await user.press(await screen.findByRole('menuitem', { name: 'Add anything' }));
-    await screen.findByText('Add to Nolie');
   });
 
   test('switching tabs while the tray is open closes it automatically', async () => {
@@ -252,12 +237,12 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     });
   }
 
-  test('1. Record income — the real income-entry content becomes visible, and Today/all four tabs remain tappable afterward', async () => {
+  test('1. Income received — the real income-entry content becomes visible, and Today/all four tabs remain tappable afterward', async () => {
     const user = userEvent.setup();
     await render(<Harness />);
 
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Record income' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'Income received' }));
 
     // QuickAddModal's own category-step heading — shared verbatim with
     // Record spending below (same embedded component, same first step) by
@@ -289,26 +274,6 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await expectTabsStillResponsive(user);
   });
 
-  test('5. Add account — tabs remain tappable after closing', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Add account' }));
-    await screen.findByText('Add a money balance');
-    await expectTabsStillResponsive(user);
-  });
-
-  test('6. Add anything (centre tile, Ask Nolie disabled) — tabs remain tappable after closing', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Add anything' }));
-    await screen.findByText('Add to Nolie');
-    await expectTabsStillResponsive(user);
-  });
-
   test('7. Move money — tabs remain tappable after closing', async () => {
     const user = userEvent.setup();
     await render(<Harness />);
@@ -316,37 +281,6 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Move money' }));
     await screen.findByRole('header', { name: 'Move money' });
-    await expectTabsStillResponsive(user);
-  });
-
-  test('8. Add debt — opens the existing liability flow (its own type chips include mortgage/credit card/car loan/personal loan/BNPL), tabs remain tappable after closing', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Add debt' }));
-
-    // Fresh liability entry defaults to Personal Loan with its own
-    // always-visible type-chip row (Mortgage/Credit card/Car loan/Personal
-    // loan/BNPL) already on screen — the same existing flow, not a
-    // duplicate. AddAnythingSheet's own embedded-destination heading
-    // (accessibilityRole="header") disambiguates from the outer
-    // KeyboardSheet chrome's separate, identically-worded title Text.
-    await screen.findByRole('header', { name: 'Add Personal Loan' });
-    await screen.findByText('Mortgage');
-    await screen.findByText('Credit card');
-    await screen.findByText('Buy Now, Pay Later');
-    await expectTabsStillResponsive(user);
-  });
-
-  test('9. Add asset — opens the existing asset flow, tabs remain tappable after closing', async () => {
-    const user = userEvent.setup();
-    await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
-    await user.press(await screen.findByRole('menuitem', { name: 'Add asset' }));
-
-    await screen.findByRole('header', { name: 'Add asset' });
     await expectTabsStillResponsive(user);
   });
 
@@ -495,4 +429,146 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(async () => expect(await screen.findByRole('button', { name: 'Open quick actions' })).toBeTruthy());
   });
+  // WAVE 3 REPLACEMENT COVERAGE — these six replace the removed Add account /
+  // Add anything / Add debt / Add asset journeys with the canonical
+  // six-action tray's own destinations, so no coverage was lost when those
+  // tiles moved into the catalogue.
+
+  test('W3-1. the tray shows exactly the six canonical tiles, and none of the removed ones', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    for (const label of ['Record spending', 'Income received', 'Add bill', 'Move money', 'Add goal', 'More']) {
+      expect(await screen.findByRole('menuitem', { name: label })).toBeOnTheScreen();
+    }
+    for (const gone of ['Add account', 'Add anything', 'Add asset', 'Add debt', 'Ask Nolie']) {
+      expect(screen.queryByRole('menuitem', { name: gone })).toBeNull();
+    }
+  });
+
+  test('W3-2. More opens the Add to Nolie catalogue, not a task workspace', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    // The catalogue's own standing subtitle is the unambiguous marker that
+    // the chooser layer (not a task workspace) is what opened.
+    expect(await screen.findByText('Everything you can record, in one place.')).toBeOnTheScreen();
+    await expectTabsStillResponsive(user);
+  });
+
+  test('W3-3. the catalogue exposes the six-asset taxonomy that replaced the generic Add asset tile', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByText('Everything you can record, in one place.');
+    for (const label of ['Add cash', 'Add savings', 'Add everyday account', 'Add investment', 'Add property']) {
+      expect(await screen.findByText(label)).toBeOnTheScreen();
+    }
+    expect(screen.queryByText('Add asset')).toBeNull();
+  });
+
+  test('W3-4. the catalogue names debt explicitly, replacing the removed Add debt tile', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByText('Everything you can record, in one place.');
+    expect(await screen.findByText('Add debt')).toBeOnTheScreen();
+    expect(await screen.findByText('Add credit card')).toBeOnTheScreen();
+    expect(screen.queryByText('Add liability')).toBeNull();
+    await expectTabsStillResponsive(user);
+  });
+
+  test('W3-5. Record spending — the canonical expense workspace opens, tabs remain tappable', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'Record spending' }));
+    await expectTabsStillResponsive(user);
+  });
+
+  test('W3-6. Add goal — tabs remain tappable after closing', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'Add goal' }));
+    await expectTabsStillResponsive(user);
+  });
+
+  // WAVE 3 — origin contract and catalogue Close, rendered.
+
+  test('W3-7. a direct quick task renders NO Back control and cannot reveal the catalogue', async () => {
+    // All five direct tiles are proven at the reducer level (empty return
+    // stack) in tests/design5-origin-contract.test.ts; this is the rendered
+    // proof that an empty stack means no Back control reaches the tree.
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'Record spending' }));
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.queryByText('Everything you can record, in one place.')).toBeNull();
+  });
+
+  test('W3-8. a catalogue-selected task DOES render Back, and Back returns to the catalogue', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByText('Everything you can record, in one place.');
+    await user.press(await screen.findByText('Add goal'));
+    const back = await screen.findByRole('button', { name: 'Back' });
+    expect(back).toBeOnTheScreen();
+    await user.press(back);
+    expect(await screen.findByText('Everything you can record, in one place.')).toBeOnTheScreen();
+  });
+
+  test('W3-9. the catalogue exposes a visible, accessible Close that exits the journey', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    const close = await screen.findByRole('button', { name: 'Close' });
+    expect(close).toBeOnTheScreen();
+    await user.press(close);
+    await expectTabsStillResponsive(user);
+  });
+
+  test('W3-10. catalogue-selected Add everyday account renders Back, and Back returns to the catalogue', async () => {
+    // The exact device-reported route: the asset branch previously reached
+    // the workspace without an origin, so no Back control was rendered.
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByText('Everything you can record, in one place.');
+    await user.press(await screen.findByText('Add everyday account'));
+    const back = await screen.findByRole('button', { name: 'Back' });
+    expect(back).toBeOnTheScreen();
+    await user.press(back);
+    expect(await screen.findByText('Everything you can record, in one place.')).toBeOnTheScreen();
+  });
+
+  test('W3-11. the catalogue renders all 14 tasks as rows, in canonical group order', async () => {
+    const user = userEvent.setup();
+    await render(<Harness />);
+    await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
+    await user.press(await screen.findByRole('menuitem', { name: 'More' }));
+    await screen.findByText('Everything you can record, in one place.');
+    for (const g of ['Everyday money', 'Accounts and wealth', 'Debt and planning']) {
+      expect(await screen.findByText(g)).toBeOnTheScreen();
+    }
+    for (const label of [
+      'Record spending', 'Add income source', 'Record income received', 'Add bill', 'Move money',
+      'Add cash', 'Add savings', 'Add everyday account', 'Add investment', 'Add property', 'Add retirement savings',
+      'Add debt', 'Add credit card', 'Add goal',
+    ]) {
+      expect(await screen.findByText(label)).toBeOnTheScreen();
+    }
+    // Qualifiers are announced with their row, not as separate stops.
+    expect(await screen.findByLabelText('Add income source, recurring')).toBeOnTheScreen();
+    expect(await screen.findByLabelText('Add debt, loan / BNPL')).toBeOnTheScreen();
+  });
+
 });

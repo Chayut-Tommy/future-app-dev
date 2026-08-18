@@ -38,6 +38,7 @@ export function KeyboardSheet({
   onRequestDismiss,
   fixedSheetHeight,
   headerRight,
+  breadcrumb,
   animateContentEntrance = false,
 }: {
   visible: boolean;
@@ -99,6 +100,13 @@ export function KeyboardSheet({
    * keyboard-open content area on some viewports) supplies this instead of
    * inventing a second, parallel dismiss mechanism. */
   headerRight?: React.ReactNode;
+  /** Design 5.1 Wave 3 — optional context line for a genuine NESTED step
+   * (e.g. "Add bill · Linked loan"). Rendered directly beneath the title so
+   * the reading order is title -> context -> fields -> actions, and above the
+   * scrolling body so it can never obscure a field, the keyboard, Cancel or
+   * Save. Omitted by every existing consumer, whose header stays byte-for-
+   * byte as it was. */
+  breadcrumb?: React.ReactNode;
   /** Host-delegated dismiss decision (correction pass, Defect 1 fix) — when
    * supplied, this component hands the ENTIRE dismiss decision to the host
    * instead of using its own isDirty/discardTitle/discardMessage-driven
@@ -402,6 +410,7 @@ export function KeyboardSheet({
           justifyContent: 'space-between',
           marginBottom: spacing.md,
         },
+        breadcrumbRow: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
         title: {
           ...typography.heading,
           color: colors.textPrimary,
@@ -453,6 +462,7 @@ export function KeyboardSheet({
             <Text style={styles.title}>{title}</Text>
             {headerRight}
           </View>
+          {breadcrumb ? <View style={styles.breadcrumbRow}>{breadcrumb}</View> : null}
           {fixedSheetHeight !== undefined ? (
             <View style={styles.fixedContentArea}>{children}</View>
           ) : (

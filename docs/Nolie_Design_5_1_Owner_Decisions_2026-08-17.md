@@ -199,3 +199,32 @@ Wealth's positive/negative delta currently uses `ON_FEATURED_POSITIVE` on a grad
 ## Invariants
 
 All 20 functional and data invariants from the audit §14 remain preserved unchanged. Wave 1A is additive foundation work and touches no engine, no persistence path and no navigation contract.
+
+---
+
+# Owner decision 6 — Android physical testing deferred to Wave 11 (18 August 2026)
+
+**Context.** Wave 3 (origin-aware Add architecture and the six-action tray) completed all automated gates and passed owner iOS device testing. The plan requires physical Android device verification as an external gate. The owner does not currently have access to an Android device.
+
+**Decision (owner, explicit and authorising).**
+
+- The owner currently has **iOS testing access only**.
+- **Wave 3 iOS device testing passed** and is approved.
+- **Physical Android hardware Back, TalkBack and transition-stress testing was not performed** for Wave 3.
+- The owner **accepts the temporary development risk** so that development may continue.
+- **Android physical verification moves to Wave 11** and remains **mandatory before any Android beta, production build or public release**.
+- **Automated Android gates remain mandatory during every wave**: TypeScript, legacy tests, rendered tests, Expo Doctor, and `npx expo export --platform android`.
+- **No report may describe Android physical testing as passed until it actually occurs.**
+
+**Status.** Deferred, **not** passed and **not** permanently waived. This decision resolves the Wave 3 checkpoint blocker for development purposes only.
+
+**Residual risk carried forward.** The Android-divergent surfaces Wave 3 introduced or altered and which remain physically unverified:
+
+1. `BackHandler` hardware Back at an Add-workspace root (journey Cancel, clean and dirty).
+2. Hardware Back with the quick tray open (must close the tray only).
+3. Hardware Back during `closingForAction` (must not open a workspace).
+4. Catalogue-origin Back across all 14 Add tasks on Android navigation timing.
+5. TalkBack announcement of the canonical catalogue rows and the `+` expanded state.
+6. Transition-stress and freeze behaviour under Android's own animation and lifecycle timing.
+
+These become explicit Wave 11 sign-off items.

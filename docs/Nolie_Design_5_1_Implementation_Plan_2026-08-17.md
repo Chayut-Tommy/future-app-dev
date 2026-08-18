@@ -990,3 +990,22 @@ The prompt may be reintroduced only when **all** hold:
 - it has sufficient bottom clearance above the floating dock and detached `+`.
 
 Current copy stays unchanged pending Wave 9 review.
+
+---
+
+# Change control — Android physical testing deferred to Wave 11 (18 August 2026)
+
+Owner decision 6, recorded in full in `docs/Nolie_Design_5_1_Owner_Decisions_2026-08-17.md`.
+
+**Decision.** The owner currently has iOS testing access only. Wave 3 iOS device testing passed. Physical Android hardware Back, TalkBack and transition-stress testing was **not** performed. The owner accepts the temporary development risk so development may continue.
+
+**Effect on the wave plan.**
+
+- Physical Android device verification is **deferred to Wave 11**, where it becomes a mandatory sign-off item, and must be completed **before any Android beta, production build or public release**.
+- The deferral is **not** a pass and **not** a permanent waiver.
+- **Automated Android gates remain mandatory in every wave** and are unchanged: `npx tsc --noEmit`, the full legacy suite, the full rendered suite, `npx expo-doctor`, and `npx expo export --platform android`.
+- **No report may describe Android physical testing as passed until it actually occurs.** Waves 3–10 device evidence is to be reported as *iOS device tested; Android physical testing deferred*.
+
+**Wave 11 additions.** The Wave 11 device script (§ *Wave 11 — Accessibility and device verification*) gains an explicit Android backlog covering every wave deferred under this decision: the hardware-Back matrix at Add-workspace root / open tray / mid-`closingForAction`, catalogue-origin Back across all 14 Add tasks, TalkBack on the canonical catalogue rows and the `+` expanded state, and Android transition-stress/freeze verification. Wave 11 cannot be signed off while any of these remain unperformed.
+
+**Unchanged.** No wave scope, ordering, dependency, acceptance criterion or financial-protection rule is altered by this decision.
