@@ -39,8 +39,8 @@ type SheetProps = { initialKind?: AddAnythingKind; onlyBalances?: boolean };
  * QuickActionsTray.tsx's own doc comment for the confirmed device root
  * cause this replaces.
  */
-export function FloatingAddButton() {
-  const { colors, glow } = useTheme();
+export function FloatingAddButton({ routeHidden = false }: { routeHidden?: boolean } = {}) {
+  const { colors, semantic, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
   const keyboardVisible = useKeyboardVisible();
@@ -148,13 +148,18 @@ export function FloatingAddButton() {
           width: FAB_SIZE,
           height: FAB_SIZE,
           borderRadius: FAB_SIZE / 2,
-          backgroundColor: colors.accent,
+          // Design 5.1 doc B p.3 — the detached "+" carries the featured
+          // treatment, not the retired green brand accent. featured[0] is
+          // the gradient's light stop; using it solid keeps the 64pt circle
+          // a single flat shape while the gradient itself lands with the
+          // hero work in a later wave.
+          backgroundColor: semantic.featured[0],
           alignItems: 'center',
           justifyContent: 'center',
-          ...glow(colors.accent),
+          ...glow(semantic.featured[0]),
         },
       }),
-    [colors, glow, insets.bottom]
+    [colors, semantic, glow, insets.bottom]
   );
 
   const rotateStyle = {
@@ -166,7 +171,11 @@ export function FloatingAddButton() {
   // AddAnythingSheet stays mounted unconditionally below, regardless of
   // this flag, so its own in-progress draft (and its own keyboard) is never
   // affected by this.
-  const hideDock = keyboardVisible && !isSheetOpen(phase);
+  // Design 5.1 Wave 2 — `routeHidden` is an independent OR so the existing
+  // keyboard/sheet interaction above is byte-identical. This is a purely
+  // visual gate on the FAB's own View: the five-phase machine, the tray and
+  // AddAnythingSheet below are untouched and still mount exactly as before.
+  const hideDock = (keyboardVisible && !isSheetOpen(phase)) || routeHidden;
 
   return (
     <>
@@ -180,9 +189,14 @@ export function FloatingAddButton() {
             accessibilityRole="button"
             accessibilityLabel={isTrayInteractive(phase) ? 'Close quick actions' : 'Open quick actions'}
             accessibilityHint="Opens quick actions to add money, bills, goals, and more"
+            // Design 5.1 doc A p.4 requires the "+" to announce its expanded
+            // state so a screen-reader user knows the tray opened. Derived
+            // from the EXISTING phase machine via its own isTrayInteractive
+            // predicate — no new state, no phase or timing change.
+            accessibilityState={{ expanded: isTrayInteractive(phase) }}
           >
             <Animated.View style={rotateStyle}>
-              <Ionicons name="add" size={34} color={colors.onAccent} importantForAccessibility="no" />
+              <Ionicons name="add" size={34} color={semantic.onInteractive} importantForAccessibility="no" />
             </Animated.View>
           </TouchableOpacity>
         </View>

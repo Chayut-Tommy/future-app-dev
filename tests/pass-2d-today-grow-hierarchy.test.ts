@@ -100,13 +100,21 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
     })()
   );
   assert(
-    'the locked-Score unlock prompt and the money-picture checklist are genuinely preserved (same UNLOCK_COPY.lulu_score/MoneyPictureChecklistCard, same onAction/eligibility, no calculation or persistence change) but repositioned strictly after the goal snapshot — never interleaved between any of the six canonical sections',
+    // SUPERSEDED CLAUSE REMOVED (owner fresh-device correction, authorised
+    // ahead of Wave 3): this previously also required the money-picture
+    // checklist to sit after the goal snapshot. That Pass 2D placement put
+    // the setup checklist below the fold for a brand-new customer, so the
+    // owner authorised moving it directly beneath the greeting. The
+    // locked-Score unlock prompt's position is UNCHANGED and still asserted,
+    // as is the checklist's own onAction/eligibility preservation. This is a
+    // presentation-order expectation only — no calculation, persistence or
+    // behavioural expectation was altered. The checklist's new position is
+    // protected by tests/design5-today-checklist-priority.test.ts.
+    'the locked-Score unlock prompt is genuinely preserved (same UNLOCK_COPY.lulu_score, same onAction/eligibility, no calculation or persistence change) and sits strictly after the goal snapshot — never interleaved between any of the six canonical sections',
     (() => {
       const unlockScoreIdx = TODAY_SCREEN_SRC.indexOf('UNLOCK_COPY.lulu_score.icon');
-      const checklistIdx = TODAY_SCREEN_SRC.indexOf('<MoneyPictureChecklistCard');
       return (
         unlockScoreIdx > goalSnapshotIdx &&
-        checklistIdx > goalSnapshotIdx &&
         /onAction=\{\(\) => setIncomeModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC)
       );
     })()
@@ -123,16 +131,25 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
     // by view-layer ternary priority" defect. See tests/worth-knowing.test.ts
     // for the calculation-level proof that showFinancialRebuild ===
     // (financialState.key === 'financial_rebuild').
-    'zero eligible content produces no empty gap — the insight block is a single two-tier tree (Financial Rebuild -> Worth Knowing -> null), never a second independently-eligible fallback card',
-    /showFinancialRebuild \? \(\s*<FinancialStateCard/.test(TODAY_SCREEN_SRC) &&
-      /\) : worthKnowingInsight \? \(/.test(TODAY_SCREEN_SRC) &&
+    // SUPERSEDED SHAPE (owner decision, Wave 2): the block was a two-tier
+    // tree whose first tier rendered the Financial Rebuild FinancialStateCard
+    // AND suppressed the Worth Knowing selector entirely. That tier was
+    // removed, so the block is now a SINGLE tier. The assertion's real
+    // intent — one decision, no second independently-eligible fallback card,
+    // and no empty gap when nothing qualifies — is unchanged and still
+    // enforced, now against the one-tier shape.
+    // Protected by tests/design5-today-insight-slot.test.ts.
+    'zero eligible content produces no empty gap — the insight block is a single one-tier tree (Worth Knowing -> null), never a second independently-eligible fallback card',
+    /\{worthKnowingInsight \? \(/.test(TODAY_SCREEN_SRC) &&
       /\) : null\}/.test(TODAY_SCREEN_SRC) &&
+      !/showFinancialRebuild/.test(TODAY_SCREEN_SRC) &&
+      !/<FinancialStateCard/.test(TODAY_SCREEN_SRC) &&
       !/contextualInsight/.test(TODAY_SCREEN_SRC) &&
       !/<LuluCheckInCard/.test(TODAY_SCREEN_SRC)
   );
-  assert('the contextual-insight slot (Financial Rebuild / Worth Knowing / null) appears before the goal snapshot — the approved Worth Knowing hierarchy, reversing this pass\'s original goal-then-insight order', (() => {
+  assert('the contextual-insight slot (Worth Knowing / null) appears before the goal snapshot — the approved Worth Knowing hierarchy, reversing this pass\'s original goal-then-insight order', (() => {
     const block = TODAY_SCREEN_SRC.slice(0, goalSnapshotIdx);
-    return block.indexOf('worthKnowingInsight') !== -1 && block.indexOf('showFinancialRebuild') !== -1;
+    return block.indexOf('worthKnowingInsight') !== -1;
   })());
   assert('Savings Coach is absent as a standalone Today card — no SavingsCoachCard import or mount in TodayScreen.tsx', !/SavingsCoachCard/.test(TODAY_SCREEN_SRC));
   assert('Money Fact is absent from Today — no SavingFactsCard import or mount in TodayScreen.tsx', !/SavingFactsCard/.test(TODAY_SCREEN_SRC));

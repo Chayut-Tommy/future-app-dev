@@ -453,9 +453,21 @@ console.log('\n=== 4. FINANCIAL REBUILD VS CASHFLOW FOCUS ACTIONS ===');
     /'Add income'/.test(FINANCIAL_STATE_CARD_SRC) && /'Add bills'/.test(FINANCIAL_STATE_CARD_SRC) && /'Review spending'/.test(FINANCIAL_STATE_CARD_SRC)
   );
   assert(
-    'TodayScreen.tsx wires reviewNetWorth to the existing Wealth route and goal to the existing Goals route/AddGoalModal — no new/duplicate destination',
-    /reviewNetWorth: \(\) => navigation\.navigate\('Wealth'\)/.test(TODAY_SCREEN_SRC) &&
-      /goal: \(\) => \(hasActiveGoal \? navigation\.navigate\('Goals'\) : setGoalModalVisible\(true\)\)/.test(TODAY_SCREEN_SRC)
+    // SUPERSEDED (owner decision, Wave 2): these were the handlers on
+    // `financialStateActions`, which existed solely to drive the Financial
+    // Rebuild FinancialStateCard in Today's insight slot. That surface has
+    // been removed from Today's default composition, so the handler bundle
+    // no longer exists there. The assertion is inverted to lock in the
+    // removal instead: no orphaned handlers and no duplicate destination
+    // left behind. FinancialStateCard.tsx, financialState.ts and Wealth
+    // Map's own use of describeFinancialStateForWealthMap are all
+    // unchanged, and section "computeFinancialState is untouched" below
+    // still proves the calculation itself by real import.
+    // Removal is protected by tests/design5-today-insight-slot.test.ts.
+    'TodayScreen.tsx no longer carries the Financial Rebuild action bundle — the surface it fed was removed, leaving no orphaned or duplicate destination',
+    !/financialStateActions/.test(TODAY_SCREEN_SRC) &&
+      !/reviewNetWorth:/.test(TODAY_SCREEN_SRC) &&
+      !/<FinancialStateCard/.test(TODAY_SCREEN_SRC)
   );
 
   // Real proof computeFinancialState/its thresholds are untouched by this

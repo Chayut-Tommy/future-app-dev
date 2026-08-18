@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAppState } from '../state/AppStateContext';
@@ -19,6 +19,7 @@ import { EmergencyFundScreen } from '../screens/discover/EmergencyFundScreen';
 import { HomeLoanCalculatorScreen } from '../screens/discover/HomeLoanCalculatorScreen';
 import { FloatingAddButton } from '../components/navigation/FloatingAddButton';
 import { WelcomeFlow } from '../screens/welcome/WelcomeFlow';
+import { isDockVisibleForRouteName } from './dockVisibility';
 
 const RootStack = createNativeStackNavigator();
 
@@ -30,6 +31,17 @@ const RootStack = createNativeStackNavigator();
 export function RootNavigator() {
   const { data, isLoading } = useAppState();
   const { colors } = useTheme();
+  // Design 5.1 Wave 2 — the detached "+" is a root-level singleton, so it
+  // was previously present on every pushed screen (audit D5-013). Its
+  // visibility now comes from the pure route matrix in dockVisibility.ts.
+  // 'Main' is the tab navigator: all four tab roots are visible routes, so
+  // it resolves visible without needing the tab's own name here.
+  // Observed through the navigator's OWN screenListeners rather than
+  // useNavigationState: this component renders the root navigator, so it has
+  // no parent navigator state to read and the hook would throw.
+  const [activeRootRoute, setActiveRootRoute] = useState<string | undefined>(undefined);
+  const fabRouteHidden =
+    activeRootRoute !== undefined && activeRootRoute !== 'Main' && !isDockVisibleForRouteName(activeRootRoute, false, 'none');
 
   if (isLoading) {
     return (
@@ -45,7 +57,13 @@ export function RootNavigator() {
 
   return (
     <View style={{ flex: 1 }}>
-      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+      <RootStack.Navigator
+        screenListeners={{
+          state: (e) => {
+            const st = e.data?.state as { index: number; routes: { name: string }[] } | undefined;
+            if (st) setActiveRootRoute(st.routes[st.index]?.name);
+          },
+        }} screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="Main" component={MainTabNavigator} />
         <RootStack.Screen name="Settings" component={SettingsScreen} options={{ presentation: 'modal' }} />
         <RootStack.Screen name="Language" component={LanguageScreen} />
@@ -98,7 +116,7 @@ export function RootNavigator() {
           "Add anything" while Ask Nolie itself remains unbuilt — see
           src/lib/askNolie.ts), and the two buttons would otherwise overlap
           in the same bottom-right corner this FAB now occupies. */}
-      <FloatingAddButton />
+      <FloatingAddButton routeHidden={fabRouteHidden} />
     </View>
   );
 }

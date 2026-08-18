@@ -839,8 +839,16 @@ console.log('\n=== UNIFIED SELECTOR CONTRACT (real import + Structural) ===');
     assert('fixture sanity: a large-liability/no-asset account genuinely computes to financial_rebuild', state.key === 'financial_rebuild');
   }
   assert(
-    'TodayScreen.tsx gates worthKnowingInsight\'s own computation on !showFinancialRebuild — Financial Rebuild structurally cannot coexist with a Worth Knowing render',
-    /const worthKnowingInsight = useMemo\(\s*\(\) => \(!showFinancialRebuild \? pickWorthKnowingInsight/.test(TODAY_SCREEN_SRC)
+    // SUPERSEDED (owner decision, Wave 2): this gate is exactly why the
+    // defect existed — a customer in financial_rebuild never had
+    // pickWorthKnowingInsight called at all, so they saw the orange card and
+    // never a Worth Knowing insight. The Financial Rebuild surface was
+    // removed from Today, so coexistence is now impossible by construction:
+    // Worth Knowing is the slot's only occupant and is computed
+    // unconditionally. Protected by tests/design5-today-insight-slot.test.ts.
+    'TodayScreen.tsx computes worthKnowingInsight unconditionally — Worth Knowing is the insight slot\'s sole occupant, so nothing can suppress it',
+    /const worthKnowingInsight = useMemo\(\s*\(\) => pickWorthKnowingInsight/.test(TODAY_SCREEN_SRC) &&
+      !/showFinancialRebuild/.test(TODAY_SCREEN_SRC)
   );
   assert(
     'the JSX itself checks showFinancialRebuild strictly before worthKnowingInsight, so FinancialStateCard always wins the slot when both would otherwise be eligible',
@@ -893,8 +901,13 @@ console.log('\n=== TODAY/MONEY INTEGRATION WIRING (Structural) ===');
 
   assert('TodayScreen.tsx imports and mounts WorthKnowingCard', /import \{ WorthKnowingCard \}/.test(TODAY_SCREEN_SRC) && /<WorthKnowingCard insight=\{worthKnowingInsight\}/.test(TODAY_SCREEN_SRC));
   assert(
-    'the Today insight slot narrows the Financial-Rebuild override from "!== \'standard\'" to "=== \'financial_rebuild\'" — Cashflow Focus no longer renders on Today, Financial Rebuild is untouched',
-    /const showFinancialRebuild = financialState\.key === 'financial_rebuild';/.test(TODAY_SCREEN_SRC)
+    // SUPERSEDED (owner decision, Wave 2): the Financial-Rebuild override was
+    // first narrowed from "!== 'standard'" to "=== 'financial_rebuild'", and
+    // has now been removed from Today entirely. financialState.ts is still
+    // completely untouched — see the very next assertion, which proves it by
+    // real import and still passes.
+    'the Today insight slot no longer carries any Financial-Rebuild override — neither Cashflow Focus nor Financial Rebuild renders on Today',
+    !/showFinancialRebuild/.test(TODAY_SCREEN_SRC) && !/financial_rebuild/.test(TODAY_SCREEN_SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, ''))
   );
   assert(
     'financialState.ts itself is completely untouched by this round — computeFinancialState/describeFinancialStateForWealthMap/the cashflow_focus copy all still exist, preserving Wealth Map\'s own supportive line',

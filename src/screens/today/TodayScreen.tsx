@@ -13,8 +13,6 @@ import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
-import { FinancialStateCard } from '../../components/today/FinancialStateCard';
-import { ProfileNudgeCard } from '../../components/today/ProfileNudgeCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
 import { TodayBriefingCard } from '../../components/today/TodayBriefingCard';
@@ -26,7 +24,6 @@ import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
-import { useFinancialState } from '../../lib/calculations/financialState';
 import { computeAchievements } from '../../lib/calculations/achievements';
 import { pickWorthKnowingInsight } from '../../lib/calculations/worthKnowing';
 import { WorthKnowingCard } from '../../components/today/WorthKnowingCard';
@@ -110,7 +107,6 @@ export function TodayScreen() {
   const greeting = useMemo(() => timeAwareGreeting(data.user.name, t), [data.user.name, t]);
   const monthLabel = useMemo(() => currentDate.toLocaleDateString(undefined, { month: 'long' }), [currentDate]);
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
-  const financialState = useFinancialState(data);
 
   // Today Briefing (Pass 2A) — every input computed exactly once here and
   // passed down, never re-derived inside TodayBriefingCard/SmartReminderCard,
@@ -134,29 +130,15 @@ export function TodayScreen() {
   // read the exact same active-goal predicate primaryActiveGoal (below)
   // will also use for the goal-snapshot section, so "does the user have
   // an active goal" can never disagree between the two.
-  const hasActiveGoal = data.goals.some((g) => g.status === 'active');
-  const financialStateActions = {
-    income: () => setIncomeModalVisible(true),
-    bills: () => navigation.navigate('Money'),
-    spending: () => navigation.navigate('Transactions'),
-    // Financial Rebuild only — the existing Wealth tab route (net worth is
-    // shown there, no new/duplicate destination).
-    reviewNetWorth: () => navigation.navigate('Wealth'),
-    // Financial Rebuild only — existing Goals route when a goal already
-    // exists, the existing AddGoalModal when it doesn't.
-    goal: () => (hasActiveGoal ? navigation.navigate('Goals') : setGoalModalVisible(true)),
-  };
   const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const journeySnapshot = useMemo(() => computeJourneySnapshot(achievements), [achievements]);
-  // Worth Knowing round — Cashflow Focus's Today presentation is retired;
-  // Financial Rebuild (negative net wealth, a materially more serious state)
-  // is the only financialState key that still overrides the single
-  // contextual-insight slot below. financialState.ts/computeFinancialState/
-  // describeFinancialStateForWealthMap are completely unchanged — this is a
-  // Today-presentation-only narrowing (approved decision: preserve Wealth
-  // Map's own cashflow_focus copy untouched).
-  const showFinancialRebuild = financialState.key === 'financial_rebuild';
+  // Worth Knowing round — Cashflow Focus's Today presentation was retired
+  // first, and the Financial Rebuild override has now followed it (owner
+  // decision, Wave 2): the contextual-insight slot belongs solely to Worth
+  // Knowing. financialState.ts/computeFinancialState/FinancialStateCard/
+  // describeFinancialStateForWealthMap are all completely unchanged and
+  // still power Wealth Map — only Today's presentation dropped the surface.
 
   // Correction round — Today's single contextual-insight slot is now
   // genuinely a two-tier tree with exactly ONE selector call: Financial
@@ -194,8 +176,8 @@ export function TodayScreen() {
   }, [briefingEventRows, timelineEvents, topReminder]);
 
   const worthKnowingInsight = useMemo(
-    () => (!showFinancialRebuild ? pickWorthKnowingInsight(data, currentDate, timelineEvents, safeToSpend, worthKnowingContext) : null),
-    [showFinancialRebuild, data, currentDate, timelineEvents, safeToSpend, worthKnowingContext]
+    () => pickWorthKnowingInsight(data, currentDate, timelineEvents, safeToSpend, worthKnowingContext),
+    [data, currentDate, timelineEvents, safeToSpend, worthKnowingContext]
   );
 
   // Pass 2D — the single active-goal snapshot (final hierarchy §3). The
@@ -493,6 +475,24 @@ export function TodayScreen() {
           Pass 2A-2C copy (timeAwareGreeting). */}
       <Text style={styles.greeting}>{greeting}</Text>
 
+      {/* Setup-state priority correction (owner fresh-device finding,
+          authorised ahead of Wave 3). While the money picture is fresh or
+          incomplete this checklist IS the primary job on Today, so it sits
+          directly under the greeting — a new customer had to scroll past
+          the briefing, journey, month snapshot, goal and Score prompts to
+          reach it. Pass 2D moved it into the trailing group; before that it
+          sat third, above the month snapshot.
+
+          Position only. The component, its progress calculation, its
+          `moneyPictureChecklistDismissed || allDone` visibility rule, its
+          row actions and its Add destinations are untouched, and it is
+          still rendered exactly once. The completed/dismissed states are
+          unchanged, so an established user's Today hierarchy is identical
+          — the card simply returns null as it always did. The broader Wave
+          5 Today redesign still owns the completed-user hierarchy, and must
+          preserve this setup-state priority. */}
+      <MoneyPictureChecklistCard />
+
       {/* 2. Your Today Briefing (Pass 2A, extended Pass 2B) — unchanged:
           eligibility, priority, the three-financial-item cap (Score
           excluded from that cap), responsive one/two/three-item layouts,
@@ -544,21 +544,18 @@ export function TodayScreen() {
       </View>
       <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
 
-      {/* 5. Contextual insight slot — Worth Knowing round. A genuine
-          two-tier tree, exactly one selector call deep: Financial Rebuild
-          (negative net wealth) overrides everything — the same
-          established, unmodified computeFinancialState signal and
-          FinancialStateCard presentation Today already used for that
-          state. Otherwise `worthKnowingInsight` (pickWorthKnowingInsight,
-          worthKnowing.ts's single exported decision function) is the ONLY
-          thing that can occupy this slot. There is no second,
-          independently-eligible fallback card — when worthKnowingInsight is
-          null, this slot renders nothing at all, and Goal (below) follows
-          August so far directly. See worthKnowing.ts's own header comment
+      {/* 5. Contextual insight slot — Worth Knowing, and nothing else.
+          `worthKnowingInsight` (pickWorthKnowingInsight, worthKnowing.ts's
+          single exported decision function) is now the ONLY thing that can
+          occupy this slot. The former Financial Rebuild first tier was
+          removed by owner decision in Wave 2: it rendered an orange
+          FinancialStateCard here AND suppressed the Worth Knowing selector
+          entirely, so a customer with negative net wealth never saw a Worth
+          Knowing insight at all. There is no fallback card — when
+          worthKnowingInsight is null this slot renders nothing, and Goal
+          (below) follows August so far directly. See worthKnowing.ts's own header comment
           for the full architecture rationale. */}
-      {showFinancialRebuild ? (
-        <FinancialStateCard state={financialState} actions={financialStateActions} hasActiveGoal={hasActiveGoal} />
-      ) : worthKnowingInsight ? (
+      {worthKnowingInsight ? (
         <TouchableOpacity
           onPress={handleWorthKnowingPress}
           activeOpacity={0.8}
@@ -631,7 +628,7 @@ export function TodayScreen() {
           Month, which broke the Journey -> This Month -> Goal snapshot
           adjacency the six-section contract requires. Moved here, after
           the single contextual-insight slot, alongside the pre-existing
-          ProfileNudgeCard/LoanBalanceReminderCard trailing cards this
+          LoanBalanceReminderCard trailing card this
           screen already used for exactly this kind of occasional,
           self-hiding, non-canonical content — the same established
           pattern, not a new one. Each of the four cards below renders
@@ -648,8 +645,6 @@ export function TodayScreen() {
             onAction={() => setIncomeModalVisible(true)}
           />
         ) : null}
-        <MoneyPictureChecklistCard />
-        <ProfileNudgeCard />
         <LoanBalanceReminderCard />
       </View>
 

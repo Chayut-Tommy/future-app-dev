@@ -247,14 +247,23 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
     /const scoreChipPresentation = useMemo\(\(\) => selectScoreChipPresentation\(luluScore\), \[luluScore\]\);/.test(TODAY_SCREEN_SRC) &&
       /const journeySnapshot = useMemo\(\(\) => computeJourneySnapshot\(achievements\), \[achievements\]\);/.test(TODAY_SCREEN_SRC)
   );
+  // SUPERSEDED CLAUSE REMOVED (owner fresh-device correction, authorised
+  // ahead of Wave 3): this previously also required the Journey snapshot to
+  // precede the guided checklist. The owner found that placement buried the
+  // setup checklist below the fold for a brand-new customer, and authorised
+  // moving the checklist directly beneath the greeting. The checklist now
+  // precedes the Briefing, so `snapshot < checklist` no longer holds by
+  // design. The assertion's real intent — Journey sits immediately after the
+  // Briefing — is unchanged and still enforced. This is a presentation-order
+  // expectation only; no financial or behavioural expectation was altered.
+  // The new order is protected by tests/design5-today-checklist-priority.test.ts.
   assert(
-    'the Journey snapshot is placed immediately after TodayBriefingCard, before the guided checklist',
+    'the Journey snapshot is placed immediately after TodayBriefingCard',
     (() => {
       const briefingIdx = TODAY_SCREEN_SRC.indexOf('<TodayBriefingCard');
       const briefingCloseIdx = TODAY_SCREEN_SRC.indexOf('/>', briefingIdx);
       const snapshotIdx = TODAY_SCREEN_SRC.indexOf('<TodayJourneySnapshotCard');
-      const checklistIdx = TODAY_SCREEN_SRC.indexOf('<MoneyPictureChecklistCard');
-      return briefingCloseIdx !== -1 && snapshotIdx > briefingCloseIdx && snapshotIdx < checklistIdx;
+      return briefingCloseIdx !== -1 && snapshotIdx > briefingCloseIdx;
     })()
   );
 

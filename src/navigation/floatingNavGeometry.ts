@@ -49,18 +49,31 @@ export function screenBottomClearance(insetBottom: number): number {
   return dockBottomOffset(insetBottom) + DOCK_HEIGHT + DOCK_BOTTOM_SPACING;
 }
 
-/** The capsule's own width: full available width minus both margins, minus
- * the FAB's own footprint and its gap — so `capsule | gap | FAB` exactly
- * fills the space between the two horizontal margins. */
-export function capsuleWidth(windowWidth: number): number {
-  return Math.max(windowWidth - HORIZONTAL_MARGIN * 2 - FAB_SIZE - DOCK_FAB_GAP, 0);
+/** Design 5.1 Wave 2 — on a tablet the assembly is centred and capped
+ * rather than stretched full-bleed (doc A p.4, Tokens.json
+ * layout.dock.maxWidthTablet). A 900pt-wide dock reads as a toolbar, not a
+ * dock, and puts the tab targets an uncomfortable distance apart. */
+export const DOCK_MAX_WIDTH = 500;
+
+/** The assembly's total width for a given window, capped for tablets. On
+ * phones this is unchanged: window minus both margins. */
+export function combinedAssemblyWidth(windowWidth: number): number {
+  const available = Math.max(windowWidth - HORIZONTAL_MARGIN * 2, 0);
+  return Math.min(available, DOCK_MAX_WIDTH);
 }
 
-/** The combined footprint (capsule + gap + FAB) the tray should align its
- * own width to, per the PRD ask that the tray "align with the combined
- * dock/FAB width". */
-export function combinedAssemblyWidth(windowWidth: number): number {
-  return Math.max(windowWidth - HORIZONTAL_MARGIN * 2, 0);
+/** Left offset that centres the capped assembly. Zero once the window is
+ * narrow enough that the assembly already spans the margins. */
+export function assemblyHorizontalInset(windowWidth: number): number {
+  const available = Math.max(windowWidth - HORIZONTAL_MARGIN * 2, 0);
+  return Math.max((available - combinedAssemblyWidth(windowWidth)) / 2, 0);
+}
+
+/** The capsule's own width: the (possibly capped) assembly width minus the
+ * FAB's own footprint and its gap — so `capsule | gap | FAB` exactly fills
+ * the assembly. */
+export function capsuleWidth(windowWidth: number): number {
+  return Math.max(combinedAssemblyWidth(windowWidth) - FAB_SIZE - DOCK_FAB_GAP, 0);
 }
 
 /** The tray panel's own `bottom` offset — anchored `TRAY_DOCK_GAP` above the

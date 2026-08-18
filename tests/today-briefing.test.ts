@@ -586,11 +586,20 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     'REFRESH: every one of those useMemos lists `currentDate` (or a value derived from it) as a dependency — currentDate itself comes from useCurrentLocalDate(), which (per its own doc comment, read directly) refreshes on mount, on tab focus, on app foreground, and at local midnight. No separate foreground/day-rollover plumbing is needed in this screen: the existing dependency chain already propagates it.',
     /const currentDate = useCurrentLocalDate\(\);/.test(TODAY_SCREEN_SRC)
   );
-  assert('TodayBriefingCard is rendered immediately after the greeting Text, before MoneyPictureChecklistCard, and receives today={currentDate}', (() => {
+  // SUPERSEDED CLAUSE REMOVED (owner fresh-device correction, authorised
+  // ahead of Wave 3): this previously required the Briefing to precede
+  // MoneyPictureChecklistCard. The setup checklist now sits directly beneath
+  // the greeting so a brand-new customer sees it without scrolling, so the
+  // Briefing follows it while setup is incomplete. The Briefing still comes
+  // after the greeting and still receives today={currentDate}; for an
+  // established user the checklist returns null and the Briefing is once
+  // again the first card. Presentation order only — no behavioural or
+  // financial expectation changed. New order protected by
+  // tests/design5-today-checklist-priority.test.ts.
+  assert('TodayBriefingCard is rendered after the greeting Text and receives today={currentDate}', (() => {
     const greetingIdx = TODAY_SCREEN_SRC.indexOf('<Text style={styles.greeting}>{greeting}</Text>');
     const briefingIdx = TODAY_SCREEN_SRC.indexOf('<TodayBriefingCard');
-    const checklistIdx = TODAY_SCREEN_SRC.indexOf('<MoneyPictureChecklistCard');
-    return greetingIdx !== -1 && briefingIdx !== -1 && checklistIdx !== -1 && greetingIdx < briefingIdx && briefingIdx < checklistIdx && /today=\{currentDate\}/.test(TODAY_SCREEN_SRC);
+    return greetingIdx !== -1 && briefingIdx !== -1 && greetingIdx < briefingIdx && /today=\{currentDate\}/.test(TODAY_SCREEN_SRC);
   })());
   // Pass 2B layout correction — the reminder's full detailed presentation
   // (question, disclosure copy, account-choice controls) is no longer

@@ -6,6 +6,17 @@ import { useTheme } from '../../theme/ThemeContext';
 import { capsuleWidth, dockBottomOffset, DOCK_HEIGHT, HORIZONTAL_MARGIN } from '../../navigation/floatingNavGeometry';
 import { floatingTrayCloseRef } from '../../navigation/floatingTrayRef';
 import { useKeyboardVisible } from '../../hooks/useKeyboardVisible';
+import { BlurView } from 'expo-blur';
+import { assemblyHorizontalInset } from '../../navigation/floatingNavGeometry';
+import { designElevation, designRadius } from '../../theme/semanticTokens';
+import { MOTION_MS } from '../../theme/motion';
+
+/** Design 5.1 doc B p.3 — blur is used in exactly ONE place, the dock
+ * capsule. Ordinary cards, sheets and screen content never become glass.
+ * Android SDK 54 uses the documented solid fallback instead: the
+ * experimental dimezisBlurView path is deliberately NOT enabled in this
+ * wave. */
+const DOCK_BLUR_INTENSITY = 24;
 
 const PILL_TRANSITION_MS = 180;
 const PILL_INSET = 4;
@@ -29,7 +40,7 @@ const PILL_INSET = 4;
  * navigation state are untouched; only the visual presentation changes.
  */
 export function FloatingNavBar({ state, descriptors, navigation, reduceMotion }: BottomTabBarProps & { reduceMotion: boolean }) {
-  const { colors, spacing, radius, typography, cardShadow } = useTheme();
+  const { colors, semantic, scheme, spacing, radius, typography, cardShadow } = useTheme();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const keyboardVisible = useKeyboardVisible();
@@ -57,16 +68,37 @@ export function FloatingNavBar({ state, descriptors, navigation, reduceMotion }:
       StyleSheet.create({
         capsule: {
           position: 'absolute',
-          left: HORIZONTAL_MARGIN,
+          // Tablet: the assembly is capped and centred, so the capsule's own
+          // left edge moves in by the shared inset (phones: 0).
+          left: HORIZONTAL_MARGIN + assemblyHorizontalInset(windowWidth),
           bottom: dockBottomOffset(insets.bottom),
           width,
           height: DOCK_HEIGHT,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surface,
+          borderRadius: designRadius.pill,
+          // Semi-opaque Design 5.1 surface ABOVE the blur (doc B p.3:
+          // "dock capsule background at 92% opacity + 12 pt blur"). On
+          // Android this same surface is the documented solid fallback.
+          backgroundColor: semantic.bgSurface,
+          opacity: Platform.OS === 'ios' ? undefined : 1,
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: colors.border,
+          borderColor: semantic.border,
           flexDirection: 'row',
+          // Clips the BlurView to the capsule radius.
+          overflow: 'hidden',
           ...cardShadow,
+        },
+        // iOS only. Sits beneath the tabs but above the scrolling content
+        // behind the dock, so it samples live content as the screen moves.
+        blurLayer: {
+          ...StyleSheet.absoluteFillObject,
+          borderRadius: designRadius.pill,
+        },
+        // The semi-opaque veil that keeps Design 5.1's surface reading as a
+        // surface rather than raw glass.
+        capsuleVeil: {
+          ...StyleSheet.absoluteFillObject,
+          backgroundColor: semantic.bgSurface,
+          opacity: designElevation.blur.dockCapsule.opacity,
         },
         pill: {
           position: 'absolute',
@@ -74,8 +106,8 @@ export function FloatingNavBar({ state, descriptors, navigation, reduceMotion }:
           bottom: PILL_INSET,
           left: PILL_INSET,
           width: tabWidth - PILL_INSET * 2,
-          borderRadius: radius.pill,
-          backgroundColor: colors.secondarySoft,
+          borderRadius: designRadius.pill,
+          backgroundColor: semantic.interactiveTint,
         },
         tab: {
           width: tabWidth,
@@ -87,13 +119,29 @@ export function FloatingNavBar({ state, descriptors, navigation, reduceMotion }:
           marginTop: 2,
         },
       }),
-    [colors, spacing, radius, typography, cardShadow, width, tabWidth, insets.bottom]
+    [colors, semantic, scheme, spacing, radius, typography, cardShadow, width, tabWidth, insets.bottom, windowWidth]
   );
 
   if (keyboardVisible) return null;
 
   return (
     <View style={styles.capsule} pointerEvents="box-none">
+      {/* iOS only. Declared FIRST so it paints beneath the tabs, and it is
+          inside the capsule (which sets overflow:'hidden') so the pill
+          radius clips it. Android SDK 54 takes the documented solid
+          fallback — the capsule's own semantic surface — rather than the
+          experimental native blur, which is not enabled in this wave. */}
+      {Platform.OS === 'ios' ? (
+        <>
+          <BlurView
+            intensity={DOCK_BLUR_INTENSITY}
+            tint={scheme === 'dark' ? 'dark' : 'light'}
+            style={styles.blurLayer}
+            pointerEvents="none"
+          />
+          <View style={styles.capsuleVeil} pointerEvents="none" />
+        </>
+      ) : null}
       <Animated.View
         pointerEvents="none"
         style={[styles.pill, { transform: [{ translateX: Animated.multiply(pillPosition, tabWidth) }] }]}
@@ -102,7 +150,9 @@ export function FloatingNavBar({ state, descriptors, navigation, reduceMotion }:
         const { options } = descriptors[route.key];
         const label = (options.tabBarLabel as string | undefined) ?? options.title ?? route.name;
         const isFocused = state.index === index;
-        const color = isFocused ? colors.secondary : colors.textMuted;
+        // Design 5.1: selected uses the interactive role (Ocean Blue in
+        // every colour style); inactive uses tertiary ink.
+        const color = isFocused ? semantic.interactive : semantic.textTertiary;
 
         const onPress = () => {
           const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });

@@ -936,3 +936,57 @@ Measurement during Wave 1B disproved the assumption that these were bounded Wave
 **Ratchet rule for Waves 2–9:** every file a wave touches migrates its own font and legacy-token consumers; no wave may introduce a new platform-default font consumer, a new legacy-token consumer, or a raw colour.
 
 **Tracked:** Wealth's positive/negative delta treatment is reassessed against `movementPositive`/`movementNegative` in Wave 7.
+
+---
+
+# Change control — Today setup-checklist priority (17 August 2026)
+
+Owner fresh-device finding, authorised as a bounded correction **before Wave 3**.
+
+**Defect.** After onboarding, the "Great start! Let's build your money picture" checklist rendered inside Today's trailing group — below the briefing, journey, month snapshot, goal and Score prompts. A brand-new customer had to scroll past everything to reach the one thing they were meant to do next.
+
+**Cause.** Pass 2D (`6762c3f`) removed `MoneyPictureChecklistCard` from its former third position (above the month snapshot) and re-added it at the bottom beside `ProfileNudgeCard` and `LoanBalanceReminderCard`. **Not caused by Wave 2** — `TodayScreen.tsx` is untouched by the Wave 2 diff.
+
+**Correction.** While the money picture is fresh or incomplete, the existing checklist renders directly beneath the greeting, ahead of the briefing, journey, month snapshot, goal and Score prompts. Position only: the component, its progress calculation, its `moneyPictureChecklistDismissed || allDone` visibility rule, its row actions, its Add destinations and its persistence are unchanged, and it is still rendered exactly once.
+
+**Scope boundary.**
+
+- Fresh/incomplete setup guidance is restored to priority placement before Wave 3.
+- **The Wave 5 Today redesign must preserve this setup-state priority.**
+- The normal completed-user Today hierarchy remains owned by Wave 5 and is unchanged here — a completed or dismissed checklist returns null exactly as before, so an established user's Today is identical.
+
+This authorises no other part of the Wave 5 Today redesign.
+
+---
+
+# Change control — Today insight slot and profile nudge (17 August 2026)
+
+Owner fresh-device findings, authorised as bounded corrections in Wave 2.
+
+## 1. Financial Rebuild surface removed from Today
+
+**Root cause.** Today's contextual-insight slot was a two-tier tree: `showFinancialRebuild ? <FinancialStateCard/> : worthKnowingInsight ? <WorthKnowingCard/> : null`, where `showFinancialRebuild = financialState.key === 'financial_rebuild'` (negative net wealth). The orange card was the **independent `FinancialStateCard`**, not an output of `WorthKnowingCard`. It also **suppressed the Worth Knowing selector itself** — `pickWorthKnowingInsight` was only called when `!showFinancialRebuild` — so an affected customer never saw a Worth Knowing insight at all.
+
+**Decision.** The dynamic insight position after the month snapshot belongs solely to `WorthKnowingCard`. At most one insight; if none qualifies, no card. `FinancialStateCard` is not a fallback.
+
+**Disposition.** Removed from Today's default composition: render call, import, `useFinancialState` call, `showFinancialRebuild` predicate, `financialStateActions`, and the selector suppression. **Preserved unchanged:** `FinancialStateCard.tsx`, `financialState.ts`, `computeFinancialState`, and `describeFinancialStateForWealthMap`, which still powers Wealth Map. No calculation or selector was modified to force a Worth Knowing result.
+
+## 2. Profile nudge deferred to Wave 9
+
+`ProfileNudgeCard` ("Enjoying Nolie? ✨") showed on `hasEngaged && profileIncomplete && !profileNudgeDismissed`, which fired during the onboarding-completion session while the Money Picture checklist was still the customer's primary setup guide.
+
+**Disposition.** Unwired from Today's default composition only. Component, copy, dismissal logic and `profileNudgeDismissed` model field are all preserved unchanged. **No timer, session counter, timestamp, cooldown, analytics or persistence was added.**
+
+### Wave 9 profile-nudge lifecycle requirement
+
+The prompt may be reintroduced only when **all** hold:
+
+- onboarding is complete;
+- the Money Picture checklist is completed or dismissed;
+- the profile remains incomplete;
+- the customer has reached a later qualified session or a meaningful engagement threshold;
+- dismissal and cooldown behaviour are specified and persisted;
+- it does not compete with Worth Knowing or primary setup guidance;
+- it has sufficient bottom clearance above the floating dock and detached `+`.
+
+Current copy stays unchanged pending Wave 9 review.

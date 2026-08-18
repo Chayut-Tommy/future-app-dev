@@ -6,6 +6,7 @@ import { WealthScreen } from '../screens/wealth/WealthScreen';
 import { MoneyScreen } from '../screens/money/MoneyScreen';
 import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
 import { useReduceMotion } from '../hooks/useReduceMotion';
+import { createRepeatTapScrollListener } from './tabScrollBehaviour';
 import { tabScrollRefs } from './tabScrollRefs';
 import { FloatingNavBar } from '../components/navigation/FloatingNavBar';
 
@@ -15,13 +16,9 @@ const Tab = createBottomTabNavigator();
 // Instagram/Apple apps). `navigation.isFocused()` distinguishes "switching
 // to this tab" from "already here, tapped again" — only the latter scrolls.
 function scrollToTopOnRepeatPress(tab: keyof typeof tabScrollRefs) {
-  return ({ navigation }: { navigation: { isFocused: () => boolean } }) => ({
-    tabPress: () => {
-      if (navigation.isFocused()) {
-        tabScrollRefs[tab].current?.scrollTo({ y: 0, animated: true });
-      }
-    },
-  });
+  // Behaviour lives in the pure tabScrollBehaviour module so it is testable;
+  // this wrapper only supplies the real ref map.
+  return createRepeatTapScrollListener(tab, tabScrollRefs);
 }
 
 const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
