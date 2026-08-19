@@ -764,21 +764,42 @@ console.log('\n=== Section 7: QuickAddModal.tsx — manual income transaction na
     'notePayload construction no longer gates on type === \'expense\' — a manual income transaction\'s typed name is captured the same way an expense\'s is',
     /const notePayload = !isEditingRecurringLinked && transactionName\.trim\(\)\.length > 0 \? \{ note: transactionName\.trim\(\) \} : \{\};/.test(QUICK_ADD_SRC)
   );
+  // SUPERSEDED IN FORM by the Wave 4 device correction: the income branch
+  // now also carries its explicitly-chosen destination and its own balance
+  // effect, so the payload is no longer a one-line literal. Every field the
+  // old assertion protected is still asserted, individually.
   assert(
-    'The income save-payload branch now spreads ...notePayload — a typed name is actually persisted for income, not silently dropped',
-    /: \{ type, amount: amountValue, categoryId, date: isoDate, \.\.\.notePayload \};/.test(QUICK_ADD_SRC)
+    'The income save-payload branch still spreads ...notePayload — a typed name is actually persisted for income, not silently dropped',
+    /type,\s*\n\s*amount: amountValue,\s*\n\s*categoryId,\s*\n\s*date: isoDate,[\s\S]*?\.\.\.notePayload,\s*\n\s*\};/.test(QUICK_ADD_SRC)
   );
   assert(
+    'and it now carries the explicitly-chosen destination via the EXISTING targetAssetId field, only when the income is meant to move a balance',
+    /targetAssetId: incomeBalanceEffect === 'update' \? incomeTargetAssetId \?\? undefined : undefined,/.test(QUICK_ADD_SRC) &&
+      /const incomeBalanceEffect: BalanceEffectMode = balanceEffect === 'update' && incomeTargetAssetId \? 'update' : 'none';/.test(QUICK_ADD_SRC)
+  );
+  // SUPERSEDED in form only by Design 5.1 Wave 4: the hand-rolled
+  // <Text label> + <TextInput> pair became the shared <TextField label=...>
+  // primitive. The BEHAVIOUR this protects is unchanged and still asserted:
+  // the name field renders for BOTH expense and income, and the ONLY thing
+  // that hides it is recurring-linked editing.
+  assert(
     'The Transaction name field itself renders for both expense and income (only recurring-linked editing hides it, replaced by the existing read-only Source line)',
-    /\{!isEditingRecurringLinked \? \(\s*\n\s*<>\s*\n\s*<Text style=\{styles\.sectionLabel\}>Transaction name<\/Text>/.test(QUICK_ADD_SRC)
+    /\{!isEditingRecurringLinked \? \(\s*\n\s*<TextField\s*\n\s*label="Transaction name"/.test(QUICK_ADD_SRC)
+  );
+  assert(
+    'and nothing else gates that field — the type (expense/income) is not part of its condition',
+    (() => {
+      const m = QUICK_ADD_SRC.match(/\{!isEditingRecurringLinked \? \([\s\S]*?\) : null\}/);
+      return !!m && !/type === '(income|expense)'/.test(m[0].split('placeholder=')[0]);
+    })()
   );
   assert(
     'The name field placeholder is context-appropriate for income ("e.g. August salary") vs expense ("e.g. Woolworths groceries") — never a mismatched hint',
     /placeholder=\{type === 'income' \? 'e\.g\. August salary' : 'e\.g\. Woolworths groceries'\}/.test(QUICK_ADD_SRC)
   );
   assert(
-    'category and name remain two separate concepts in the payload — the income branch spreads categoryId and ...notePayload as distinct fields, and categoryId is never overwritten or derived from transactionName anywhere in the save path',
-    /\{ type, amount: amountValue, categoryId, date: isoDate, \.\.\.notePayload \};/.test(QUICK_ADD_SRC) && !/categoryId: transactionName/.test(QUICK_ADD_SRC)
+    'category and name remain two separate concepts in the payload — the income branch carries categoryId and ...notePayload as distinct fields, and categoryId is never overwritten or derived from transactionName anywhere in the save path',
+    /categoryId,\s*\n\s*date: isoDate,[\s\S]*?\.\.\.notePayload,/.test(QUICK_ADD_SRC) && !/categoryId: transactionName/.test(QUICK_ADD_SRC)
   );
   assert(
     'A recurring-confirmed transaction (income or expense) still gets its own immutable read-only Source line, never the editable name field — isEditingRecurringLinked is type-agnostic',
@@ -887,8 +908,13 @@ console.log('\n=== Section 11: SafeToSpendHero.tsx — Manage balances control (
   // invalid_data addition); back down to 6 now that unavailable_balance_data
   // has its own, different action. unavailable_other_data never called it
   // either, in any version.
+  // Wave 4 closure, P1 — `goals_underfunded` no longer has its own
+  // amount-less warning card (it was the source of the -$6,802 Available
+  // Until Payday substitution); it falls through to the ordinary card, which
+  // already renders this control. One fewer call site, same guarantee: the
+  // control is defined once and every card state that shows it reuses it.
   const callSiteCount = (SAFE_TO_SPEND_HERO_SRC.match(/\{renderManageBalancesButton\(/g) || []).length;
-  assert('renderManageBalancesButton is called from exactly 6 card-state render branches (unavailable_balance_data now uses onReviewInWealth instead)', callSiteCount === 6);
+  assert('renderManageBalancesButton is called from exactly 5 card-state render branches (goals_underfunded now uses the ordinary card; unavailable_balance_data uses onReviewInWealth)', callSiteCount === 5);
   assert(
     'The control opens the EXISTING onSelectBalances callback (Select Balances) — never a new/second balance-management surface',
     /onPress=\{onSelectBalances\}/.test(SAFE_TO_SPEND_HERO_SRC) && /accessibilityLabel="Manage balances"/.test(SAFE_TO_SPEND_HERO_SRC)
@@ -1336,9 +1362,19 @@ console.log('\n=== Section 16: no-eligible-destination recovery journey (structu
     'AddWealthItemModal.tsx: onlyLiquidCategories is a real, typed, optional prop',
     /onlyLiquidCategories\?: boolean;/.test(WEALTH_SRC_LOCAL)
   );
+  // SUPERSEDED in form only by Design 5.1 Wave 4: the category STEP is gone
+  // and its list is now the in-form asset-type selector. The RESTRICTION
+  // itself is the thing that matters and is asserted here in its new home —
+  // still the SAME ASSET_CARD_GROUPS list filtered by LIQUID_BALANCE_TYPES,
+  // never a duplicate list, and never silently dropped by the removal.
   assert(
-    'AddWealthItemModal.tsx: the category step filters ASSET_CARD_GROUPS by LIQUID_BALANCE_TYPES when onlyLiquidCategories is set — the SAME list, not a duplicate',
-    /\(onlyLiquidCategories \? ASSET_CARD_GROUPS\.filter\(\(g\) => LIQUID_BALANCE_TYPES\.includes\(g\.value\)\) : ASSET_CARD_GROUPS\)\.map\(\(g\) => \(/.test(WEALTH_SRC_LOCAL)
+    'AddWealthItemModal.tsx: onlyLiquidCategories still restricts the asset-type choice to LIQUID_BALANCE_TYPES, filtering the SAME ASSET_CARD_GROUPS list',
+    /const restrictToLiquid = isLiquidPresetJourney \|\| !!onlyLiquidCategories;/.test(WEALTH_SRC_LOCAL) &&
+      /\(restrictToLiquid \? ASSET_CARD_GROUPS\.filter\(\(g\) => LIQUID_BALANCE_TYPES\.includes\(g\.value\)\) : ASSET_CARD_GROUPS\)\.map\(/.test(WEALTH_SRC_LOCAL)
+  );
+  assert(
+    'AddWealthItemModal.tsx: and that restricted list is what the in-form selector actually renders — the restriction cannot be bypassed by a second, unfiltered control',
+    /options=\{assetTypeSelectOptions\}/.test(WEALTH_SRC_LOCAL) && !/assetTypeChipOptions/.test(WEALTH_SRC_LOCAL)
   );
 }
 

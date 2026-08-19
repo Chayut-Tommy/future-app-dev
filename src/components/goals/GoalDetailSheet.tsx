@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AccessibilityInfo, Alert, Animated, Easing, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View, findNodeHandle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { Goal, GoalPriority } from '../../types/models';
+import { Goal, GoalPriority, LifeGoalType } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { GoalFormFields } from './GoalFormFields';
+import { CurrencyField } from '../shared/fields/CurrencyField';
+import { MOTION_MS, MOTION_TRAVEL_PT } from '../../theme/motion';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { resolveGoalNameOnPurposeChange, resolveGoalPaceSummary, resolveGoalProgressState } from '../../lib/goalFormState';
 import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
 import { requiredMonthlyForGoal, computeGoalAllocation, classifyGoalDateFields } from '../../lib/calculations/goalAllocation';
@@ -12,12 +17,6 @@ import { computeFixedCosts } from '../../lib/calculations/safeToSpend';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { spacing } from '../../theme/tokens';
-
-const PRIORITIES: { value: GoalPriority; label: string }[] = [
-  { value: 'high', label: '⭐ High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'flexible', label: 'Flexible' },
-];
 
 // KeyboardSheet's footer sits as an in-flow sibling directly below the
 // ScrollView, not an overlay — so this margin is the entire gap between
@@ -123,7 +122,7 @@ export function GoalDetailSheet({
   onCreateAnother?: () => void;
 }) {
   const { data, updateGoal, deleteGoal } = useAppState();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, minTouchTarget } = useTheme();
   const [contribution, setContribution] = useState('');
   // Inline validation feedback for a non-empty contribution that fails
   // parsePositiveContributionAmount (invalid-contribution-handling
@@ -146,6 +145,81 @@ export function GoalDetailSheet({
   const [targetMonth, setTargetMonth] = useState(dateParts(goal?.targetDate ?? null).month);
   const [targetYear, setTargetYear] = useState(dateParts(goal?.targetDate ?? null).year);
   const [priority, setPriority] = useState<GoalPriority>(goal?.priority ?? 'medium');
+  /** Wave 4 closure — the goal's purpose is already persisted on the model
+   * (`Goal.lifeGoalType`), so it needs no migration to be editable here. */
+  const [purpose, setPurpose] = useState<LifeGoalType | null>(goal?.lifeGoalType ?? null);
+  /** Synchronous exact-once guard for the metadata commit, mirroring the
+   * contribution guard already in this file. */
+  const metadataSaveRef = useRef(false);
+  /** A completed goal opened from history is read-only until explicitly
+   * extended. Archived goals keep their own existing recovery banner. */
+  const isReadOnlyCompleted = goal?.status === 'completed';
+
+  // --- Wave 4 closure: the inline progress editor -------------------------
+  const [progressEditorOpen, setProgressEditorOpen] = useState(false);
+  const [progressConfirmation, setProgressConfirmation] = useState<string | null>(null);
+  const editorEntrance = useRef(new Animated.Value(0)).current;
+  const confirmEntrance = useRef(new Animated.Value(0)).current;
+  const reduceMotionEnabled = useReduceMotion();
+  /** A restrained 6pt lift, from the shared travel token — no bounce, no
+   * scale, no height animation. */
+  const editorTranslateY = editorEntrance.interpolate({ inputRange: [0, 1], outputRange: [MOTION_TRAVEL_PT.rowPlaceRise, 0] });
+
+  /** What Record will actually write, using the SAME strict parser the
+   * handler uses — so the button never promises an amount the write would
+   * reject, and it stays disabled for zero, negative, empty and malformed. */
+  const pendingContributionAmount = parsePositiveContributionAmount(contribution);
+
+  /** Remaining to the target, or 0 when there is no target — never an
+   * invented remainder for a goal that has none. */
+  const remainingToTarget =
+    goal && goal.targetAmount !== null ? Math.max(0, fromCents(toCents(goal.targetAmount) - toCents(goal.currentAmount))) : 0;
+
+  function openProgressEditor() {
+    setProgressConfirmation(null);
+    setProgressEditorOpen(true);
+    // Feedback only. The editor occupies its final layout immediately; only
+    // its content fades and lifts into place, so there is no height
+    // animation and no layout flash.
+    if (reduceMotionEnabled) {
+      editorEntrance.setValue(1);
+      return;
+    }
+    editorEntrance.setValue(0);
+    Animated.timing(editorEntrance, {
+      toValue: 1,
+      duration: MOTION_MS.sheetInfoIn,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function closeProgressEditor() {
+    setProgressEditorOpen(false);
+    setContribution('');
+    setContributionError(false);
+  }
+
+  /** The single completion heading — focus lands here, once, when a goal is
+   * complete, whether that happened just now or on a previous session. */
+  const completionHeadingRef = useRef<Text>(null);
+  /** Local midnight today — what the month/year picker measures against. */
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+
+  /**
+   * The SAME generated-name rule the create adapter uses. A SAVED name is
+   * treated as the customer's unless it exactly matches its own saved
+   * purpose's default — the only evidence available without persisting a
+   * flag the model does not have. The failure mode is deliberately "we kept
+   * their name", never "we overwrote it".
+   */
+  function choosePurpose(next: LifeGoalType) {
+    setName((current) => resolveGoalNameOnPurposeChange({ currentName: current, previousPurpose: purpose, nextPurpose: next }));
+    setPurpose(next);
+  }
   // A small, non-blocking cue shown right after a field autosaves — never
   // before persistence is actually attempted (regression-protection review,
   // Stream A §5). Cleared automatically ~1s later.
@@ -193,6 +267,44 @@ export function GoalDetailSheet({
     };
   }, []);
 
+  /**
+   * Wave 4 closure — every metadata field is now a LOCAL draft, seeded from
+   * the saved goal each time the sheet opens on a different goal. Before,
+   * name, priority and a complete date autosaved the instant they changed,
+   * which is why the legacy sheet had no Save button and why Cancel could
+   * not restore anything. Nothing is written until "Save changes".
+   */
+  /**
+   * Wave 4 closure — completion was reached while the numeric keyboard was
+   * still visible. The keyboard is dismissed BEFORE the completion state is
+   * announced, accessibility focus moves to the single completion heading,
+   * and the announcement fires exactly once per completed goal.
+   */
+  const announcedCompletionForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!goal || goal.status !== 'completed') return;
+    if (announcedCompletionForRef.current === goal.id) return;
+    announcedCompletionForRef.current = goal.id;
+    Keyboard.dismiss();
+    const node = findNodeHandle(completionHeadingRef.current);
+    if (node) AccessibilityInfo.setAccessibilityFocus(node);
+    AccessibilityInfo.announceForAccessibility(`${goal.name} completed`);
+  }, [goal?.id, goal?.status, goal?.name]);
+
+  useEffect(() => {
+    if (!goal) return;
+    if (goal.status !== 'completed') announcedCompletionForRef.current = null;
+    setName(goal.name);
+    setPurpose(goal.lifeGoalType ?? null);
+    setPriority(goal.priority ?? 'medium');
+    setTargetAmountDraft(goal.targetAmount ? String(goal.targetAmount) : '');
+    const parts = dateParts(goal.targetDate ?? null);
+    setTargetMonth(parts.month);
+    setTargetYear(parts.year);
+    setTargetAmountError(false);
+    metadataSaveRef.current = false;
+  }, [goal?.id]);
+
   // Called only once a field has actually been handed to updateGoal — never
   // claims a save happened before that call is made (regression-protection
   // review, Stream A §5: "do not claim an edit was saved before persistence
@@ -212,7 +324,28 @@ export function GoalDetailSheet({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        ringRow: { alignItems: 'center', marginBottom: spacing.lg },
+        ringRow: { alignItems: 'center', marginBottom: spacing.md },
+        amountsRemaining: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+        progressPrimary: { marginBottom: spacing.sm },
+        progressEditor: {
+          borderRadius: radius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          backgroundColor: colors.surfaceMuted,
+          padding: spacing.md,
+          marginBottom: spacing.md,
+        },
+        progressEditorHeading: { ...typography.heading, fontSize: 15, color: colors.textPrimary, marginBottom: spacing.sm },
+        progressEditorMeta: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.sm },
+        progressShortcut: { minHeight: minTouchTarget, justifyContent: 'center', marginBottom: spacing.sm },
+        progressShortcutText: { ...typography.body, fontWeight: '600', color: colors.accentStrong },
+        progressConfirm: {
+          backgroundColor: colors.successSoft,
+          borderRadius: radius.control,
+          padding: spacing.md,
+          marginBottom: spacing.md,
+        },
+        progressConfirmText: { ...typography.caption, color: colors.textPrimary, fontWeight: '600' },
         amounts: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: spacing.sm },
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
         row: { flexDirection: 'row', gap: spacing.sm },
@@ -237,11 +370,6 @@ export function GoalDetailSheet({
         calcBoxWarning: { backgroundColor: colors.warningSoft },
         calcTextWarning: { color: colors.warning },
         dateValidationText: { ...typography.caption, fontSize: 12, color: colors.warning, marginTop: spacing.sm, lineHeight: 16 },
-        grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
-        tile: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        tileActive: { backgroundColor: colors.accentSoft },
-        tileLabel: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        tileLabelActive: { color: colors.accentStrong, fontWeight: '600' },
         // Extra scroll-content bottom padding (Stream A follow-up §2) — the
         // scrollable area inside the shared KeyboardSheet isn't
         // flex-bounded (it sizes to its own content rather than the
@@ -257,7 +385,19 @@ export function GoalDetailSheet({
         // Stream A §5/§8 accessibility).
         savedCueRow: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'center', marginBottom: spacing.sm },
         savedCueText: { ...typography.caption, fontSize: 12, color: colors.success, fontWeight: '600' },
-        completedBanner: { backgroundColor: colors.goldSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
+        // Wave 4 closure — restrained success, not the previous gold. Green
+        // is reserved for genuine positive achievement, which this is.
+        completedBanner: {
+          backgroundColor: colors.successSoft,
+          borderRadius: radius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.success,
+          padding: spacing.lg,
+          marginBottom: spacing.md,
+        },
+        completedPrimary: { flex: 1 },
+        completedTertiary: { minHeight: minTouchTarget, justifyContent: 'center', marginTop: spacing.xs },
+        completedTertiaryText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
         completedTitle: { ...typography.body, fontSize: 14, color: colors.gold, fontWeight: '700', marginBottom: 2 },
         completedBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
         completedActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
@@ -314,6 +454,7 @@ export function GoalDetailSheet({
   );
   const requiredMonthly = previewGoal ? requiredMonthlyForGoal(previewGoal) : 0;
 
+
   // How this goal actually fares against the user's real budget and every
   // other active goal, in priority order — never silently pretend it's on
   // track (PRD ask).
@@ -325,9 +466,52 @@ export function GoalDetailSheet({
   }, [data, goal, previewGoal, availableForGoals]);
   const thisGoalAllocation = allocation?.allocations.find((a) => a.goal.id === goal?.id) ?? null;
 
+  /**
+   * Wave 4 closure — the LIVE pace summary, shared verbatim with Add Goal.
+   * It reads the DRAFT target amount and DRAFT date, so picking a date
+   * updates the estimate immediately rather than only after Save (the
+   * recorded defect), and it shows the same three-year planning guide the
+   * create form always showed when no date is set.
+   */
+  const paceSummary = resolveGoalPaceSummary(
+    {
+      targetAmount: (() => {
+        const resolution = resolveTargetAmountDraft(targetAmountDraft);
+        if (resolution.kind === 'set') return resolution.amount;
+        if (resolution.kind === 'clear') return null;
+        return goal?.targetAmount ?? null;
+      })(),
+      targetDate:
+        dateFieldsState === 'valid' ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString() : null,
+      dateState: dateFieldsState,
+      currentAmount: goal?.currentAmount ?? 0,
+      isFullyFunded: thisGoalAllocation?.isFullyFunded,
+      projectedCompletionLabel: thisGoalAllocation?.projectedCompletionLabel,
+    },
+    // The SHARED engine — never a second monthly formula.
+    (input) =>
+      requiredMonthlyForGoal({
+        id: goal?.id ?? 'draft',
+        name: goal?.name ?? '',
+        lifeGoalType: goal?.lifeGoalType ?? 'custom',
+        targetAmount: input.targetAmount,
+        currentAmount: input.currentAmount,
+        targetDate: input.targetDate,
+        status: 'active',
+      })
+  );
+
   if (!goal) return null;
 
-  const progress = goal.targetAmount ? goal.currentAmount / goal.targetAmount : 0;
+  /**
+   * Wave 4 closure — the recorded `0%` defect. This used to be
+   * `goal.targetAmount ? current / target : 0`, and that 0 went straight to
+   * the progress ring, so a goal with no target claimed the customer had
+   * made no progress. Without a target there is no denominator and therefore
+   * no percentage to report — a fact the shared rule now states explicitly.
+   */
+  const progressState = resolveGoalProgressState(goal.targetAmount, goal.currentAmount);
+  const progress = progressState.kind === 'measured' ? progressState.fraction : 0;
   // Target Amount correction — whether the current draft differs from what
   // goal.targetAmount actually holds (see isTargetAmountDraftDirty above).
   // Feeds both isDirty and hasOtherDirtyField below, exactly like a
@@ -347,11 +531,27 @@ export function GoalDetailSheet({
   // *committed* target amount or *complete, valid* date, already autosaved
   // the instant they changed, so there is nothing to protect for those
   // (regression-protection review, Stream A §6).
+  /**
+   * Wave 4 closure — metadata no longer autosaves, so an uncommitted edit to
+   * ANY supported field is now genuinely at risk on dismissal and must reach
+   * the existing discard guard. Previously only a pending contribution or a
+   * half-valid date could be lost, because name/priority/date had already
+   * been written the instant they changed.
+   */
+  const metadataDirty =
+    !!goal &&
+    (name.trim() !== goal.name ||
+      (purpose ?? goal.lifeGoalType) !== goal.lifeGoalType ||
+      priority !== (goal.priority ?? 'medium') ||
+      targetAmountDirty ||
+      targetMonth !== dateParts(goal.targetDate ?? null).month ||
+      targetYear !== dateParts(goal.targetDate ?? null).year);
   const isDirty =
     contribution.trim().length > 0 ||
     dateFieldsState === 'partial' ||
     dateFieldsState === 'invalid' ||
     dateFieldsState === 'past' ||
+    metadataDirty ||
     targetAmountDirty;
   // Drives the footer's state-aware label (pending-contribution UX
   // correction) — the same strict parse handleAddContribution itself
@@ -407,7 +607,38 @@ export function GoalDetailSheet({
       submittingContributionRef.current = false;
       throw e;
     }
+    /**
+     * Wave 4 closure — the post-write sequence. Every step here is
+     * state-driven and happens immediately; the ring's own travel is
+     * feedback that runs alongside, and nothing below waits for it.
+     *
+     *   1. the write above has already landed;
+     *   2. dismiss the keyboard;
+     *   3. collapse the editor, leaving the updated summary visible;
+     *   4. confirm, stating that the update is ALREADY recorded — so
+     *      "Save changes" can never be read as still pending.
+     */
+    Keyboard.dismiss();
     setContribution('');
+    setContributionError(false);
+    setProgressEditorOpen(false);
+    const target = goal!.targetAmount;
+    setProgressConfirmation(
+      target !== null
+        ? `Progress updated to ${formatCurrencyPrecise(newAmount)} of ${formatCurrencyPrecise(target)} — already recorded.`
+        : `Progress updated to ${formatCurrencyPrecise(newAmount)} — already recorded.`
+    );
+    if (reduceMotionEnabled) {
+      confirmEntrance.setValue(1);
+    } else {
+      confirmEntrance.setValue(0);
+      Animated.timing(confirmEntrance, {
+        toValue: 1,
+        duration: MOTION_MS.sheetInfoIn,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }
     if (closeAfter) onClose();
   }
 
@@ -553,12 +784,54 @@ export function GoalDetailSheet({
     );
   }
 
-  function handleSaveName(text: string) {
-    setName(text);
-    if (text.trim().length > 0) {
-      updateGoal(goal!.id, { name: text.trim() });
-      flashSaved();
+  /**
+   * Wave 4 closure — the single, atomic metadata commit. Every supported
+   * field goes in ONE `updateGoal` call, so a saved edit can never land
+   * half-applied, and `estimatedMonthlyContribution` is recomputed by the
+   * SHARED engine exactly as the legacy per-field autosaves did.
+   *
+   * Progress (`currentAmount`) is deliberately NOT included: it is a
+   * separate persisted event with its own completion semantics, and merging
+   * it into a metadata Save would change what the button means.
+   */
+  /** A metadata Save is refused while the date is half-entered or the
+   * amount is malformed — the same states the legacy sheet blocked on. */
+  const canSaveMetadata =
+    name.trim().length > 0 && dateFieldsState !== 'partial' && dateFieldsState !== 'invalid' && dateFieldsState !== 'past' && !targetAmountError;
+
+  function handleSaveChanges() {
+    if (!goal) return;
+    if (!canSaveMetadata) return;
+    if (metadataSaveRef.current) return; // synchronous exact-once guard
+    metadataSaveRef.current = true;
+
+    // The SAME resolver the legacy "Set" button used — never a second
+    // parsing rule. `clear` genuinely clears the target; `invalid` refuses.
+    const resolution = resolveTargetAmountDraft(targetAmountDraft);
+    if (resolution.kind === 'invalid') {
+      metadataSaveRef.current = false;
+      setTargetAmountError(true);
+      return;
     }
+    const nextTargetAmount = resolution.kind === 'clear' ? null : resolution.amount;
+    const nextTargetDate =
+      dateFieldsState === 'valid'
+        ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString()
+        : dateFieldsState === 'empty'
+          ? null
+          : goal.targetDate;
+
+    const patch = {
+      name: name.trim() || goal.name,
+      lifeGoalType: purpose ?? goal.lifeGoalType,
+      targetAmount: nextTargetAmount,
+      targetDate: nextTargetDate,
+      priority,
+    };
+    const merged: Goal = { ...goal, ...patch };
+    updateGoal(goal.id, { ...patch, estimatedMonthlyContribution: requiredMonthlyForGoal(merged) || undefined });
+    flashSaved();
+    onClose();
   }
 
   // Target Amount correction — keystrokes only ever update the local
@@ -581,31 +854,6 @@ export function GoalDetailSheet({
   // assumption rather than a structural guarantee. An explicit, separate
   // tap can never race against a close tap, since they are two different
   // taps by construction.
-  function commitTargetAmount() {
-    const resolution = resolveTargetAmountDraft(targetAmountDraft);
-    if (resolution.kind === 'invalid') {
-      setTargetAmountError(true);
-      return;
-    }
-    setTargetAmountError(false);
-    if (resolution.kind === 'clear') {
-      // Preserves the existing product rule: an intentionally-blanked
-      // Target Amount clears the stored target, same as the old
-      // handleSaveTarget's isNaN(value) -> null branch — just committed
-      // deliberately now, instead of on the keystroke that happened to
-      // produce an empty string.
-      if (goal!.targetAmount !== null) persistCalculatedFields({ targetAmount: null });
-      return;
-    }
-    // Normalise the visible draft to the committed value (e.g. "1200" and
-    // "1200.00" both resolve to the same amount here) so re-tapping Set on
-    // an unchanged value is a genuine no-op below, not a redundant write
-    // (equivalent-formatting correction).
-    setTargetAmountDraft(String(resolution.amount));
-    if (resolution.amount !== goal!.targetAmount) {
-      persistCalculatedFields({ targetAmount: resolution.amount });
-    }
-  }
 
   // Keeps the visible MM/YYYY fields and the stored targetDate in agreement
   // (Stream A follow-up §3): a complete valid future date persists
@@ -614,109 +862,212 @@ export function GoalDetailSheet({
   // influencing calculations invisibly; a partial or rejected-past entry
   // persists nothing at all — it stays local, unsaved, edit-protected input
   // (see isDirty above) until it's either completed or discarded.
-  function handleSaveDate(month: string, year: string) {
-    setTargetMonth(month);
-    setTargetYear(year);
-    const state = classifyGoalDateFields(month, year);
-    if (state === 'empty') {
-      persistCalculatedFields({ targetDate: null });
-    } else if (state === 'valid') {
-      const m = parseInt(month, 10);
-      const y = parseInt(year, 10);
-      persistCalculatedFields({ targetDate: new Date(y, m - 1, 1).toISOString() });
-    }
-    // 'partial' and 'past': never persisted — see the inline validation
-    // copy rendered below the Priority section.
-  }
 
-  function handleSavePriority(value: GoalPriority) {
-    setPriority(value);
-    updateGoal(goal!.id, { priority: value });
-    flashSaved();
-  }
 
   return (
     <KeyboardSheet
       visible={!!goal}
       onClose={onClose}
-      title="Goal details"
+      title="Edit goal"
       isDirty={isDirty}
       footer={
-        // State-aware bottom action (pending-contribution UX correction):
-        // "Add & close" only ever shows when it can safely deliver exactly
-        // what it says — a valid amount AND no other dirty field (see
-        // showAddAndClose above) — so the label never promises a close
-        // that a still-dirty date would then have to silently swallow.
-        // Every other case (empty, invalid, or valid-but-date-dirty)
-        // renders "Close" (renamed from "Done" so it reads distinctly from
-        // the keyboard's own "Done" accessory when both are visible at
-        // once — keyboard-vs-sheet-action correction); handleClosePress
-        // itself distinguishes an invalid entry (inline error, never the
-        // generic prompt) from everything else (the existing, unmodified
-        // confirmDiscardIfDirty).
-        showAddAndClose ? (
-          <Button label="Add & close" onPress={() => handleAddContribution(true)} style={styles.footerButton} />
+        // Wave 4 closure — the modern fixed footer, matching Add Goal. The
+        // legacy sheet offered only "Close" (or "Add & close"), because
+        // every metadata field autosaved as it changed and there was
+        // nothing to commit. Metadata is now a local draft, so Cancel and
+        // Save changes both mean something.
+        // A read-only completed goal has nothing to save; its own action
+        // hierarchy lives in the completion state above.
+        isReadOnlyCompleted ? (
+          <Button label="Done" onPress={onClose} style={styles.footerButton} testID="goal-completed-footer-done" />
         ) : (
-          <Button label="Close" variant="secondary" onPress={handleClosePress} style={styles.footerButton} />
+          <>
+            <Button label="Cancel" variant="secondary" onPress={handleClosePress} style={styles.footerButton} />
+            <Button label="Save changes" onPress={handleSaveChanges} disabled={!canSaveMetadata} style={styles.footerButton} testID="goal-edit-save" />
+          </>
         )
       }
     >
       {showSaved ? (
+
         <View style={styles.savedCueRow} accessibilityLiveRegion="polite">
           <Ionicons name="checkmark-circle" size={14} color={colors.success} />
           <Text style={styles.savedCueText}>Updated</Text>
         </View>
       ) : null}
 
-      <View style={styles.ringRow}>
-        <GoalProgressRing progress={progress} size={110} />
-        <Text style={styles.amounts}>
-          {formatCurrencyPrecise(goal.currentAmount)} of {goal.targetAmount !== null ? formatCurrencyPrecise(goal.targetAmount) : 'no target set'}
-        </Text>
-      </View>
+      {/* Wave 4 closure — the progress summary now sits directly beneath the
+          ring and BEFORE every metadata field. Recording progress used to
+          mean scrolling past purpose, name, target, date and priority to
+          reach a bare field paired with an ambiguous "Add" button; the one
+          genuinely rewarding action in this sheet was the hardest to find. */}
+      {progressState.kind === 'measured' ? (
+        <View style={styles.ringRow}>
+          <GoalProgressRing progress={progress} size={110} isCompletion={goal.status === 'completed'} />
+          {/* One element carries the whole state, so a screen reader hears
+              "3 percent, $250 of $10,000" rather than three fragments — and
+              the interpolating ring above stays out of the tree entirely. */}
+          <Text
+            style={styles.amounts}
+            accessibilityLabel={`${Math.round(progress * 100)} percent, ${formatCurrencyPrecise(goal.currentAmount)} of ${formatCurrencyPrecise(
+              goal.targetAmount as number
+            )}`}
+          >
+            {formatCurrencyPrecise(goal.currentAmount)} of {formatCurrencyPrecise(goal.targetAmount as number)}
+          </Text>
+          {remainingToTarget > 0 ? (
+            <Text style={styles.amountsRemaining}>{formatCurrencyPrecise(remainingToTarget)} to go</Text>
+          ) : null}
+        </View>
+      ) : (
+        // No denominator, so no ring and no percentage — visually OR to a
+        // screen reader, which must never hear "zero percent" for a goal
+        // that simply has no target. Recorded progress is still shown, and
+        // no remaining amount is invented.
+        <View style={styles.ringRow} testID="goal-no-target-state">
+          <Text style={styles.amounts} accessibilityLabel={`No target set. ${formatCurrencyPrecise(goal.currentAmount)} recorded so far.`}>
+            No target set — {formatCurrencyPrecise(goal.currentAmount)} recorded so far
+          </Text>
+        </View>
+      )}
+
+      {/* The labelled, full-width way in. The ring is also tappable, but it
+          is never the only route. Hidden entirely on a completed goal, which
+          is read-only. */}
+      {isReadOnlyCompleted ? null : progressEditorOpen ? (
+        <Animated.View
+          style={[styles.progressEditor, { opacity: editorEntrance, transform: [{ translateY: editorTranslateY }] }]}
+          testID="goal-progress-editor"
+        >
+          <Text style={styles.progressEditorHeading} accessibilityRole="header">
+            Record progress
+          </Text>
+          <CurrencyField
+            label="Amount to record"
+            required
+            large
+            value={contribution}
+            onChangeText={(text) => {
+              setContribution(text);
+              if (contributionError) setContributionError(false);
+            }}
+            message={contributionError ? 'Enter a valid amount greater than $0, using up to two decimal places.' : null}
+            testID="goal-progress-amount"
+          />
+          <Text style={styles.progressEditorMeta}>
+            {formatCurrencyPrecise(goal.currentAmount)} recorded so far
+            {remainingToTarget > 0 ? ` · ${formatCurrencyPrecise(remainingToTarget)} to go` : ''}
+          </Text>
+          {remainingToTarget > 0 ? (
+            <TouchableOpacity
+              style={styles.progressShortcut}
+              onPress={() => setContribution(String(remainingToTarget))}
+              accessibilityRole="button"
+              accessibilityLabel={`Record remaining ${formatCurrencyPrecise(remainingToTarget)}`}
+              testID="goal-progress-record-remaining"
+            >
+              <Text style={styles.progressShortcutText}>Record remaining {formatCurrencyPrecise(remainingToTarget)}</Text>
+            </TouchableOpacity>
+          ) : null}
+          <Button
+            label={pendingContributionAmount !== null ? `Record ${formatCurrencyPrecise(pendingContributionAmount)}` : 'Record progress'}
+            onPress={() => handleAddContribution(false)}
+            disabled={pendingContributionAmount === null}
+            style={styles.progressPrimary}
+            testID="goal-progress-submit"
+          />
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={closeProgressEditor}
+            style={styles.progressPrimary}
+            testID="goal-progress-cancel"
+          />
+          <Text style={styles.hintText}>This records goal progress; it does not move money between accounts.</Text>
+        </Animated.View>
+      ) : (
+        <Button
+          label="Update progress"
+          onPress={openProgressEditor}
+          style={styles.progressPrimary}
+          testID="goal-update-progress"
+        />
+      )}
+
+      {/* Already recorded — never pending a metadata Save. */}
+      {progressConfirmation ? (
+        <Animated.View style={[styles.progressConfirm, { opacity: confirmEntrance }]} accessibilityLiveRegion="polite" testID="goal-progress-confirmation">
+          <Text style={styles.progressConfirmText}>{progressConfirmation}</Text>
+        </Animated.View>
+      ) : null}
 
       {goal.status === 'completed' ? (
-        <View style={styles.completedBanner}>
+        // Wave 4 closure — ONE completed state, identical immediately after
+        // completion and when reopened from history. The keyboard is
+        // dismissed and focus moved to this heading by the effect above, so
+        // the completion is never announced from behind a number pad, and
+        // the action hierarchy is the same in both cases.
+        <View style={styles.completedBanner} testID="goal-completed-state">
+          <Text ref={completionHeadingRef} style={styles.completedTitle} accessibilityRole="header">
+            {goal.name} completed
+          </Text>
           {/* Over-target is manually recorded goal progress, not investment
               performance or a verified balance — factual, not celebratory
-              (over-target confirmation correction, §4). Falls back to the
-              exact-target treatment if targetAmount somehow became null
-              after completion (e.g. cleared via the Target amount field
-              below) — overage can't be computed without one. Compared in
-              whole cents, not raw currentAmount/targetAmount floats, so
-              this can never be pushed into the over-target branch by
-              binary drift on values that are actually exactly equal
-              (currency-precision correction). */}
-          {goal.targetAmount !== null && toCents(goal.currentAmount) > toCents(goal.targetAmount) ? (
-            <>
-              <Text style={styles.completedTitle}>Target exceeded by {formatCurrencyPrecise(fromCents(toCents(goal.currentAmount) - toCents(goal.targetAmount)))}</Text>
-              <Text style={styles.completedBody}>You recorded {formatCurrencyPrecise(goal.currentAmount)} against your {formatCurrencyPrecise(goal.targetAmount)} target.</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.completedTitle}>🎉 Goal achieved — {goal.name} completed!</Text>
-              <Text style={styles.completedBody}>This goal is saved in your history. What's next?</Text>
-            </>
-          )}
+              (over-target confirmation correction, §4). Compared in whole
+              cents so binary drift can never push an exactly-equal pair
+              into the over-target branch. */}
+          <Text style={styles.completedBody}>
+            {goal.targetAmount !== null && toCents(goal.currentAmount) > toCents(goal.targetAmount)
+              ? `You recorded ${formatCurrencyPrecise(goal.currentAmount)} against your ${formatCurrencyPrecise(goal.targetAmount)} target — ${formatCurrencyPrecise(
+                  fromCents(toCents(goal.currentAmount) - toCents(goal.targetAmount))
+                )} over.`
+              : `${formatCurrencyPrecise(goal.currentAmount)} of ${
+                  goal.targetAmount !== null ? formatCurrencyPrecise(goal.targetAmount) : formatCurrencyPrecise(goal.currentAmount)
+                } · 100%`}
+          </Text>
+          <Text style={styles.completedBody}>This goal is saved in your history.</Text>
           <View style={styles.completedActionsRow}>
+            <Button label="Done" onPress={onClose} style={styles.completedPrimary} testID="goal-completed-done" />
             {onCreateAnother ? (
-              <TouchableOpacity
-                style={styles.completedAction}
+              <Button
+                label="Create another goal"
+                variant="secondary"
                 onPress={() => {
                   onClose();
                   onCreateAnother();
                 }}
-              >
-                <Text style={styles.completedActionText}>Create another</Text>
-              </TouchableOpacity>
+                style={styles.completedPrimary}
+                testID="goal-completed-create-another"
+              />
             ) : null}
-            <TouchableOpacity style={styles.completedAction} onPress={handleExtend}>
-              <Text style={styles.completedActionText}>Extend this goal</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.completedAction} onPress={handleArchive}>
-              <Text style={styles.completedActionText}>Archive</Text>
-            </TouchableOpacity>
           </View>
+          {/* Tertiary, and explicit: extending is a deliberate return to an
+              active goal using the existing supported status, never a silent
+              mutation of the completion. */}
+          <TouchableOpacity
+            style={styles.completedTertiary}
+            onPress={handleExtend}
+            accessibilityRole="button"
+            accessibilityLabel="Extend goal"
+            accessibilityHint="Returns this goal to active planning so you can raise its target"
+            testID="goal-completed-extend"
+          >
+            <Text style={styles.completedTertiaryText}>Extend goal</Text>
+          </TouchableOpacity>
+          {/* Archive has its own persisted meaning (a separate 'archived'
+              status with its own recovery path below), so it is preserved —
+              but as a quiet tertiary action with copy that says what it
+              does, never an unexplained co-primary. */}
+          <TouchableOpacity
+            style={styles.completedTertiary}
+            onPress={handleArchive}
+            accessibilityRole="button"
+            accessibilityLabel="Archive goal"
+            accessibilityHint="Hides this goal from your lists. Its history is kept and it can be restored."
+            testID="goal-completed-archive"
+          >
+            <Text style={styles.completedTertiaryText}>Archive — hide from lists, keep history</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -753,103 +1104,52 @@ export function GoalDetailSheet({
         </View>
       ) : null}
 
-      <Text style={styles.label}>Goal name</Text>
-      <TextInput style={styles.input} value={name} onChangeText={handleSaveName} placeholderTextColor={colors.textMuted} />
+      {/* Wave 4 closure — a COMPLETED goal is read-only by default. The
+          editable fields and the progress editor below are hidden entirely,
+          so progress can never be pushed past 100% through this view;
+          `Extend goal` is the one explicit route back to an editable,
+          active goal. */}
+      {isReadOnlyCompleted ? null : (
+      <>
+      {/* Wave 4 closure — the SAME field system Add Goal renders. This
+          replaces the legacy editor the owner recorded: raw MM/YYYY boxes,
+          an isolated "Set" button for the target amount, emoji priority
+          chips and a Close-only footer. Every field is prepopulated from the
+          saved goal, and nothing here writes: edits are held locally and
+          committed exactly once by "Save changes" below. */}
+      <GoalFormFields
+        testIDPrefix="goal-edit"
+        today={startOfTodayLocal}
+        values={{ purpose, name, targetAmount: targetAmountDraft, targetMonth, targetYear, priority }}
+        onChangePurpose={choosePurpose}
+        onChangeName={setName}
+        onChangeTargetAmount={handleTargetAmountChange}
+        onChangeTargetDate={(next) => {
+          setTargetMonth(next.month === null ? '' : String(next.month));
+          setTargetYear(next.year === null ? '' : String(next.year));
+        }}
+        onChangePriority={setPriority}
+        amountMessage={
+          targetAmountError
+            ? 'Enter a valid amount greater than $0, using up to two decimal places, or leave it blank to clear the target.'
+            : null
+        }
+        dateMessage={
+          dateFieldsState === 'partial'
+            ? 'Enter both month and year.'
+            : dateFieldsState === 'invalid'
+              ? 'Enter a valid month and four-digit year.'
+              : dateFieldsState === 'past'
+                ? 'Choose this month or a future month.'
+                : null
+        }
+      />
 
-      <Text style={styles.label}>Target amount</Text>
-      <View style={styles.row}>
-        <TextInput
-          style={styles.input}
-          placeholder="$0"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="decimal-pad"
-          value={targetAmountDraft}
-          onChangeText={handleTargetAmountChange}
-          accessibilityLabel="Target amount"
-        />
-        <Button label="Set" onPress={commitTargetAmount} style={styles.addButton} />
-      </View>
-      {targetAmountError ? (
-        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
-          Enter a valid amount greater than $0, using up to two decimal places, or leave it blank to clear the target.
-        </Text>
-      ) : null}
-
-      <Text style={styles.label}>Target date</Text>
-      <View style={styles.row}>
-        <TextInput
-          style={styles.input}
-          placeholder="MM"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="number-pad"
-          value={targetMonth}
-          onChangeText={(m) => handleSaveDate(m, targetYear)}
-          maxLength={2}
-          accessibilityLabel="Target month"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="YYYY"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="number-pad"
-          value={targetYear}
-          onChangeText={(y) => handleSaveDate(targetMonth, y)}
-          maxLength={4}
-          accessibilityLabel="Target year"
-        />
-      </View>
-
-      {/* "Add to goal progress" (Stream A §8, pending-contribution UX
-          correction) — a planning action only: adds the entered amount to
-          currentAmount, creates no transaction, touches no asset or
-          liability. "Record a money contribution" was deferred by product
-          decision (not an implementation gap) — it needs a
-          source/destination and activity-classification model this app
-          doesn't have yet. */}
-      <Text style={styles.label}>Add to goal progress</Text>
-      <View style={styles.row}>
-        <TextInput
-          style={styles.input}
-          placeholder="$0"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="decimal-pad"
-          value={contribution}
-          onChangeText={(text) => {
-            setContribution(text);
-            if (contributionError) setContributionError(false);
-          }}
-          accessibilityLabel="Amount to add to goal progress"
-        />
-        <Button label="Add" onPress={() => handleAddContribution(false)} style={styles.addButton} />
-      </View>
-      {contributionError ? (
-        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
-          Enter a valid amount greater than $0, using up to two decimal places.
-        </Text>
-      ) : null}
-      <Text style={styles.hintText}>Enter the amount to add. This records progress only—it does not move money or change a balance tracked in Nolie.</Text>
+      </>
+      )}
 
       {goal.targetAmount ? (
         <>
-          <Text style={styles.label}>Priority</Text>
-          <View style={styles.grid}>
-            {PRIORITIES.map((p) => {
-              const active = priority === p.value;
-              return (
-                <TouchableOpacity
-                  key={p.value}
-                  style={[styles.tile, active ? styles.tileActive : null]}
-                  onPress={() => handleSavePriority(p.value)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  accessibilityLabel={`Priority: ${p.label}${active ? ', selected' : ''}`}
-                >
-                  <Text style={[styles.tileLabel, active ? styles.tileLabelActive : null]}>{p.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
           {dateFieldsState === 'partial' || dateFieldsState === 'invalid' || dateFieldsState === 'past' ? (
             <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
               {dateFieldsState === 'partial'
@@ -858,25 +1158,48 @@ export function GoalDetailSheet({
                   ? 'Enter a valid month and four-digit year.'
                   : 'Choose this month or a future month.'}
             </Text>
-          ) : requiredMonthly > 0 ? (
-            thisGoalAllocation?.isFullyFunded !== false ? (
-              <View style={styles.calcBox}>
-                <Text style={styles.calcText}>Estimated monthly goal amount: {formatMoney(requiredMonthly)}</Text>
-                <Text style={styles.calcSubtext}>
-                  {dateFieldsState === 'valid'
-                    ? 'Based on your target amount and target date.'
-                    : 'Based on a 3-year planning horizon. Add a target date for a date-based estimate.'}
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.calcBox, styles.calcBoxWarning]}>
-                <Text style={[styles.calcText, styles.calcTextWarning]}>
-                  At your current pace, this goal may take longer.
-                  {thisGoalAllocation?.projectedCompletionLabel ? ` You can reach it around ${thisGoalAllocation.projectedCompletionLabel}.` : ''}
-                </Text>
-              </View>
-            )
-          ) : null}
+          ) : (
+            // Wave 4 closure — the recorded pace defect. The caution used to
+            // appear whenever the allocation engine reported this goal not
+            // fully funded, but `requiredMonthlyForGoal` divides by
+            // `monthsUntil(targetDate)`, which falls back to a THREE-YEAR
+            // planning horizon when no date is set. A goal with a target
+            // amount and no date was therefore warned about missing a
+            // deadline the customer never gave. The shared rule now gates
+            // the caution on a real, stated target date; it recreates no
+            // formula — the engine's own requiredMonthly and isFullyFunded
+            // are passed in and simply not consulted when their inputs were
+            // never supplied.
+            (() => {
+              // Wave 4 closure — one shared, LIVE summary. A caution now
+              // SUPPLEMENTS the estimate instead of swallowing it, and the
+              // no-date case shows the same planning guide the create form
+              // has always shown rather than only an instruction.
+              if (paceSummary.kind === 'invalid-date' || paceSummary.kind === 'none') return null;
+              if (paceSummary.kind === 'needs-target-amount') {
+                return (
+                  <View style={styles.calcBox} testID="goal-pace-needs-amount">
+                    <Text style={styles.calcSubtext}>{paceSummary.message}</Text>
+                  </View>
+                );
+              }
+              if (paceSummary.kind === 'planning-guide') {
+                return (
+                  <View style={styles.calcBox} testID="goal-pace-planning-guide">
+                    <Text style={styles.calcText}>{paceSummary.message}</Text>
+                    <Text style={styles.calcSubtext}>{paceSummary.hint}</Text>
+                  </View>
+                );
+              }
+              return (
+                <View style={[styles.calcBox, paceSummary.caution ? styles.calcBoxWarning : null]} testID="goal-pace-estimate">
+                  <Text style={[styles.calcText, paceSummary.caution ? styles.calcTextWarning : null]}>{paceSummary.message}</Text>
+                  <Text style={styles.calcSubtext}>Based on your target amount and target date.</Text>
+                  {paceSummary.caution ? <Text style={styles.calcSubtext}>{paceSummary.caution}</Text> : null}
+                </View>
+              );
+            })()
+          )}
         </>
       ) : null}
 

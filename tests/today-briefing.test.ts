@@ -317,9 +317,29 @@ console.log('\n=== Section 4: selectSafeToSpendPresentation — full contract, e
       },
     };
     const p = selectSafeToSpendPresentation(underfunded, heroCopy);
+    // SUPERSEDED by the Wave 4 closure P1 correction. Hiding the amount here
+    // and quoting `availableForGoals` — a MONTHLY figure — as availability is
+    // exactly the defect the owner recorded: an Available Until Payday card
+    // reading "only $-6,802 is currently available" while its own breakdown
+    // showed $12,050. An active, unallocated goal is not an AUP condition.
+    //
+    // The amount is now the SAME canonical cycle value the normal state
+    // presents, and the goal statement is supporting copy that names only
+    // the monthly REQUIREMENT.
     assert(
-      'goals_underfunded: amount hidden, primaryCopy quotes both the required and available monthly figures',
-      p.heroState === 'goals_underfunded' && p.amountVisible === false && p.primaryCopy.includes(formatSafeToSpendAmount(2000)) && p.primaryCopy.includes(formatSafeToSpendAmount(200))
+      'goals_underfunded: the canonical cycle amount stays visible — a goal advisory can never replace it',
+      p.heroState === 'goals_underfunded' && p.amountVisible === true && p.amountCents === Math.round(Math.max(0, underfunded.cycleRemainingPool) * 100)
+    );
+    assert(
+      'goals_underfunded: the goal requirement is supporting copy, and the monthly available figure is never quoted as cycle availability',
+      !!p.supportingCopy &&
+        p.supportingCopy.includes(formatSafeToSpendAmount(2000)) &&
+        !p.supportingCopy.includes('is currently available') &&
+        !p.primaryCopy.includes(formatSafeToSpendAmount(200))
+    );
+    assert(
+      'goals_underfunded: and no "$-" wording can ever be produced for it',
+      !`${p.primaryCopy} ${p.supportingCopy ?? ''} ${p.displayAmount ?? ''}`.includes('$-')
     );
     assertAupAction('goals_underfunded', p);
   }

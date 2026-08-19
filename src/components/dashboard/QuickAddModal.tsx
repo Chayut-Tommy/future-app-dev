@@ -13,15 +13,23 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
-import { categoryEmoji } from '../../lib/categoryEmoji';
+import { categoryIcon, accountSourceIcon } from '../../lib/addIcons';
 import { brand } from '../../lib/brand';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
+import { Segmented } from '../shared/Segmented';
+import { InlineSelect } from '../shared/fields/InlineSelect';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
+import { AccountChoice, AccountSelectionField } from '../shared/fields/AccountSelectionField';
+import { BalanceUpdateField } from '../shared/fields/BalanceUpdateField';
+import { DateTriggerField } from '../shared/fields/DateTriggerField';
+import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
 
-const DATE_PRESETS = [
-  { label: 'Today', daysAgo: 0 },
-  { label: 'Yesterday', daysAgo: 1 },
-  { label: '2 days ago', daysAgo: 2 },
-  { label: 'Last week', daysAgo: 7 },
+/** Design 5.1 Wave 4 — the two segments the removed "What's this for?"
+ * page used to own. Same two values, same labels. */
+const TRANSACTION_TYPE_OPTIONS = [
+  { value: 'expense' as const, label: 'Expense' },
+  { value: 'income' as const, label: 'Income' },
 ];
 
 // "Loan-funded purchase" (not "Loan / debt") — this option records a
@@ -237,7 +245,15 @@ export const QuickAddModal = forwardRef<
     reverseRecurringOccurrence,
   } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
-  const [type, setType] = useState<'income' | 'expense'>('expense');
+  // Wave 4 device correction — derived SYNCHRONOUSLY from the canonical
+  // route preset, not repaired by an effect after the workspace opens. An
+  // `income_received` entry previously rendered once as an EXPENSE form
+  // (wrong categories, wrong placeholder) before the reset effect flipped
+  // it. The workspace remounts this component on every fresh open (the
+  // host bumps `instanceKey`), so a lazy initial value is the correct
+  // single source for the opening mode; `editTransaction` still wins in
+  // the reset effect below, exactly as before.
+  const [type, setType] = useState<'income' | 'expense'>(() => editTransaction?.type ?? initialType ?? 'expense');
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [day, setDay] = useState('');
@@ -256,6 +272,19 @@ export const QuickAddModal = forwardRef<
   // stays implicitly 'update' this pass (record-only income is out of
   // scope). Synced from the edited transaction, or defaulted, below.
   const [balanceEffect, setBalanceEffect] = useState<BalanceEffectMode>('update');
+  // Wave 4 device correction — an expense's funding source must be an
+  // EXPLICIT choice. `paymentSource` still defaults to 'cash' so every
+  // downstream derivation (hasValidBalanceTarget, the save payload, the
+  // insufficient-funds check) keeps working exactly as before; this flag is
+  // purely "has the customer actually decided yet", and Save is blocked
+  // until they have. Editing an existing transaction starts already chosen.
+  const [sourceChosen, setSourceChosen] = useState(!!editTransaction);
+  // Wave 4 device correction — an income transaction's destination. Maps
+  // straight onto the EXISTING Transaction.targetAssetId field, which the
+  // engine already honours for income (computeBalanceEffect credits this
+  // asset instead of falling back to the default Cash lookup). No schema
+  // change, no new engine path.
+  const [incomeTargetAssetId, setIncomeTargetAssetId] = useState<string | null>(null);
   // Round 6 correction — the manual transaction's own primary name, reusing
   // the existing Transaction.note field rather than adding a new one (it
   // already has a display-fallback consumer in TransactionsScreen and is
@@ -271,7 +300,12 @@ export const QuickAddModal = forwardRef<
   // own step with large tappable cards, then amount/date/payment source.
   // Editing an existing transaction already has a category, so it skips
   // straight to the details step.
-  const [formStep, setFormStep] = useState<'category' | 'details'>('category');
+  // Design 5.1 Wave 4 — the preliminary "What's this for?" page is gone.
+  // The customer lands directly on the form and picks the category in it,
+  // via the inline `InlineSelect` below. `canSave` already required
+  // `!!categoryId` before this change, so Save stays disabled until a
+  // category is chosen exactly as it did when the page gated it; no
+  // validator was altered to make this work.
   const initialSnapshot = useRef({ amount: '', categoryId: null as string | null });
   // Round 6 correction — a synchronous rapid-submit guard was not actually
   // present here before this pass despite being assumed to exist; adopts
@@ -283,7 +317,8 @@ export const QuickAddModal = forwardRef<
   const submittingRef = useRef(false);
 
   const isEditing = !!editTransaction;
-  const hasCashAsset = data.assets.some((a) => a.type === 'cash');
+  const cashAsset = data.assets.find((a) => a.type === 'cash') ?? null;
+  const hasCashAsset = !!cashAsset;
   const nonCreditLiabilities = data.liabilities.filter((l) => l.type !== 'credit_card');
   // Everyday Account expense routing — the 'everyday' Paid-from tile is
   // only ever OFFERED (per the accepted spec) when at least one account
@@ -305,7 +340,13 @@ export const QuickAddModal = forwardRef<
       ? editTransaction.amount
       : 0;
   const everydayAvailableBalance = selectedEverydayAccount ? selectedEverydayAccount.currentValue + editedTransactionPriorAmountOnSameAccount : null;
-  const isDirty = amount !== initialSnapshot.current.amount || categoryId !== initialSnapshot.current.categoryId;
+  const isDirty =
+    amount !== initialSnapshot.current.amount ||
+    categoryId !== initialSnapshot.current.categoryId ||
+    // Wave 4 device correction — choosing a source or a destination is a
+    // genuine unsaved change, so the existing discard guard must see it.
+    sourceChosen !== !!editTransaction ||
+    incomeTargetAssetId !== (editTransaction?.type === 'income' ? editTransaction.targetAssetId ?? null : null);
 
   // Correction pass (Defect 2 fix) — while embedded, the host's global
   // parked-draft guard must see this form as dirty for as long as ANY
@@ -315,7 +356,7 @@ export const QuickAddModal = forwardRef<
   // hidden behind the chooser mid-transition/animation — a one-way latch
   // is what actually guarantees the aggregate draft can never be
   // misreported as clean by a stale/mid-transition read, regardless of
-  // internal step (`formStep`), route animation, or hidden-layer status.
+  // internal form state, route animation, or hidden-layer status.
   // Clears only via a fresh mount (a new `instanceKey` from the host's own
   // resetDraft) or this whole journey closing on save — both already
   // unmount this component, which destroys the ref along with everything
@@ -331,8 +372,8 @@ export const QuickAddModal = forwardRef<
   }, [reportedDirty, onDirtyChange]);
 
   useEffect(() => {
-    onTitleChange?.(formStep === 'category' ? "What's this for?" : isEditing ? 'Edit transaction' : 'Add transaction');
-  }, [formStep, isEditing, onTitleChange]);
+    onTitleChange?.(isEditing ? 'Edit transaction' : 'Add transaction');
+  }, [isEditing, onTitleChange]);
 
   // Whether a real, addressable balance exists for the currently-selected
   // funding source — 'other' never has one; 'cash'/'credit_card'/'loan' only
@@ -365,6 +406,188 @@ export const QuickAddModal = forwardRef<
     : paymentSource === 'everyday'
     ? selectedEverydayAccount?.label
     : undefined;
+  // ---------------------------------------------------------------------
+  // Wave 4 device correction — the flattened, prominent source/destination
+  // lists. Both are built ENTIRELY from lists this form already derived
+  // from the existing financial rules: no new eligibility rule is invented
+  // here, and no balance is reinterpreted. They only change how the same
+  // choices are presented and how explicitly they must be made.
+  // ---------------------------------------------------------------------
+
+  /** Encodes a concrete funding source as one selectable id. The two-level
+   * "pick a kind, then pick which one" model the chips used is flattened to
+   * a single decision, which is what made it unreadable at chip size. */
+  const expenseSourceChoices: AccountChoice[] = useMemo(() => {
+    const rows: AccountChoice[] = [
+      {
+        id: 'cash',
+        name: 'Cash',
+        typeLabel: 'Cash on hand',
+        icon: accountSourceIcon('cash'),
+        balanceLabel: cashAsset ? formatMoney(cashAsset.currentValue) : undefined,
+        note: cashAsset ? undefined : 'No cash balance recorded yet',
+      },
+    ];
+    for (const a of everydayAccounts) {
+      rows.push({
+        id: `everyday:${a.id}`,
+        name: everydayAccountLabels.get(a.id) ?? everydayChipBaseText(a),
+        typeLabel: 'Everyday account',
+        icon: accountSourceIcon('everyday'),
+        balanceLabel: formatMoney(a.currentValue),
+      });
+    }
+    for (const c of data.creditCards) {
+      rows.push({ id: `card:${c.id}`, name: c.label, typeLabel: 'Credit card', icon: accountSourceIcon('credit_card'), balanceLabel: formatMoney(c.currentBalance) });
+    }
+    for (const l of nonCreditLiabilities) {
+      rows.push({ id: `loan:${l.id}`, name: l.label, typeLabel: 'Loan-funded purchase', icon: accountSourceIcon('loan'), balanceLabel: formatMoney(l.currentBalance) });
+    }
+    rows.push({ id: 'other', name: 'Something else', typeLabel: 'Record the spending only', icon: accountSourceIcon('other'), note: 'No balance is changed' });
+    return rows;
+  }, [cashAsset, everydayAccounts, everydayAccountLabels, data.creditCards, nonCreditLiabilities]);
+
+  /** The current selection, derived from the states that already existed —
+   * so a parked draft and an edited transaction both restore exactly. */
+  const expenseSourceChoiceId = !sourceChosen
+    ? null
+    : paymentSource === 'everyday'
+    ? everydayAccountId
+      ? `everyday:${everydayAccountId}`
+      : null
+    : paymentSource === 'credit_card'
+    ? creditCardId
+      ? `card:${creditCardId}`
+      : null
+    : paymentSource === 'loan'
+    ? liabilityId
+      ? `loan:${liabilityId}`
+      : null
+    : paymentSource;
+
+  function chooseExpenseSource(choiceId: string) {
+    setSourceChosen(true);
+    if (choiceId.startsWith('everyday:')) {
+      setPaymentSource('everyday');
+      setEverydayAccountId(choiceId.slice('everyday:'.length));
+      setCreditCardId(null);
+      setLiabilityId(null);
+      return;
+    }
+    if (choiceId.startsWith('card:')) {
+      setPaymentSource('credit_card');
+      setCreditCardId(choiceId.slice('card:'.length));
+      setEverydayAccountId(null);
+      setLiabilityId(null);
+      return;
+    }
+    if (choiceId.startsWith('loan:')) {
+      setPaymentSource('loan');
+      setLiabilityId(choiceId.slice('loan:'.length));
+      setEverydayAccountId(null);
+      setCreditCardId(null);
+      return;
+    }
+    setPaymentSource(choiceId as PaymentSource);
+    setEverydayAccountId(null);
+    setCreditCardId(null);
+    setLiabilityId(null);
+  }
+
+  /** Income destinations come from the SHARED engine helper the recurring-
+   * income and Today-reminder flows already use — never a second list. */
+  const incomeDestinationOptions = useMemo(() => resolveEligibleIncomeDestinations(data.assets), [data.assets]);
+  const incomeDestinationChoices: AccountChoice[] = useMemo(
+    () =>
+      // `d.label` is the shared helper's own already-disambiguated text and
+      // already carries the balance, so no `balanceLabel` is added here —
+      // showing the same figure twice would be worse, and re-deriving it
+      // would be a second, divergent formatting path.
+      incomeDestinationOptions.map((d) => ({
+        id: d.id,
+        name: d.label,
+        typeLabel: d.type === 'cash' ? 'Cash on hand' : d.type === 'savings' ? 'Savings' : 'Everyday account',
+        icon: accountSourceIcon(d.type),
+      })),
+    [incomeDestinationOptions]
+  );
+  /**
+   * The one missing-balance card's copy, per selected source. Only ever
+   * reached when `hasValidBalanceTarget` is false, and only ever rendered
+   * once — the duplicate "Add cash balance" prompt that used to sit above
+   * the section is gone.
+   */
+  /** The currently-entered date as a real local Date, or null while the
+   * three parts do not yet form one. Derived from the SAME day/month/year
+   * state the form has always kept — no new source of truth. */
+  const selectedDate = (() => {
+    const d = parseInt(day, 10);
+    const m = parseInt(month, 10);
+    const y = parseInt(year, 10);
+    if (isNaN(d) || isNaN(m) || isNaN(y)) return null;
+    const candidate = new Date(y, m - 1, d);
+    if (candidate.getDate() !== d || candidate.getMonth() !== m - 1 || candidate.getFullYear() !== y) return null;
+    return candidate;
+  })();
+  /** Local midnight today — what "Today"/"Yesterday" are measured against. */
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+
+  const missingBalanceCopy = (() => {
+    if (paymentSource === 'cash') {
+      return {
+        title: "Cash balance isn't set up",
+        body: 'Add a cash balance to update it, or record this transaction without changing a balance.',
+        actionLabel: 'Add cash balance',
+        onAction: () => setAddCashVisible(true),
+      };
+    }
+    if (paymentSource === 'credit_card') {
+      return {
+        title: data.creditCards.length > 0 ? 'No card selected' : "You haven't added a card yet",
+        body:
+          data.creditCards.length > 0
+            ? 'Choose a card above to update its balance, or record this transaction without changing a balance.'
+            : 'Add a credit card in Wealth to update its balance, or record this transaction without changing a balance.',
+        actionLabel: undefined,
+        onAction: undefined,
+      };
+    }
+    if (paymentSource === 'loan') {
+      return {
+        title: nonCreditLiabilities.length > 0 ? 'No loan selected' : "You haven't added a loan yet",
+        body:
+          nonCreditLiabilities.length > 0
+            ? 'Choose a loan above to update its balance, or record this transaction without changing a balance.'
+            : 'Add a loan in Wealth to update its balance, or record this transaction without changing a balance.',
+        actionLabel: undefined,
+        onAction: undefined,
+      };
+    }
+    if (paymentSource === 'everyday') {
+      return {
+        title: 'No everyday account selected',
+        body: 'Choose an account above to update its balance, or record this transaction without changing a balance.',
+        actionLabel: undefined,
+        onAction: undefined,
+      };
+    }
+    return {
+      title: 'No balance to update',
+      body: 'This transaction will be recorded without changing a balance.',
+      actionLabel: undefined,
+      onAction: undefined,
+    };
+  })();
+
+  /** An income transaction only needs a destination when it is actually
+   * meant to move a balance. `Record only` is a complete, valid answer. */
+  const incomeSelectedDestination = incomeTargetAssetId ? incomeDestinationOptions.find((d) => d.id === incomeTargetAssetId) ?? null : null;
+  const incomeNeedsDestination = type === 'income' && balanceEffect === 'update' && incomeDestinationChoices.length > 0;
+  const incomeDestinationMissing = incomeNeedsDestination && !incomeTargetAssetId;
+
   const prevHasValidBalanceTarget = useRef(hasValidBalanceTarget);
 
   useEffect(() => {
@@ -384,6 +607,8 @@ export const QuickAddModal = forwardRef<
       setLiabilityId(editTransaction.liabilityId ?? null);
       setEverydayAccountId(editTransaction.paymentSource === 'everyday' ? editTransaction.targetAssetId ?? null : null);
       setBalanceEffect(editTransaction.balanceEffect ?? 'update');
+      setSourceChosen(true);
+      setIncomeTargetAssetId(editTransaction.type === 'income' ? editTransaction.targetAssetId ?? null : null);
       // Round 6 correction — only a genuinely manual transaction's note is
       // ever editable here; a recurring-confirmed transaction keeps using
       // the existing read-only "Source: X" display instead (see
@@ -391,7 +616,6 @@ export const QuickAddModal = forwardRef<
       // this value is only ever shown for the manual case.
       setTransactionName(editTransaction.note ?? '');
       initialSnapshot.current = { amount: String(editTransaction.amount), categoryId: editTransaction.categoryId };
-      setFormStep('details');
     } else {
       setType(initialType ?? 'expense');
       setAmount('');
@@ -405,9 +629,10 @@ export const QuickAddModal = forwardRef<
       setLiabilityId(null);
       setEverydayAccountId(null);
       setBalanceEffect('update');
+      setSourceChosen(false);
+      setIncomeTargetAssetId(null);
       setTransactionName('');
       initialSnapshot.current = { amount: '', categoryId: null };
-      setFormStep('category');
     }
   }, [visible, editTransaction, initialType]);
 
@@ -427,19 +652,13 @@ export const QuickAddModal = forwardRef<
     prevHasValidBalanceTarget.current = hasValidBalanceTarget;
   }, [hasValidBalanceTarget]);
 
-  function chooseCategory(id: string) {
-    setCategoryId(id);
-    setFormStep('details');
-  }
-
-  function applyDatePreset(daysAgo: number) {
-    const parts = dateParts(new Date(Date.now() - daysAgo * 86400000));
-    setDay(parts.day);
-    setMonth(parts.month);
-    setYear(parts.year);
-  }
-
   const categories = data.categories.filter((c) => c.type === type);
+  // Exactly the list the removed page rendered as a grid — same source,
+  // same filter, same emoji helper — now shown inline.
+  const categoryOptions = useMemo(
+    () => categories.map((c) => ({ value: c.id, label: c.name, icon: categoryIcon(c.id) })),
+    [categories]
+  );
   const amountValue = parseFloat(amount);
   const dayValue = parseInt(day, 10);
   const monthValue = parseInt(month, 10);
@@ -484,18 +703,26 @@ export const QuickAddModal = forwardRef<
     !!categoryId &&
     dateValid &&
     (!requiresTransactionName || transactionName.trim().length > 0) &&
-    !insufficientEverydayFunds;
+    !insufficientEverydayFunds &&
+    // Wave 4 device correction, owner-authorised. An expense must say where
+    // the money came FROM, and an income that is meant to move a balance
+    // must say where it went INTO. Both were previously allowed to fall
+    // through to a silent Cash assumption. Neither term relaxes any existing
+    // rule — they only add a required, explicit choice.
+    (type !== 'expense' || sourceChosen) &&
+    !incomeDestinationMissing;
 
-  // Save is only ever reachable from the details step (category has no
-  // categoryId yet, so canSave is already false there in practice — this
-  // makes that gate explicit for the host's embedded footer too).
+  // Design 5.1 Wave 4 — there is no longer a step to gate on. `canSave`
+  // itself still requires a chosen category (`!!categoryId` above), which
+  // is the same guarantee the removed page provided.
   useEffect(() => {
-    onCanSaveChange?.(canSave && formStep === 'details');
-  }, [canSave, formStep, onCanSaveChange]);
+    onCanSaveChange?.(canSave);
+  }, [canSave, onCanSaveChange]);
 
   function handleSave() {
     if (isEditingBnplRepayment) return;
-    if (!canSave || !categoryId || formStep !== 'details') return;
+    if (!canSave || !categoryId) return;
+    if (type === 'expense' && !sourceChosen) return;
     // Must be checked+set synchronously before anything else touches state
     // or calls a persistence action — see submittingRef's own comment.
     if (submittingRef.current) return;
@@ -507,6 +734,9 @@ export const QuickAddModal = forwardRef<
     // (regression-protection review, Stream B1 UI integration §3: "do not
     // silently use balanceEffect: 'update' when no balance target exists").
     const effectiveBalanceEffect: BalanceEffectMode = hasValidBalanceTarget ? balanceEffect : 'none';
+    // The income equivalent of the same defensive re-check: 'update' is only
+    // honoured when a real, chosen destination exists to apply it against.
+    const incomeBalanceEffect: BalanceEffectMode = balanceEffect === 'update' && incomeTargetAssetId ? 'update' : 'none';
     // Round 6 correction, extended in the correction round, 2026-08-10 —
     // reuses the existing Transaction.note field as the manual
     // transaction's own name (no new schema field), now for both expense
@@ -530,7 +760,19 @@ export const QuickAddModal = forwardRef<
             balanceEffect: effectiveBalanceEffect,
             ...notePayload,
           }
-        : { type, amount: amountValue, categoryId, date: isoDate, ...notePayload };
+        : {
+            type,
+            amount: amountValue,
+            categoryId,
+            date: isoDate,
+            // The engine's own income branch: with targetAssetId set it
+            // credits exactly that asset; without it, it falls back to the
+            // default Cash lookup, unchanged. `Record only` resolves to
+            // balanceEffect 'none' and no asset is touched at all.
+            targetAssetId: incomeBalanceEffect === 'update' ? incomeTargetAssetId ?? undefined : undefined,
+            balanceEffect: incomeBalanceEffect,
+            ...notePayload,
+          };
 
     // The tracked-balance choice is now made explicitly, inline, before Save
     // is ever pressed — updateTransaction always reconciles correctly from
@@ -768,31 +1010,6 @@ export const QuickAddModal = forwardRef<
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        segment: {
-          flexDirection: 'row',
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          padding: 4,
-          marginBottom: spacing.md,
-        },
-        segmentButton: {
-          flex: 1,
-          paddingVertical: 10,
-          alignItems: 'center',
-          borderRadius: radius.control - 2,
-        },
-        segmentActive: {
-          backgroundColor: colors.surface,
-        },
-        segmentText: {
-          ...typography.body,
-          fontSize: 14,
-          color: colors.textSecondary,
-        },
-        segmentTextActive: {
-          color: colors.textPrimary,
-          fontWeight: '600',
-        },
         amountInput: {
           fontSize: 36,
           fontWeight: '700',
@@ -806,96 +1023,18 @@ export const QuickAddModal = forwardRef<
           color: colors.textSecondary,
           marginBottom: spacing.sm,
         },
-        categoryRow: {
-          marginBottom: spacing.md,
-        },
-        categoryChip: {
-          paddingHorizontal: spacing.md,
-          paddingVertical: 9,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surfaceMuted,
-          marginRight: spacing.sm,
-        },
-        categoryChipActive: {
-          backgroundColor: colors.accentSoft,
-        },
-        categoryText: {
-          ...typography.caption,
-          fontSize: 13,
-          color: colors.textSecondary,
-        },
-        categoryTextActive: {
-          color: colors.accentStrong,
-          fontWeight: '600',
-        },
         footerButton: {
           flex: 1,
         },
         deleteButton: { alignSelf: 'center', marginTop: spacing.sm },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
-        presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
-        presetChip: { paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        presetChipActive: { backgroundColor: colors.accentSoft },
-        presetText: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
-        presetTextActive: { color: colors.accentStrong, fontWeight: '600' },
-        nameInput: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          marginBottom: spacing.md,
-          color: colors.textPrimary,
-        },
-        dateRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-        dateInput: {
-          flex: 1,
-          textAlign: 'center',
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingVertical: 10,
-          fontSize: 15,
-          color: colors.textPrimary,
-        },
+        // Design 5.1 Wave 4 — now a CONTAINER style for a TextField, not a
+        // TextInput style: the surface, radius, padding and text colour all
+        // come from the shared field primitive. Only the layout share
+        // remains here; the centring is passed as a real TextInput prop.
         hintText: { ...typography.micro, color: colors.textSecondary, marginTop: -4, marginBottom: spacing.md, lineHeight: 15 },
-        balanceEffectGroup: { gap: spacing.xs, marginBottom: spacing.xs },
         // Selection is signalled by both the icon swap (checkmark vs
         // outline) and the label's weight/colour — never by colour alone.
-        balanceEffectOption: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 9 },
-        balanceEffectOptionDisabled: { opacity: 0.4 },
-        balanceEffectLabel: { ...typography.body, fontSize: 14, color: colors.textSecondary },
-        balanceEffectLabelActive: { color: colors.textPrimary, fontWeight: '600' },
-        cashPromptBox: { backgroundColor: colors.warningSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
-        cashPromptTitle: { ...typography.caption, fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 2 },
-        cashPromptBody: { ...typography.micro, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
-        cashPromptButton: { paddingVertical: 9, alignItems: 'center' },
-        cashPromptButtonPrimary: { backgroundColor: colors.surface, borderRadius: radius.control, marginBottom: spacing.xs },
-        cashPromptButtonText: { ...typography.caption, fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
-        cashPromptButtonTextMuted: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-        categoryCard: {
-          flexBasis: '30%',
-          flexGrow: 1,
-          alignItems: 'center',
-          paddingVertical: spacing.md,
-          borderRadius: radius.control,
-          backgroundColor: colors.surfaceMuted,
-        },
-        categoryCardEmoji: { fontSize: 26, marginBottom: spacing.xs },
-        categoryCardLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
-        selectedCategoryRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: spacing.sm,
-          backgroundColor: colors.accentSoft,
-          borderRadius: radius.control,
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.md,
-          marginBottom: spacing.md,
-        },
-        selectedCategoryEmoji: { fontSize: 20 },
-        selectedCategoryLabel: { ...typography.body, fontSize: 14, color: colors.accentStrong, fontWeight: '700', flex: 1 },
-        selectedCategoryChange: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '700' },
         sourceLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
         sourceLabelValue: { fontWeight: '700', color: colors.textPrimary },
       }),
@@ -915,56 +1054,6 @@ export const QuickAddModal = forwardRef<
     editTransaction && isEditingRecurringLinked
       ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
       : null;
-
-  if (formStep === 'category') {
-    const categoryContent = (
-      <>
-        <View style={styles.segment}>
-          <TouchableOpacity
-            style={[styles.segmentButton, type === 'expense' ? styles.segmentActive : null]}
-            onPress={() => {
-              setType('expense');
-              setCategoryId(null);
-            }}
-          >
-            <Text style={[styles.segmentText, type === 'expense' ? styles.segmentTextActive : null]}>Expense</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segmentButton, type === 'income' ? styles.segmentActive : null]}
-            onPress={() => {
-              setType('income');
-              setCategoryId(null);
-            }}
-          >
-            <Text style={[styles.segmentText, type === 'income' ? styles.segmentTextActive : null]}>Income</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.categoryGrid}>
-          {categories.map((c) => (
-            <TouchableOpacity key={c.id} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseCategory(c.id)}>
-              <Text style={styles.categoryCardEmoji}>{categoryEmoji(c.id)}</Text>
-              <Text style={styles.categoryCardLabel}>{c.name}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </>
-    );
-
-    if (embedded) return categoryContent;
-
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="What's this for?"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-      >
-        {categoryContent}
-      </KeyboardSheet>
-    );
-  }
 
   // Correction pass, §1 — a BNPL repayment transaction is view-only here:
   // no amount/date/paid-from/category field is rendered at all, so there
@@ -1025,239 +1114,195 @@ export const QuickAddModal = forwardRef<
           5. Date. Now shown for BOTH expense and income — a
           recurring-confirmed transaction of either type keeps its existing
           read-only Source line above instead of this editable field. */}
+      {/* Wave 4 device correction — `autoFocus` is DELIBERATELY not applied
+          while embedded. This is the body-vs-container contract: the Add
+          workspace owns presentation, focus and the keyboard, and it already
+          moves accessibility focus to the destination heading once its push
+          transition settles.
+
+          Before Wave 4 this field sat on the details step, which a direct
+          quick entry could not reach without a tap — so autoFocus only ever
+          fired on an already-presented, already-settled sheet. Removing the
+          preliminary page made it fire DURING the native Modal presentation
+          and the workspace push, raising the keyboard before layout had
+          settled; KeyboardAvoidingView then padded the not-yet-measured
+          backdrop and the absolutely-positioned destination layer collapsed
+          — the blank "Add transaction" workspace the owner recorded. It is
+          origin-specific for exactly that reason: from the catalogue the
+          sheet is already presented and settled before this field mounts,
+          which is why that path always worked. This is also why the Bill,
+          Goal, Transfer and Asset tasks were unaffected — none of them
+          autofocuses anything.
+
+          Standalone (non-embedded) usage is unchanged: there is no push
+          transition there and it has always worked. */}
       {!isEditingRecurringLinked ? (
+        <TextField
+          label="Transaction name"
+          required={requiresTransactionName}
+          placeholder={type === 'income' ? 'e.g. August salary' : 'e.g. Woolworths groceries'}
+          value={transactionName}
+          onChangeText={setTransactionName}
+          autoFocus={!embedded}
+        />
+      ) : null}
+
+      {/* The one primary amount in this task. Validity is decided by the
+          same `amountValue`/`canSave` terms as before — CurrencyField only
+          describes a malformed entry on blur; it never parses for Save. */}
+      <CurrencyField
+        label="Amount"
+        required
+        large
+        value={amount}
+        onChangeText={setAmount}
+        autoFocus={!embedded && isEditingRecurringLinked}
+      />
+
+      {/* Design 5.1 Wave 4 — what used to be a whole preliminary page is
+          now these two controls, in the form. Switching type clears the
+          category exactly as the removed page's segment did, because the
+          two category lists are disjoint. `isEditing` locks the type: an
+          existing transaction's expense/income nature is not editable
+          here, which is unchanged behaviour — the removed page was never
+          reachable when editing either. */}
+      {!isEditing ? (
+        <Segmented
+          accessibilityLabel="Transaction type"
+          options={TRANSACTION_TYPE_OPTIONS}
+          value={type}
+          onChange={(next) => {
+            if (next === type) return;
+            setType(next);
+            setCategoryId(null);
+          }}
+        />
+      ) : null}
+
+      <InlineSelect
+        label="Category"
+        required
+        placeholder="Select a category"
+        value={categoryId}
+        onChange={setCategoryId}
+        options={categoryOptions}
+        testID="quick-add-category"
+      />
+
+      {type === 'expense' ? (
         <>
-          <Text style={styles.sectionLabel}>Transaction name</Text>
-          <TextInput
-            style={styles.nameInput}
-            placeholder={type === 'income' ? 'e.g. August salary' : 'e.g. Woolworths groceries'}
-            placeholderTextColor={colors.textMuted}
-            value={transactionName}
-            onChangeText={setTransactionName}
-            autoFocus
+          {/* Wave 4 device correction — one prominent, readable decision in
+              place of the small chip row plus a second chip row for "which
+              card/account". Every row here comes from a list this form
+              already derived; the selector owns no eligibility of its own. */}
+          <AccountSelectionField
+            label="Paid from"
+            helper="Choose the account, card or cash you used for this payment."
+            required
+            choices={expenseSourceChoices}
+            selectedId={expenseSourceChoiceId}
+            onSelect={chooseExpenseSource}
+            message={sourceChosen ? null : 'Choose where this money came from.'}
+            testID="expense-source"
+          />
+
+          {/* Wave 4 device correction — one coherent section, immediately
+              after the chosen account. What was here before: a duplicate
+              "Add cash balance" card, four separate conditional hint
+              paragraphs, a "Tracked balance" heading using internal wording,
+              two unlabelled radio lines and a fifth hint paragraph beneath
+              them. The financial choice is identical; only its presentation
+              changed. */}
+          <BalanceUpdateField
+            mode="expense"
+            accountName={hasValidBalanceTarget ? trackedBalanceTargetLabel ?? null : null}
+            value={hasValidBalanceTarget && balanceEffect === 'update' ? 'update' : 'none'}
+            onChange={(next) => {
+              if (next === 'update' && !hasValidBalanceTarget) return;
+              setBalanceEffect(next);
+            }}
+            missingTitle={missingBalanceCopy.title}
+            missingBody={missingBalanceCopy.body}
+            addBalanceLabel={missingBalanceCopy.actionLabel}
+            onAddBalance={missingBalanceCopy.onAction}
+            testID="expense-balance-update"
+          />
+
+          {/* The one genuinely transaction-specific warning that is NOT a
+              restatement of the choice above: this expense is larger than
+              the selected account holds. */}
+          {insufficientEverydayFunds ? (
+            <Text style={[styles.hintText, { color: colors.danger }]}>
+              This is more than the {formatMoney(everydayAvailableBalance ?? 0)} available in {selectedEverydayAccount?.label}.
+            </Text>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* Wave 4 device correction — recorded income previously offered no
+          destination at all and silently fell back to the engine's default
+          Cash lookup. This selects the EXISTING Transaction.targetAssetId
+          field, which computeBalanceEffect already honours for income, using
+          the SAME shared eligibility helper the recurring-income and
+          Today-reminder flows use. No engine path and no schema is new. */}
+      {type === 'income' ? (
+        <>
+          <AccountSelectionField
+            label="Received into"
+            helper="Choose where this money was received."
+            required={incomeNeedsDestination}
+            choices={incomeDestinationChoices}
+            selectedId={incomeTargetAssetId}
+            onSelect={setIncomeTargetAssetId}
+            message={incomeDestinationMissing ? 'Choose where this money was received.' : null}
+            emptyBody={`Add a cash, everyday or savings balance and ${brand.name} can add this income to it.`}
+            emptyActionLabel="Add an account"
+            onEmptyAction={() => setAddCashVisible(true)}
+            testID="income-destination"
+          />
+
+          {/* The same one section an expense uses, in the same words. */}
+          <BalanceUpdateField
+            mode="income"
+            accountName={incomeSelectedDestination?.label ?? null}
+            value={incomeSelectedDestination && balanceEffect === 'update' ? 'update' : 'none'}
+            onChange={(next) => {
+              if (next === 'update' && !incomeSelectedDestination) return;
+              setBalanceEffect(next);
+            }}
+            missingTitle={incomeDestinationChoices.length === 0 ? "You haven't added a balance yet" : 'No account selected'}
+            missingBody={
+              incomeDestinationChoices.length === 0
+                ? 'Add a cash, everyday or savings balance to update it, or record this income without changing a balance.'
+                : 'Choose an account above to update its balance, or record this income without changing a balance.'
+            }
+            addBalanceLabel={incomeDestinationChoices.length === 0 ? 'Add cash balance' : undefined}
+            onAddBalance={incomeDestinationChoices.length === 0 ? () => setAddCashVisible(true) : undefined}
+            testID="income-balance-update"
           />
         </>
       ) : null}
 
-      <TextInput
-        style={styles.amountInput}
-        placeholder="$0.00"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
-        value={amount}
-        onChangeText={setAmount}
-        autoFocus={isEditingRecurringLinked}
+      {/* Wave 4 device correction — "When did this happen?" replaces a
+          four-chip shortcut rail plus three permanently-visible raw
+          DD/MM/YYYY boxes. The shortcuts still exist and still produce the
+          SAME local dates; they moved inside the picker, which the row below
+          reveals only when asked. Local-date semantics are unchanged: the
+          day/month/year state this form already kept is still the single
+          source of truth, and `handleSave` still builds
+          `new Date(year, month - 1, day)` exactly as before. */}
+      <Text style={styles.sectionLabel}>When did this happen?</Text>
+      <DateTriggerField
+        label="Date"
+        value={selectedDate}
+        today={startOfTodayLocal}
+        onChange={(next) => {
+          setDay(String(next.getDate()));
+          setMonth(String(next.getMonth() + 1));
+          setYear(String(next.getFullYear()));
+        }}
+        testID="transaction-date"
       />
-
-      <View style={styles.selectedCategoryRow}>
-        <Text style={styles.selectedCategoryEmoji}>{selectedCategory ? categoryEmoji(selectedCategory.id) : '💰'}</Text>
-        <Text style={styles.selectedCategoryLabel}>{selectedCategory?.name ?? 'Select a category'}</Text>
-        <TouchableOpacity onPress={() => setFormStep('category')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.selectedCategoryChange}>Change</Text>
-        </TouchableOpacity>
-      </View>
-
-      {type === 'expense' ? (
-        <>
-          <Text style={styles.sectionLabel}>Paid from</Text>
-          <View style={styles.presetRow}>
-            {paymentSourceOptions.map((s) => {
-              const active = paymentSource === s.value;
-              return (
-                <TouchableOpacity
-                  key={s.value}
-                  style={[styles.presetChip, active ? styles.presetChipActive : null]}
-                  onPress={() => setPaymentSource(s.value)}
-                >
-                  <Text style={[styles.presetText, active ? styles.presetTextActive : null]}>{s.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {paymentSource === 'cash' && !hasCashAsset ? (
-            <View style={styles.cashPromptBox}>
-              <Text style={styles.cashPromptTitle}>Add your cash balance first</Text>
-              <Text style={styles.cashPromptBody}>{brand.name} needs to know how much cash you have before reducing it.</Text>
-              <TouchableOpacity style={[styles.cashPromptButton, styles.cashPromptButtonPrimary]} onPress={() => setAddCashVisible(true)}>
-                <Text style={styles.cashPromptButtonText}>Add cash balance</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.cashPromptButton} onPress={() => setPaymentSource('credit_card')}>
-                <Text style={styles.cashPromptButtonTextMuted}>Use credit card instead</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.cashPromptButton} onPress={() => setPaymentSource('other')}>
-                <Text style={styles.cashPromptButtonTextMuted}>Record as spending only</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {paymentSource === 'credit_card' ? (
-            data.creditCards.length > 0 ? (
-              <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
-                  {data.creditCards.map((c) => (
-                    <TouchableOpacity
-                      key={c.id}
-                      style={[styles.categoryChip, creditCardId === c.id ? styles.categoryChipActive : null]}
-                      onPress={() => setCreditCardId(c.id)}
-                    >
-                      <Text style={[styles.categoryText, creditCardId === c.id ? styles.categoryTextActive : null]}>{c.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <Text style={styles.hintText}>This card's balance will increase — {brand.name} keeps it in sync with your Wealth liabilities.</Text>
-              </>
-            ) : (
-              <Text style={styles.hintText}>No cards added yet — add one in Wealth to link this expense to a card balance.</Text>
-            )
-          ) : null}
-
-          {paymentSource === 'loan' ? (
-            nonCreditLiabilities.length > 0 ? (
-              <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
-                  {nonCreditLiabilities.map((l) => (
-                    <TouchableOpacity
-                      key={l.id}
-                      style={[styles.categoryChip, liabilityId === l.id ? styles.categoryChipActive : null]}
-                      onPress={() => setLiabilityId(l.id)}
-                    >
-                      <Text style={[styles.categoryText, liabilityId === l.id ? styles.categoryTextActive : null]}>{l.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <Text style={styles.hintText}>Record a purchase that increased a selected loan balance.</Text>
-              </>
-            ) : (
-              <Text style={styles.hintText}>No loans added yet — add one in Wealth to link this expense to a liability.</Text>
-            )
-          ) : null}
-
-          {paymentSource === 'everyday' ? (
-            everydayAccounts.length > 0 ? (
-              <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
-                  {everydayAccounts.map((a) => {
-                    const label = everydayAccountLabels.get(a.id) ?? everydayChipBaseText(a);
-                    const selected = everydayAccountId === a.id;
-                    return (
-                      <TouchableOpacity
-                        key={a.id}
-                        style={[styles.categoryChip, selected ? styles.categoryChipActive : null]}
-                        onPress={() => setEverydayAccountId(a.id)}
-                        accessibilityRole="button"
-                        accessibilityLabel={label}
-                        accessibilityState={{ selected }}
-                      >
-                        <Text style={[styles.categoryText, selected ? styles.categoryTextActive : null]}>{label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                {everydayAccountId && !selectedEverydayAccount ? (
-                  <Text style={styles.hintText}>
-                    The original account for this transaction no longer exists. Choose an account above, or this transaction will be recorded
-                    without changing a balance.
-                  </Text>
-                ) : insufficientEverydayFunds ? (
-                  <Text style={[styles.hintText, { color: colors.danger }]}>
-                    This is more than the {formatMoney(everydayAvailableBalance ?? 0)} available in {selectedEverydayAccount?.label}.
-                  </Text>
-                ) : (
-                  <Text style={styles.hintText}>This account's balance will decrease — {brand.name} keeps it in sync with your Wealth picture.</Text>
-                )}
-              </>
-            ) : (
-              <Text style={styles.hintText}>This account is no longer available. This transaction will be recorded without changing a balance.</Text>
-            )
-          ) : null}
-
-          {/* Tracked balance — deliberately its own, separately-labelled
-              section (regression-protection review, Stream B1 UI
-              integration §2): funding source is a factual record of how the
-              money moved; this is the separate, independent choice of
-              whether Navilo also updates a stored balance to match. Inline,
-              always visible before Save — never a post-save alert. */}
-          <Text style={styles.sectionLabel}>Tracked balance</Text>
-          <View style={styles.balanceEffectGroup}>
-            <TouchableOpacity
-              style={[styles.balanceEffectOption, !hasValidBalanceTarget ? styles.balanceEffectOptionDisabled : null]}
-              onPress={() => hasValidBalanceTarget && setBalanceEffect('update')}
-              disabled={!hasValidBalanceTarget}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: hasValidBalanceTarget && balanceEffect === 'update', disabled: !hasValidBalanceTarget }}
-              accessibilityLabel="Update tracked balance"
-            >
-              <Ionicons
-                name={hasValidBalanceTarget && balanceEffect === 'update' ? 'checkmark-circle' : 'ellipse-outline'}
-                size={20}
-                color={hasValidBalanceTarget && balanceEffect === 'update' ? colors.accentStrong : colors.textMuted}
-              />
-              <Text style={[styles.balanceEffectLabel, hasValidBalanceTarget && balanceEffect === 'update' ? styles.balanceEffectLabelActive : null]}>
-                Update tracked balance
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.balanceEffectOption}
-              onPress={() => setBalanceEffect('none')}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: !hasValidBalanceTarget || balanceEffect === 'none' }}
-              accessibilityLabel="Record only"
-            >
-              <Ionicons
-                name={!hasValidBalanceTarget || balanceEffect === 'none' ? 'checkmark-circle' : 'ellipse-outline'}
-                size={20}
-                color={!hasValidBalanceTarget || balanceEffect === 'none' ? colors.accentStrong : colors.textMuted}
-              />
-              <Text style={[styles.balanceEffectLabel, !hasValidBalanceTarget || balanceEffect === 'none' ? styles.balanceEffectLabelActive : null]}>
-                Record only
-              </Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.hintText}>
-            {hasValidBalanceTarget
-              ? balanceEffect === 'none' && trackedBalanceTargetLabel
-                ? `Record this transaction without changing your ${trackedBalanceTargetLabel} balance.`
-                : `Record only saves this transaction without changing a balance tracked in ${brand.name}.`
-              : paymentSource === 'credit_card'
-              ? data.creditCards.length > 0
-                ? 'Select a card above to track this against it, or continue recording only.'
-                : 'No cards added yet. This transaction will be recorded without changing a card balance.'
-              : paymentSource === 'loan'
-              ? nonCreditLiabilities.length > 0
-                ? 'Select a loan above to track this against it, or continue recording only.'
-                : 'No loans added yet. This transaction will be recorded without changing a liability balance.'
-              : paymentSource === 'cash'
-              ? 'Add a cash balance above to track this against it, or continue recording only.'
-              : paymentSource === 'everyday'
-              ? 'Choose which everyday account this was paid from above to track this against it.'
-              : `Record only saves this transaction without changing a balance tracked in ${brand.name}.`}
-          </Text>
-        </>
-      ) : null}
-
-      <Text style={styles.sectionLabel}>Date</Text>
-      <View style={styles.presetRow}>
-        {DATE_PRESETS.map((preset) => {
-          const presetParts = dateParts(new Date(Date.now() - preset.daysAgo * 86400000));
-          const active = day === presetParts.day && month === presetParts.month && year === presetParts.year;
-          return (
-            <TouchableOpacity
-              key={preset.label}
-              style={[styles.presetChip, active ? styles.presetChipActive : null]}
-              onPress={() => applyDatePreset(preset.daysAgo)}
-            >
-              <Text style={[styles.presetText, active ? styles.presetTextActive : null]}>{preset.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <View style={styles.dateRow}>
-        <TextInput style={styles.dateInput} placeholder="DD" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={day} onChangeText={setDay} maxLength={2} />
-        <TextInput style={styles.dateInput} placeholder="MM" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={month} onChangeText={setMonth} maxLength={2} />
-        <TextInput style={styles.dateInput} placeholder="YYYY" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={year} onChangeText={setYear} maxLength={4} />
-      </View>
 
       {isEditing ? (
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>

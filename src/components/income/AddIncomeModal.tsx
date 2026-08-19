@@ -1,12 +1,11 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState, MidCycleIncomeOccurrenceChoice } from '../../state/AppStateContext';
 import { useSavingsAllocationPrompt } from '../../state/SavingsAllocationPromptContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
-import { DatePickerModal } from '../shared/DatePickerModal';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { PayFrequency, RecurringItem } from '../../types/models';
@@ -16,7 +15,11 @@ import { precedingOccurrence, isPrecedingOccurrenceEligibleForPrompt } from '../
 import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
 import { IncomeDestinationPicker } from '../shared/IncomeDestinationPicker';
 import { generateId } from '../../lib/id';
-import { categoryEmoji } from '../../lib/categoryEmoji';
+import { incomeSourceIcon } from '../../lib/addIcons';
+import { DateTriggerField } from '../shared/fields/DateTriggerField';
+import { InlineSelect } from '../shared/fields/InlineSelect';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
 import { brand } from '../../lib/brand';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
@@ -117,7 +120,6 @@ export const AddIncomeModal = forwardRef<
   const [frequency, setFrequency] = useState<PayFrequency>('monthly');
   const [nextDueDate, setNextDueDate] = useState<string | null>(null);
   const [unknownDate, setUnknownDate] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
   // Category-first, like the transaction flow (PRD ask: "make it
   // friendlier") — picking what kind of income this is comes before the
   // amount. Editing an existing source already has a name, so it skips
@@ -125,7 +127,17 @@ export const AddIncomeModal = forwardRef<
   // <date> income?" prompt, shown instead of saving immediately when a new
   // monthly income source's immediately preceding expected occurrence is
   // still within the current calendar month (see handleSave below).
-  const [formStep, setFormStep] = useState<'category' | 'details' | 'midCycle'>('category');
+  // Design 5.1 Wave 4 — the preliminary income-source page is removed and
+  // its choice is embedded in the form below. `'midCycle'` is deliberately
+  // KEPT: it is not a chooser, it is a genuine follow-up question about a
+  // payment that already happened this cycle, and removing it would change
+  // financial behaviour.
+  const [formStep, setFormStep] = useState<'details' | 'midCycle'>('details');
+  /** The chosen income source. Presentation metadata only — it prefills the
+   * icon and the name, exactly as the removed page's tiles did. It is NOT
+   * part of `canSave`: the validator is unchanged, and still requires a
+   * name and a valid amount and nothing else. */
+  const [sourceId, setSourceId] = useState<string | null>(null);
   // B2.4 — the fully-built payload, derived preceding-occurrence date, and
   // the new recurring item's own stable id, all captured once when
   // handleSave decides to show the prompt instead of saving immediately —
@@ -198,10 +210,10 @@ export const AddIncomeModal = forwardRef<
       setFrequency('monthly');
       setNextDueDate(null);
       setUnknownDate(false);
-      setFormStep('category');
+      setFormStep('details');
+      setSourceId(null);
       initialSnapshot.current = { label: '', income: '', frequency: 'monthly', nextDueDate: null, unknownDate: false };
     }
-    setPickerOpen(false);
     setMidCyclePayload(null);
     setMidCycleDate(null);
     setMidCycleRecurringItemId(null);
@@ -239,7 +251,7 @@ export const AddIncomeModal = forwardRef<
   }, [reportedDirty, onDirtyChange]);
 
   useEffect(() => {
-    onTitleChange?.(formStep === 'category' ? 'Add income source' : formStep === 'midCycle' ? 'One more thing' : isEditing ? 'Edit income source' : 'Add income source');
+    onTitleChange?.(formStep === 'midCycle' ? 'One more thing' : isEditing ? 'Edit income source' : 'Add income source');
   }, [formStep, isEditing, onTitleChange]);
 
   // Correction round, 2026-08-10 — the shared eligible-income-destination
@@ -267,13 +279,27 @@ export const AddIncomeModal = forwardRef<
   // invented when the user says they don't know it (PRD ask, §1/§5).
   const canSave = label.trim().length > 0 && parsedIncome.valid && (isIrregular || unknownDate || !!nextDueDate);
   const monthlyPreview = parsedIncome.valid ? toMonthlyAmount(parsedIncome.amount, frequency) : null;
+  // Exactly the six sources the removed page rendered as a grid — same
+  // INCOME_SOURCE_IDS order, same SOURCE_LABEL copy, same categoryEmoji.
+  /** Local midnight today — the forward date list starts here, preserving
+   * the previous picker's `minimumDate={startOfToday()}` rule. */
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+  const incomeSourceOptions = useMemo(
+    () => INCOME_SOURCE_IDS.map((id) => ({ value: id, label: SOURCE_LABEL[id] ?? 'Income', icon: incomeSourceIcon(id) })),
+    []
+  );
 
   // Save is only ever reachable from the details step — standalone has no
-  // Save button on 'category'/'midCycle' at all, and embedded must not
-  // expose one either (a stray tap while the mid-cycle prompt's own
-  // dedicated option buttons are the only valid next action must not
-  // silently re-trigger the mid-cycle branch below and mint a fresh,
-  // unused midCycleRecurringItemId).
+  // Save button on 'midCycle' at all, and embedded must not expose one
+  // either (a stray tap while the mid-cycle prompt's own dedicated option
+  // buttons are the only valid next action must not silently re-trigger the
+  // mid-cycle branch below and mint a fresh, unused
+  // midCycleRecurringItemId). Design 5.1 Wave 4 removed the 'category'
+  // member from this gate ONLY because that step no longer exists; the
+  // mid-cycle half of the guard is unchanged and still load-bearing.
   useEffect(() => {
     onCanSaveChange?.(canSave && formStep === 'details');
   }, [canSave, formStep, onCanSaveChange]);
@@ -423,10 +449,13 @@ export const AddIncomeModal = forwardRef<
     else onClose();
   }
 
-  function chooseSource(sourceId: string) {
-    setIcon(INCOME_SOURCE_ICON[sourceId] ?? 'cash-outline');
-    setLabel((prev) => prev || SOURCE_LABEL[sourceId] || 'Income');
-    setFormStep('details');
+  function chooseSource(nextSourceId: string) {
+    setSourceId(nextSourceId);
+    // Identical prefill to the removed page: the icon follows the source,
+    // and the name is only ever filled in when the customer has not typed
+    // one — never overwritten.
+    setIcon(INCOME_SOURCE_ICON[nextSourceId] ?? 'cash-outline');
+    setLabel((prev) => prev || SOURCE_LABEL[nextSourceId] || 'Income');
   }
 
   function chooseFrequency(f: PayFrequency) {
@@ -436,31 +465,12 @@ export const AddIncomeModal = forwardRef<
     // frequency (PRD ask, §5: "do not allow contradictory states").
     setNextDueDate(null);
     setUnknownDate(f === 'irregular');
-    setPickerOpen(false);
   }
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: colors.textPrimary,
-        },
-        amountInput: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 14,
-          fontSize: 26,
-          fontWeight: '700',
-          color: colors.textPrimary,
-          marginBottom: spacing.sm,
-        },
         row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
         chip: { paddingHorizontal: spacing.md, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         chipActive: { backgroundColor: colors.accentSoft },
@@ -470,18 +480,6 @@ export const AddIncomeModal = forwardRef<
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
         preview: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.sm },
-        amountError: { ...typography.caption, fontSize: 12, color: colors.danger, marginTop: -spacing.xs, marginBottom: spacing.sm },
-        sourceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-        sourceCard: {
-          flexBasis: '30%',
-          flexGrow: 1,
-          alignItems: 'center',
-          paddingVertical: spacing.md,
-          borderRadius: radius.control,
-          backgroundColor: colors.surfaceMuted,
-        },
-        sourceCardEmoji: { fontSize: 26, marginBottom: spacing.xs },
-        sourceCardLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
         midCycleTitle: { ...typography.title, fontSize: 18, color: colors.textPrimary, marginBottom: spacing.xs },
         midCycleBody: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.lg },
         midCycleOption: {
@@ -493,17 +491,6 @@ export const AddIncomeModal = forwardRef<
         },
         midCycleOptionDisabled: { opacity: 0.5 },
         midCycleOptionText: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
-        dateButton: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 14,
-        },
-        dateButtonText: { ...typography.body, fontSize: 15, color: colors.textPrimary },
-        dateButtonPlaceholder: { color: colors.textMuted },
         toggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
         toggleText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, flex: 1, lineHeight: 18 },
         irregularNote: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 15 },
@@ -568,7 +555,7 @@ export const AddIncomeModal = forwardRef<
         visible={visible}
         onClose={onClose}
         isDirty={false}
-        title="💼 One more thing"
+        title="One more thing"
         footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} disabled={midCycleSubmitting} />}
       >
         {midCycleContent}
@@ -576,66 +563,51 @@ export const AddIncomeModal = forwardRef<
     );
   }
 
-  if (formStep === 'category') {
-    const categoryContent = (
-      <>
-        {/* UX correction — the helper copy was rewritten to "Tell Navilo
-            where your income comes from." (shorter, more direct). No
-            numberOfLines/ellipsizeMode is set — RN's numberOfLines={n}
-            genuinely truncates content beyond n lines (default ellipsizeMode
-            'tail'), so a "cap" would actively clip long/scaled text rather
-            than protect it. Left fully unbounded instead: the Text wraps to
-            however many lines accessibility font scaling requires, never
-            truncated. No width/height constraint is applied beyond the
-            sheet's own existing horizontal padding (styles.preview has never
-            set either), so it already uses the full available content width
-            and never clips at either edge. */}
-        <Text style={styles.preview}>Tell {brand.name} where your income comes from.</Text>
-        <View style={styles.sourceGrid}>
-          {INCOME_SOURCE_IDS.map((id) => (
-            <TouchableOpacity key={id} style={styles.sourceCard} activeOpacity={0.8} onPress={() => chooseSource(id)}>
-              <Text style={styles.sourceCardEmoji}>{categoryEmoji(id)}</Text>
-              <Text style={styles.sourceCardLabel}>{SOURCE_LABEL[id]}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </>
-    );
-
-    if (embedded) return categoryContent;
-
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="💼 Add income source"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-      >
-        {categoryContent}
-      </KeyboardSheet>
-    );
-  }
-
   const content = (
     <>
-      <Text style={styles.label}>Name</Text>
-      <TextInput style={styles.input} placeholder="e.g. Salary" placeholderTextColor={colors.textMuted} value={label} onChangeText={setLabel} />
+      {/* Design 5.1 Wave 4 — what used to be the whole "Add income source"
+          page. Same six sources, same labels, same emoji, same icon/name
+          prefill; now the first field of the form instead of a page in
+          front of it. Deliberately NOT part of `canSave`: adding it would
+          be a validator change, and the icon already has the same
+          `cash-outline` fallback it has always had. */}
+      {!isEditing ? (
+        <>
+          {/* The removed page's helper copy is PRESERVED verbatim, and for
+              the same reason it was written: it tells the customer what the
+              choice below is for. No numberOfLines/ellipsizeMode is set —
+              RN's numberOfLines={n} genuinely truncates content beyond n
+              lines (default ellipsizeMode 'tail'), so a "cap" would actively
+              clip long/scaled text rather than protect it. Left fully
+              unbounded instead: the Text wraps to however many lines
+              accessibility font scaling requires, never truncated. */}
+          <Text style={styles.preview}>Tell {brand.name} where your income comes from.</Text>
+          <InlineSelect
+            label="Where does this income come from?"
+            placeholder="Choose a source"
+            value={sourceId}
+            onChange={chooseSource}
+            options={incomeSourceOptions}
+            testID="add-income-source"
+          />
+        </>
+      ) : null}
 
-      <Text style={styles.label}>{isIrregular ? 'Typical amount' : 'Amount'}</Text>
-      <TextInput
-        style={styles.amountInput}
+      <TextField label="Name" required placeholder="e.g. Salary" value={label} onChangeText={setLabel} />
+
+      {/* The caller's own `incomeAmountError` still decides what is shown —
+          passing `message` means CurrencyField never derives its own here,
+          so the existing wording and the existing `parseMoneyInput` gate
+          are both untouched. */}
+      <CurrencyField
+        label={isIrregular ? 'Typical amount' : 'Amount'}
+        required
+        large
         placeholder="$6,000"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
         value={income}
         onChangeText={setIncome}
+        message={incomeAmountError ? 'Enter an amount to the nearest cent (up to 2 decimal places).' : null}
       />
-      {incomeAmountError ? (
-        <Text style={styles.amountError} accessibilityLiveRegion="polite">
-          Enter an amount to the nearest cent (up to 2 decimal places).
-        </Text>
-      ) : null}
       {monthlyPreview !== null && frequency !== 'monthly' ? <Text style={styles.preview}>≈ {formatMoney(monthlyPreview)}/month estimated</Text> : null}
 
       <Text style={styles.label}>Pay frequency</Text>
@@ -649,46 +621,37 @@ export const AddIncomeModal = forwardRef<
 
       {!isIrregular ? (
         <>
-          <Text style={styles.label}>Next expected payment</Text>
-          <TouchableOpacity
-            style={styles.dateButton}
-            onPress={() => {
-              // UX correction — blur/dismiss the keyboard before the date
-              // picker opens, so the field it replaces gets the full
-              // available viewport rather than fighting the keyboard for
-              // space (device defect: keyboard remained open behind the
-              // calendar).
-              Keyboard.dismiss();
-              setPickerOpen(true);
-            }}
-          >
-            <Text style={[styles.dateButtonText, !nextDueDate ? styles.dateButtonPlaceholder : null]}>
-              {nextDueDate ? formatDate(nextDueDate) : 'Choose a date'}
-            </Text>
-            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+          {/* Wave 4 closure — the same shared focused surface every other
+              Add date now uses. This flow was already the approved one
+              (keyboard dismissed first, picker fully visible); it keeps that
+              behaviour and gains it from the shared trigger instead of its
+              own native <Modal>, so bill, loan, transaction and goal all
+              behave identically. */}
+          <DateTriggerField
+            label="Next expected payment"
+            direction="future"
+            value={nextDueDate ? new Date(nextDueDate) : null}
+            today={startOfTodayLocal}
+            optional
+            onChange={(next) => setNextDueDate(next.toISOString())}
+            testID="income-next-due-date"
+          />
         </>
       ) : (
         <>
-          <Text style={styles.label}>Expected date (optional)</Text>
-          <TouchableOpacity
-            style={styles.dateButton}
-            onPress={() => {
-              Keyboard.dismiss();
-              setPickerOpen(true);
-            }}
-            disabled={unknownDate}
-          >
-            <Text style={[styles.dateButtonText, !nextDueDate || unknownDate ? styles.dateButtonPlaceholder : null]}>
-              {!unknownDate && nextDueDate ? formatDate(nextDueDate) : 'No date set'}
-            </Text>
-            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+          <DateTriggerField
+            label="Expected date (optional)"
+            direction="future"
+            value={!unknownDate && nextDueDate ? new Date(nextDueDate) : null}
+            today={startOfTodayLocal}
+            optional
+            onChange={(next) => setNextDueDate(next.toISOString())}
+            testID="income-expected-date"
+          />
           <TouchableOpacity
             style={styles.toggleRow}
             onPress={() => {
               setUnknownDate((v) => !v);
-              setPickerOpen(false);
               if (!unknownDate) setNextDueDate(null);
             }}
           >
@@ -700,23 +663,6 @@ export const AddIncomeModal = forwardRef<
           </Text>
         </>
       )}
-
-      {/* UX correction — a dedicated modal, isolated from this sheet's own
-          swipe-to-dismiss gesture (device defect: scrolling/swiping inside
-          the previously-inline calendar could be captured as "close the
-          whole form", silently discarding name/amount/frequency already
-          entered). Shared between both frequency branches above since only
-          one is ever mounted at a time and both drive the same nextDueDate
-          field. gesturesEnabled={!pickerOpen} on the KeyboardSheet above
-          additionally disables this sheet's own pan-to-close for as long as
-          this is open. */}
-      <DatePickerModal
-        visible={pickerOpen}
-        value={nextDueDate ? new Date(nextDueDate) : new Date()}
-        minimumDate={startOfToday()}
-        onChange={(date) => setNextDueDate(date.toISOString())}
-        onClose={() => setPickerOpen(false)}
-      />
 
       {isEditing ? (
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
@@ -736,7 +682,6 @@ export const AddIncomeModal = forwardRef<
       isDirty={isDetailsDirty}
       discardTitle="Discard income?"
       discardMessage="Your entered income details will be lost."
-      gesturesEnabled={!pickerOpen}
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />

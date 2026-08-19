@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { brand } from '../../lib/brand';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { AddIcon } from '../shared/AddIcon';
+import { addTaskIcon } from '../../lib/addIcons';
 import { Button } from '../shared/Button';
 import { TransferForm, TransferFormHandle } from '../wealth/TransferForm';
 import { AddWealthItemModal, AddWealthItemModalHandle, LIABILITY_DISPLAY_NAME } from '../wealth/AddWealthItemModal';
@@ -46,7 +48,6 @@ export type AddAnythingKind =
 interface AddAnythingOption {
   key: AddAnythingKind;
   label: string;
-  emoji: string;
   /** Design 5.1 doc A p.5 — the small right-aligned qualifier that
    * disambiguates two similar tasks (recurring vs one-off income, the debt
    * subtypes, super). Presentation only. */
@@ -67,30 +68,30 @@ const GROUPS: AddAnythingGroup[] = [
   {
     title: 'Everyday money',
     options: [
-      { key: 'expense', label: 'Record spending', emoji: '🛒' },
-      { key: 'income', label: 'Add income source', qualifier: 'recurring', emoji: '💼' },
-      { key: 'income_received', label: 'Record income received', qualifier: 'one-off', emoji: '💰' },
-      { key: 'bill', label: 'Add bill', emoji: '📅' },
-      { key: 'transfer', label: 'Move money', emoji: '🔁' },
+      { key: 'expense', label: 'Record spending' },
+      { key: 'income', label: 'Add income source', qualifier: 'recurring' },
+      { key: 'income_received', label: 'Record income received', qualifier: 'one-off' },
+      { key: 'bill', label: 'Add bill' },
+      { key: 'transfer', label: 'Move money' },
     ],
   },
   {
     title: 'Accounts and wealth',
     options: [
-      { key: 'cash', label: 'Add cash', emoji: '💵' },
-      { key: 'savings', label: 'Add savings', emoji: '🏦' },
-      { key: 'everyday', label: 'Add everyday account', emoji: '🏧' },
-      { key: 'investment', label: 'Add investment', emoji: '📈' },
-      { key: 'property', label: 'Add property', emoji: '🏠' },
-      { key: 'retirement', label: 'Add retirement savings', qualifier: 'super', emoji: '🛡' },
+      { key: 'cash', label: 'Add cash' },
+      { key: 'savings', label: 'Add savings' },
+      { key: 'everyday', label: 'Add everyday account' },
+      { key: 'investment', label: 'Add investment' },
+      { key: 'property', label: 'Add property' },
+      { key: 'retirement', label: 'Add retirement savings', qualifier: 'super' },
     ],
   },
   {
     title: 'Debt and planning',
     options: [
-      { key: 'liability', label: 'Add debt', qualifier: 'loan / BNPL', emoji: '📄' },
-      { key: 'creditCard', label: 'Add credit card', emoji: '💳' },
-      { key: 'goal', label: 'Add goal', emoji: '🎯' },
+      { key: 'liability', label: 'Add debt', qualifier: 'loan / BNPL' },
+      { key: 'creditCard', label: 'Add credit card' },
+      { key: 'goal', label: 'Add goal' },
     ],
   },
 ];
@@ -1357,14 +1358,6 @@ export function AddAnythingSheet({
           gap: spacing.sm,
         },
         taskRowDivided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border },
-        rowIcon: {
-          width: 28,
-          height: 28,
-          borderRadius: designRadius.tile,
-          backgroundColor: semantic.interactiveTint,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
         rowLabel: { ...typography.body, fontSize: 15, fontWeight: '600', color: semantic.textPrimary, flex: 1 },
         rowQualifier: { ...typography.micro, fontSize: 11, color: semantic.textTertiary },
         draftBadge: {
@@ -1386,17 +1379,6 @@ export function AddAnythingSheet({
           borderRadius: radius.control,
           backgroundColor: colors.surfaceMuted,
         },
-        iconBadge: {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
-          backgroundColor: colors.accentSoft,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: spacing.xs,
-          ...cardShadow,
-        },
-        emoji: { fontSize: 20 },
         tileLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
         // Design 5.1 doc A p.5 — the disambiguating qualifier ("recurring",
         // "one-off", "super", "loan / BNPL"), quieter than the label itself.
@@ -1583,9 +1565,11 @@ export function AddAnythingSheet({
                           accessibilityLabel={[o.label, o.qualifier, parked ? 'draft saved' : null].filter(Boolean).join(', ')}
                           onPress={() => handleTilePress(o.key)}
                         >
-                          <View style={styles.rowIcon}>
-                            <Text style={styles.emoji}>{o.emoji}</Text>
-                          </View>
+                          {/* Wave 4 device correction — one designed icon
+                              language in place of platform emoji. Decorative:
+                              the row's own accessibilityLabel above is the
+                              complete announcement. */}
+                          <AddIcon icon={addTaskIcon(o.key)} tile />
                           <Text style={styles.rowLabel} numberOfLines={2}>
                             {o.label}
                           </Text>

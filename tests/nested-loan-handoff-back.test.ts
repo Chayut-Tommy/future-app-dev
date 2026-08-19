@@ -275,11 +275,22 @@ console.log('\n=== 5. Direct (non-handoff) entry is geometrically unaffected —
 
 console.log('\n=== 6. Every active Bill step renders a non-null content body (required test 2) ===');
 {
-  const categoryBranch = functionBody("if (formStep === 'category') {", BILL_SRC);
-  assert('6a. the category-step branch is found', categoryBranch.length > 0);
+  // SUPERSEDED by Design 5.1 Wave 4 (owner-authorised): the Bill task no
+  // longer has a category STEP — its twelve presets are an in-form selector
+  // on the one and only step. The requirement this section protects ("every
+  // active Bill step renders a non-null content body") is now stronger, not
+  // weaker: there is a single step, it is unconditional, and the preset list
+  // it offers is still the full, ungated BILL_PRESETS.
+  assert('6a. no category step survives — the Bill task is a single step', !/if \(formStep === 'category'\)/.test(BILL_SRC) && !/categoryContent/.test(BILL_SRC));
   assert(
-    '6b. embedded category content is an unconditional View/map over BILL_PRESETS — no gate that could make it null (e.g. no early "if (!embedded) return null" or data-dependent guard before the return)',
-    /if \(embedded\) return categoryContent;/.test(categoryBranch) && !/if \(embedded\) return null/.test(categoryBranch)
+    '6b. the bill-type choice is an in-form selector over the full, ungated BILL_PRESETS list',
+    /const billTypeOptions = BILL_PRESETS\.map\(/.test(BILL_SRC) &&
+      /<InlineSelect\n\s+label="What's this bill for\?"/.test(BILL_SRC) &&
+      /options=\{billTypeOptions\}/.test(BILL_SRC)
+  );
+  assert(
+    '6b-i. choosing a preset still routes through chooseBillType unchanged, so the loan handoff is preserved rather than bypassed',
+    /if \(preset\) chooseBillType\(preset\);/.test(BILL_SRC) && /if \(p\.handoffLoanType\) \{/.test(BILL_SRC)
   );
   assert(
     '6c. the details-step content is built as a single unconditional JSX fragment (`const content = (<>...`) rather than behind any additional gate — always renders something regardless of selectedPreset/isEditing',

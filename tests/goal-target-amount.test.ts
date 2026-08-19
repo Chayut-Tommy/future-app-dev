@@ -219,20 +219,36 @@ console.log('\n=== 8. Structural confirmation: the real file wires this logic as
       return body.includes('setTargetAmountDraft(text)') && !body.includes('persistCalculatedFields') && !body.includes('updateGoal');
     })()
   );
+  // SUPERSEDED IN FORM by the Wave 4 closure pass: the isolated "Set" button
+  // is gone, along with per-field autosave. The BEHAVIOUR these two protect —
+  // an amount draft reaches persistence only through one explicit, guarded
+  // commit, using the SAME resolver, and never on a keystroke — is unchanged
+  // and is stronger: there is now exactly one write for the whole form.
   assert(
-    '8f. commitTargetAmount calls persistCalculatedFields only on a changed, valid resolution (set-and-different, or clear-when-not-already-null)',
-    /if \(resolution\.amount !== goal!\.targetAmount\) \{\s*\n\s*persistCalculatedFields\(\{ targetAmount: resolution\.amount \}\);\s*\n\s*\}/.test(GOAL_SHEET_SRC) &&
-      /if \(goal!\.targetAmount !== null\) persistCalculatedFields\(\{ targetAmount: null \}\);/.test(GOAL_SHEET_SRC)
+    '8f. the target amount reaches persistence only via the single atomic metadata commit, using the same resolver',
+    /const resolution = resolveTargetAmountDraft\(targetAmountDraft\);/.test(GOAL_SHEET_SRC) &&
+      /const nextTargetAmount = resolution\.kind === 'clear' \? null : resolution\.amount;/.test(GOAL_SHEET_SRC) &&
+      /if \(resolution\.kind === 'invalid'\) \{/.test(GOAL_SHEET_SRC)
   );
   assert(
-    '8g. commitTargetAmount is declared once and passed as a prop/handler exactly once — the "Set" Button\'s onPress is the sole reachable call site for persistence',
-    /function commitTargetAmount\(\) \{/.test(GOAL_SHEET_SRC) &&
-      (GOAL_SHEET_SRC.match(/onPress=\{commitTargetAmount\}/g) || []).length === 1 &&
-      /<Button label="Set" onPress=\{commitTargetAmount\} style=\{styles\.addButton\} \/>/.test(GOAL_SHEET_SRC)
+    '8g. that commit is declared once and is the sole reachable persistence call site for metadata — no "Set" button remains',
+    /function handleSaveChanges\(\) \{/.test(GOAL_SHEET_SRC) &&
+      (GOAL_SHEET_SRC.match(/onPress=\{handleSaveChanges\}/g) || []).length === 1 &&
+      !/label="Set"/.test(GOAL_SHEET_SRC) &&
+      // Exactly one updateGoal call carries metadata; the others are the
+      // separate progress/status/archive actions this pass did not touch.
+      (GOAL_SHEET_SRC.match(/updateGoal\(goal\.id, \{ \.\.\.patch,/g) || []).length === 1
   );
   assert(
-    '8h. isDirty includes targetAmountDirty, so KeyboardSheet\'s own unmodified backdrop/swipe/Android-Back confirmDiscardIfDirty gate (KeyboardSheet.tsx, untouched) covers an uncommitted amount draft',
-    /const isDirty =\s*\n\s*contribution\.trim\(\)\.length > 0 \|\|\s*\n\s*dateFieldsState === 'partial' \|\|\s*\n\s*dateFieldsState === 'invalid' \|\|\s*\n\s*dateFieldsState === 'past' \|\|\s*\n\s*targetAmountDirty;/.test(GOAL_SHEET_SRC)
+    '8g-i. and it is guarded against a double tap, so metadata saves exactly once',
+    /if \(metadataSaveRef\.current\) return;[^\n]*\n\s*metadataSaveRef\.current = true;/.test(GOAL_SHEET_SRC)
+  );
+  // Widened, not weakened: metadata no longer autosaves, so EVERY supported
+  // field is now at risk on dismissal and must reach the same guard.
+  assert(
+    '8h. isDirty still includes targetAmountDirty — and now every other uncommitted metadata field too — so the unmodified confirmDiscardIfDirty gate covers them all',
+    /const isDirty =\s*\n\s*contribution\.trim\(\)\.length > 0 \|\|[\s\S]*?metadataDirty \|\|\s*\n\s*targetAmountDirty;/.test(GOAL_SHEET_SRC) &&
+      /const metadataDirty =/.test(GOAL_SHEET_SRC)
   );
   assert(
     '8i. hasOtherDirtyField also includes targetAmountDirty, so "Add & close" (which bypasses confirmDiscardIfDirty entirely) is never offered while an uncommitted amount draft exists',
@@ -240,7 +256,9 @@ console.log('\n=== 8. Structural confirmation: the real file wires this logic as
   );
   assert(
     '8j. KeyboardSheet is still passed isDirty={isDirty} unchanged — this file does not reimplement dismissal handling',
-    /<KeyboardSheet\s*\n\s*visible=\{!!goal\}\s*\n\s*onClose=\{onClose\}\s*\n\s*title="Goal details"\s*\n\s*isDirty=\{isDirty\}/.test(GOAL_SHEET_SRC)
+    // The sheet title moved from the legacy "Goal details" to "Edit goal";
+    // the dismissal wiring this assertion protects is unchanged.
+    /<KeyboardSheet\s*\n\s*visible=\{!!goal\}\s*\n\s*onClose=\{onClose\}\s*\n\s*title="Edit goal"\s*\n\s*isDirty=\{isDirty\}/.test(GOAL_SHEET_SRC)
   );
   assert(
     '8k. previewGoal (feeding the progress ring / required-monthly / allocation calculations) no longer derives targetAmount from any draft — only from the ...goal spread',
@@ -260,7 +278,16 @@ console.log('\n=== 8. Structural confirmation: the real file wires this logic as
     /setTargetAmountDraft\(goal\?\.targetAmount \? String\(goal\.targetAmount\) : ''\);\s*\n\s*setTargetAmountError\(false\);/.test(GOAL_SHEET_SRC) && /\}, \[goal\?\.id\]\);/.test(GOAL_SHEET_SRC)
   );
   assert('8n. contribution handling (parsePositiveContributionAmount, handleAddContribution, applyContribution) is untouched by this diff', /function parsePositiveContributionAmount/.test(GOAL_SHEET_SRC) && /function handleAddContribution/.test(GOAL_SHEET_SRC) && /function applyContribution/.test(GOAL_SHEET_SRC));
-  assert('8o. Target Date persistence (handleSaveDate, classifyGoalDateFields usage) is untouched by this diff', /function handleSaveDate\(month: string, year: string\) \{/.test(GOAL_SHEET_SRC) && /const dateFieldsState = classifyGoalDateFields\(targetMonth, targetYear\);/.test(GOAL_SHEET_SRC));
+  // The per-field date autosave (handleSaveDate) is gone with the rest of
+  // the autosave architecture. The date VALIDATION rule it used —
+  // classifyGoalDateFields — is untouched, and the date is now committed by
+  // the same single metadata write as everything else.
+  assert(
+    '8o. Target Date validation still uses the shared classifyGoalDateFields, and the date is committed by the one atomic save',
+    /const dateFieldsState = classifyGoalDateFields\(targetMonth, targetYear\);/.test(GOAL_SHEET_SRC) &&
+      /const nextTargetDate =\s*\n\s*dateFieldsState === 'valid'/.test(GOAL_SHEET_SRC) &&
+      !/function handleSaveDate/.test(GOAL_SHEET_SRC)
+  );
   assert('8p. AppStateContext / KeyboardSheet / storage files are not referenced as modified anywhere in this file\'s own diff scope (single-file correction)', true);
 }
 

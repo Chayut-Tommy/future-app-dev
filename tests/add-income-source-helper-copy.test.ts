@@ -87,9 +87,11 @@ console.log('\n=== 3. "Record income received" chooser tile already wraps cleanl
   assert(
     "3a. the 'Record income received' tile label is declared exactly as expected, in AddAnythingSheet.tsx's GROUPS list",
     // Wave 3 added the Design 5.1 'one-off' qualifier alongside the label
-    // (doc A p.5). The LABEL ITSELF — what this assertion exists to protect —
-    // is unchanged; only a sibling field was added to the same entry.
-    /\{ key: 'income_received', label: 'Record income received', qualifier: 'one-off', emoji: '💰' \}/.test(ADD_ANYTHING_SRC)
+    // (doc A p.5), and the Wave 4 device correction removed the `emoji`
+    // field entirely — every catalogue icon now resolves from the central
+    // `lib/addIcons.ts` map instead. The LABEL ITSELF — what this assertion
+    // exists to protect — is unchanged through both.
+    /\{ key: 'income_received', label: 'Record income received', qualifier: 'one-off' \}/.test(ADD_ANYTHING_SRC)
   );
   assert(
     // Wave 3 replaced the tile grid with full-width catalogue rows (doc A

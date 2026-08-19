@@ -1,10 +1,13 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { useCelebration } from '../../state/CelebrationContext';
 import { CreditCard } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
+import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { Button } from '../shared/Button';
 import { buildDebtReducedCelebration } from '../../lib/celebrations';
 import { brand } from '../../lib/brand';
@@ -273,15 +276,6 @@ export const AddCreditCardModal = forwardRef<
           marginBottom: spacing.xs,
           marginTop: spacing.sm,
         },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          marginBottom: spacing.md,
-          color: colors.textPrimary,
-        },
         row: {
           flexDirection: 'row',
           gap: spacing.md,
@@ -320,41 +314,45 @@ export const AddCreditCardModal = forwardRef<
         </View>
       ) : null}
 
-      <Text style={styles.label}>Issuer / name</Text>
-      <TextInput style={styles.input} placeholder="e.g. AMEX Platinum" placeholderTextColor={colors.textMuted} value={issuer} onChangeText={setIssuer} />
+      <TextField label="Issuer / name" required placeholder="e.g. AMEX Platinum" value={issuer} onChangeText={setIssuer} />
 
       <View style={styles.row}>
         <View style={styles.half}>
-          <Text style={styles.label}>Credit limit</Text>
-          <TextInput style={styles.input} placeholder="$10,000" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={limit} onChangeText={setLimit} />
+          {/* A credit limit and a balance are both genuine money amounts, so
+              both accept a zero — `allowZero` mirrors that and changes
+              nothing about what Save accepts: this form's own validation is
+              untouched. */}
+          <CurrencyField label="Credit limit" allowZero placeholder="$10,000" value={limit} onChangeText={setLimit} />
         </View>
         <View style={styles.half}>
-          <Text style={styles.label}>Current balance</Text>
-          <TextInput style={styles.input} placeholder="$0" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={balance} onChangeText={setBalance} />
+          <CurrencyField label="Current balance" allowZero placeholder="$0" value={balance} onChangeText={setBalance} />
         </View>
       </View>
 
-      <Text style={styles.label}>Due day of month</Text>
-      <TextInput style={styles.input} placeholder="25" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dueDay} onChangeText={setDueDay} />
+      {/* Wave 4 closure — a recurring anchor, not a date, and no longer a
+          bare number pad. Same focused picker shell as every other Add date
+          field. `dueDay` stays the same string the validator reads. */}
+      <DayOfMonthField
+        label="Due day of month"
+        value={dueDay.trim() === '' ? null : parseInt(dueDay, 10)}
+        onChange={(day) => setDueDay(String(day))}
+        testID="card-due-day"
+      />
 
-      <Text style={styles.label}>Expected monthly repayment</Text>
-      <TextInput
-        style={styles.input}
+      <CurrencyField
+        label="Expected monthly repayment"
+        allowZero
         placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
         value={expectedRepayment}
         onChangeText={setExpectedRepayment}
       />
       <Text style={[styles.benefitLine, { marginTop: -spacing.sm }]}>How much do you normally expect to repay each month?</Text>
       <Text style={[styles.benefitLine, { marginBottom: spacing.sm }]}>This amount will appear as an upcoming cash outflow in What Happens Next.</Text>
 
-      <Text style={styles.label}>Minimum required payment (optional)</Text>
-      <TextInput
-        style={styles.input}
+      <CurrencyField
+        label="Minimum required payment (optional)"
+        allowZero
         placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
         value={minRequiredPayment}
         onChangeText={setMinRequiredPayment}
       />
@@ -363,11 +361,11 @@ export const AddCreditCardModal = forwardRef<
         from what you expect to actually repay.
       </Text>
 
-      <Text style={styles.label}>Interest rate / APR % (optional)</Text>
-      <TextInput
-        style={styles.input}
+      {/* A rate, NOT a money amount — deliberately a TextField, so the
+          strict money grammar is never applied to a percentage. */}
+      <TextField
+        label="Interest rate / APR % (optional)"
         placeholder="e.g. 19.99"
-        placeholderTextColor={colors.textMuted}
         keyboardType="decimal-pad"
         value={apr}
         onChangeText={setApr}

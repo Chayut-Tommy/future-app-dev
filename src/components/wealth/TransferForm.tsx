@@ -1,6 +1,8 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
+import { Chip } from '../shared/Chip';
+import { CurrencyField } from '../shared/fields/CurrencyField';
 import { useAppState, TransferTarget } from '../../state/AppStateContext';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
@@ -208,21 +210,7 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
       StyleSheet.create({
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
         chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-        chip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        chipActive: { backgroundColor: colors.accentSoft },
-        chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 20,
-          fontWeight: '700',
-          color: colors.textPrimary,
-        },
         empty: { ...typography.caption, fontSize: 12, color: colors.textMuted },
-        errorText: { ...typography.caption, fontSize: 12, color: colors.warning, lineHeight: 16, marginTop: spacing.sm },
         bnplSection: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
         bnplRow: { marginBottom: spacing.sm, backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md },
         bnplTitle: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600', marginBottom: 2 },
@@ -282,17 +270,12 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
       ) : (
         <View style={styles.chipRow}>
           {sourceAssets.map((a) => (
-            <TouchableOpacity
+            <Chip
               key={a.id}
-              style={[styles.chip, fromId === a.id ? styles.chipActive : null]}
+              label={`${balanceLabels.get(a.id) ?? a.label} ($${a.currentValue.toLocaleString()})`}
+              selected={fromId === a.id}
               onPress={() => setFromId(a.id)}
-              accessibilityRole="button"
-              accessibilityLabel={`${balanceLabels.get(a.id) ?? a.label}, $${a.currentValue.toLocaleString()}`}
-            >
-              <Text style={[styles.chipText, fromId === a.id ? styles.chipTextActive : null]}>
-                {balanceLabels.get(a.id) ?? a.label} (${a.currentValue.toLocaleString()})
-              </Text>
-            </TouchableOpacity>
+            />
           ))}
         </View>
       )}
@@ -300,55 +283,43 @@ export const TransferForm = forwardRef<TransferFormHandle, TransferFormProps>(fu
       <Text style={styles.label}>To</Text>
       <View style={styles.chipRow}>
         {destinationAssets.map((a) => (
-          <TouchableOpacity
+          <Chip
             key={a.id}
-            style={[styles.chip, isSameTarget({ kind: 'asset', assetId: a.id }) ? styles.chipActive : null]}
+            label={balanceLabels.get(a.id) ?? a.label}
+            selected={isSameTarget({ kind: 'asset', assetId: a.id })}
             onPress={() => setToTarget({ kind: 'asset', assetId: a.id })}
-            accessibilityRole="button"
-            accessibilityLabel={balanceLabels.get(a.id) ?? a.label}
-          >
-            <Text style={[styles.chipText, isSameTarget({ kind: 'asset', assetId: a.id }) ? styles.chipTextActive : null]}>
-              {balanceLabels.get(a.id) ?? a.label}
-            </Text>
-          </TouchableOpacity>
+          />
         ))}
         {transferableLiabilities.map((l) => (
-          <TouchableOpacity
+          <Chip
             key={l.id}
-            style={[styles.chip, isSameTarget({ kind: 'liability', liabilityId: l.id }) ? styles.chipActive : null]}
+            label={`Pay down ${l.label}`}
+            selected={isSameTarget({ kind: 'liability', liabilityId: l.id })}
             onPress={() => setToTarget({ kind: 'liability', liabilityId: l.id })}
-            accessibilityRole="button"
-            accessibilityLabel={`Pay down ${l.label}`}
-          >
-            <Text
-              style={[styles.chipText, isSameTarget({ kind: 'liability', liabilityId: l.id }) ? styles.chipTextActive : null]}
-            >
-              Pay down {l.label}
-            </Text>
-          </TouchableOpacity>
+          />
         ))}
       </View>
       {destinationAssets.length === 0 && transferableLiabilities.length === 0 ? (
         <Text style={styles.empty}>Add another balance or a liability first to transfer to it.</Text>
       ) : null}
 
-      <Text style={styles.label}>Amount</Text>
-      <TextInput
-        style={styles.input}
+      {/* `saveError` is the caller's own message — the real transfer
+          eligibility and balance-effect errors. Passing it as `message`
+          means CurrencyField shows exactly that and never substitutes its
+          own wording, so no transfer rule is restated or reinterpreted
+          here. */}
+      <CurrencyField
+        label="Amount"
+        required
+        large
         placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
         value={amount}
         onChangeText={(next) => {
           setAmount(next);
           setSaveError(null);
         }}
+        message={saveError}
       />
-      {saveError ? (
-        <Text style={styles.errorText} accessibilityLiveRegion="polite">
-          {saveError}
-        </Text>
-      ) : null}
 
       {/* BNPL repayments — a visually separate group, never a generic "To"
           destination (correction round, 2026-08-10). Reuses the real,

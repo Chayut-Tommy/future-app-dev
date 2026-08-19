@@ -385,9 +385,12 @@ console.log('\n=== 27. No card or banking credential fields exist (Structural + 
 console.log('\n=== Bonus structural: Add Anything tile, taxonomy, and copy wiring ===');
 {
   assert("tile: AddAnythingKind includes 'everyday'", /\| 'everyday'/.test(SHEET_SRC));
-  assert('tile: the Add Anything Money-area tile exists with the exact required label', /\{ key: 'everyday', label: 'Add everyday account', emoji: '🏧' \}/.test(SHEET_SRC));
-  assert('tile: existing Cash tile is untouched', /\{ key: 'cash', label: 'Add cash', emoji: '💵' \}/.test(SHEET_SRC));
-  assert('tile: existing Savings tile is untouched', /\{ key: 'savings', label: 'Add savings', emoji: '🏦' \}/.test(SHEET_SRC));
+  // The Wave 4 device correction removed the `emoji` field from every
+  // catalogue entry (icons now resolve from the central lib/addIcons.ts
+  // map). The LABELS these assertions exist to protect are unchanged.
+  assert('tile: the Add Anything Money-area tile exists with the exact required label', /\{ key: 'everyday', label: 'Add everyday account' \}/.test(SHEET_SRC));
+  assert('tile: existing Cash tile is untouched', /\{ key: 'cash', label: 'Add cash' \}/.test(SHEET_SRC));
+  assert('tile: existing Savings tile is untouched', /\{ key: 'savings', label: 'Add savings' \}/.test(SHEET_SRC));
   assert("routing: ASSET_PRESET_MAP maps everyday -> 'everyday'", /everyday: 'everyday',/.test(SHEET_SRC));
   assert("form: 'Everyday Account' present in ASSET_TYPES chip list", /\{ value: 'everyday', label: 'Everyday Account' \}/.test(WEALTH_SRC));
   // Correction pass (2026-08-08) — copy tightened to the exact wording

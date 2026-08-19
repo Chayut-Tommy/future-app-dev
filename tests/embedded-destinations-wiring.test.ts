@@ -39,7 +39,8 @@ console.log('=== 1. Bill (AddRecurringItemModal.tsx) — embedded wiring (Class 
   assert('1c. chooseBillType branches embedded (onRequestLoan, synchronous) vs standalone (the original defer/timer dance, byte-unchanged)', /if \(embedded\) \{\s*\n\s*onRequestLoan\?\.\(p\.handoffLoanType\);\s*\n\s*return;\s*\n\s*\}/.test(BILL_SRC));
   assert('1d. handleRequestClose never discards on \'back\', confirms on every other reason', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\), 'Discard this bill\?', 'Your new bill details will be lost\.'\);/.test(BILL_SRC));
   assert('1e. handleSave success path branches embedded (onSaveSuccess) vs standalone (onClose), never a discard prompt on success', /if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/.test(BILL_SRC));
-  assert('1f. both render steps (category, details) return bare content when embedded, before falling through to the unchanged standalone KeyboardSheet wrap', (BILL_SRC.match(/if \(embedded\) return (categoryContent|content);/g) || []).length === 2);
+  assert('1f. the single remaining render step returns bare content when embedded, before falling through to the unchanged standalone KeyboardSheet wrap', (BILL_SRC.match(/if \(embedded\) return content;/g) || []).length === 1);
+  assert('1f-i. no category render branch survives (Design 5.1 Wave 4 — the bill-type choice is in-form)', !/categoryContent/.test(BILL_SRC));
   assert('1g. useImperativeHandle exposes exactly requestSave/requestClose, delegating to the same handleSave/handleRequestClose used elsewhere in the file', /useImperativeHandle\(ref, \(\) => \(\{\s*\n\s*requestSave: handleSave,\s*\n\s*requestClose: handleRequestClose,\s*\n\s*\}\)\);/.test(BILL_SRC));
 }
 
@@ -51,25 +52,62 @@ console.log('\n=== 2. Income source (AddIncomeModal.tsx) — embedded wiring acr
     /onCanSaveChange\?\.\(canSave && formStep === 'details'\);/.test(INCOME_SRC)
   );
   assert('2c. handleSave itself also guards on formStep===\'details\', defensively, not just the reported canSave', /if \(!canSave \|\| !parsedIncome\.valid \|\| formStep !== 'details'\) return;/.test(INCOME_SRC));
+  // SUPERSEDED by Design 5.1 Wave 4: the 'category' step is removed (its
+  // choice is embedded in the form). 'midCycle' is NOT a chooser and is
+  // deliberately preserved, so the invariant that still matters — every
+  // remaining internal step stays inside this ONE embedded route and is
+  // never exposed to the host as a separate route — is asserted below.
   assert(
-    "2d. onTitleChange reports a distinct title per internal step (category/midCycle/details) — all three internal steps stay inside this one embedded route, never exposed to the host as separate routes",
-    /onTitleChange\?\.\(formStep === 'category' \? 'Add income source' : formStep === 'midCycle' \? 'One more thing' : isEditing \? 'Edit income source' : 'Add income source'\);/.test(INCOME_SRC)
+    "2d. onTitleChange reports a distinct title per remaining internal step (midCycle/details), both still inside this one embedded route",
+    /onTitleChange\?\.\(formStep === 'midCycle' \? 'One more thing' : isEditing \? 'Edit income source' : 'Add income source'\);/.test(INCOME_SRC)
+  );
+  assert("2d-i. no 'category' step survives in the CODE (comments explaining its removal are expected)", (() => {
+    const code = INCOME_SRC.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    return !/'category'/.test(code);
+  })());
+  assert(
+    "2d-ii. the income source is now chosen in-form, and the removed page's helper copy is preserved",
+    /<InlineSelect\n\s+label="Where does this income come from\?"/.test(INCOME_SRC) &&
+      /Tell \{brand\.name\} where your income comes from\./.test(INCOME_SRC)
   );
   assert('2e. handleRequestClose never discards on \'back\'', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}/.test(INCOME_SRC));
   assert(
     '2f. all three mid-cycle option handlers (chooseMidCycleNoOccurrence/AlreadyIncluded/AddToBalance) branch embedded (onSaveSuccess) vs standalone (onClose) on their own successful-completion path — not just the ordinary handleSave',
     (INCOME_SRC.match(/if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/g) || []).length === 4
   );
-  assert('2g. all three render steps (category, midCycle, details) return bare content when embedded', (INCOME_SRC.match(/if \(embedded\) return (categoryContent|midCycleContent|content);/g) || []).length === 3);
+  assert('2g. both remaining render steps (midCycle, details) return bare content when embedded', (INCOME_SRC.match(/if \(embedded\) return (midCycleContent|content);/g) || []).length === 2);
+  assert('2g-i. no category render branch survives', !/categoryContent/.test(INCOME_SRC));
 }
 
 console.log('\n=== 3. Expense / Income received (QuickAddModal.tsx) — embedded wiring shared by both routes (Class C) ===');
 {
   assert('3a. forwardRef with QuickAddModalHandle = EmbeddedStepHandle', /export type QuickAddModalHandle = EmbeddedStepHandle;/.test(QUICK_ADD_SRC) && /export const QuickAddModal = forwardRef</.test(QUICK_ADD_SRC));
-  assert('3b. onCanSaveChange is gated to formStep===\'details\'', /onCanSaveChange\?\.\(canSave && formStep === 'details'\);/.test(QUICK_ADD_SRC));
+  // SUPERSEDED by Design 5.1 Wave 4 (owner-authorised single-workspace Add
+  // consolidation): the preliminary "What's this for?" page is removed, so
+  // there is no longer a step to gate on. The GUARANTEE the old assertion
+  // protected — that the host's embedded footer can never offer Save before
+  // a category exists — is unchanged and is now asserted directly against
+  // `canSave`'s own `!!categoryId` term, which was already there and was
+  // NOT weakened to accommodate the removal.
+  assert('3b. onCanSaveChange reports canSave directly (no step gate remains)', /onCanSaveChange\?\.\(canSave\);/.test(QUICK_ADD_SRC) && !/formStep/.test(QUICK_ADD_SRC));
+  assert('3b-i. canSave still requires a chosen category, so Save is unreachable without one', /const canSave =[\s\S]*?!!categoryId &&/.test(QUICK_ADD_SRC));
+  assert('3b-ii. handleSave still refuses without a categoryId', /if \(!canSave \|\| !categoryId\) return;/.test(QUICK_ADD_SRC));
+  assert('3b-iii. the category is chosen in-form, never on a page of its own', /<InlineSelect\s+label="Category"/.test(QUICK_ADD_SRC));
   assert('3c. handleSave success path branches embedded vs standalone', /if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/.test(QUICK_ADD_SRC));
   assert('3d. handleRequestClose never discards on \'back\'', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}/.test(QUICK_ADD_SRC));
-  assert('3e. both render steps (category, details) return bare content when embedded', (QUICK_ADD_SRC.match(/if \(embedded\) return (categoryContent|content);/g) || []).length === 2);
+  // SUPERSEDED for the same reason: with the category page removed there is
+  // one fewer render branch to check. The invariant that MATTERS — an
+  // embedded body returns bare content and never wraps itself in its own
+  // KeyboardSheet — is asserted for every branch that remains.
+  assert('3e. every embedded render branch returns bare content', (() => {
+    const bare = (QUICK_ADD_SRC.match(/if \(embedded\) return \w+;/g) || []).length;
+    // Real JSX openings only — the file also mentions `<KeyboardSheet
+    // isDirty={isDirty}>` inside a doc comment, which is not a render.
+    const sheets = (QUICK_ADD_SRC.match(/<KeyboardSheet\n/g) || []).length;
+    // Two remaining branches: the BNPL-locked view and the normal form.
+    return bare === 2 && sheets === 2;
+  })());
+  assert('3e-i. no category render branch survives', !/categoryContent/.test(QUICK_ADD_SRC));
   assert(
     '3f. the nested "Add cash balance first" AddWealthItemModal is deliberately NEVER given embedded — a genuine standalone secondary overlay (like this form\'s own date/category pickers elsewhere), not a sibling Add Anything destination',
     (() => {

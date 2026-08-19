@@ -1,31 +1,21 @@
-// A friendly emoji per category, keyed by id — purely presentational (PRD
-// ask: "adding money should feel quick and satisfying, not like accounting
-// software"). The underlying Category records and transaction logic are
-// untouched; this only changes how a category looks in the picker.
-const CATEGORY_EMOJI: Record<string, string> = {
-  'cat-salary': '💼',
-  'cat-side-hustle': '💻',
-  'cat-investment-income': '📈',
-  'cat-rental-income': '🏠',
-  'cat-gift': '🎁',
-  'cat-bonus': '🎁',
-  'cat-other-income': '➕',
-  'cat-rent': '🏠',
-  'cat-mortgage': '🏠',
-  'cat-groceries': '🛒',
-  'cat-dining': '🍔',
-  'cat-transport': '🚗',
-  'cat-shopping': '🛍',
-  'cat-travel': '✈️',
-  'cat-subscriptions': '💳',
-  'cat-health': '💪',
-  'cat-entertainment': '🎬',
-  'cat-utilities': '⚡',
-  'cat-insurance': '🛡️',
-  'cat-debt': '💳',
-  'cat-other-expense': '➕',
-};
+/**
+ * Nolie Design 5.1 Wave 4 — categories resolve to a designed Ionicons glyph
+ * and its domain tone, never a platform emoji.
+ *
+ * The file keeps its name and its one-function shape so no call site had to
+ * be rewired, but every mapping lives in the single central map in
+ * `lib/addIcons.ts` alongside the other seven Add-experience maps.
+ */
+import { AddIconSpec, categoryIcon } from './addIcons';
 
+/** The full icon spec — glyph AND tone — for a category. */
+export function categoryIconSpec(categoryId: string): AddIconSpec {
+  return categoryIcon(categoryId);
+}
+
+/** @deprecated Use `categoryIconSpec`. Retained so pre-Wave-4 call sites
+ * outside the Add journey keep compiling untouched; it returns the icon
+ * NAME only, and never an emoji. */
 export function categoryEmoji(categoryId: string): string {
-  return CATEGORY_EMOJI[categoryId] ?? '💰';
+  return categoryIcon(categoryId).name;
 }

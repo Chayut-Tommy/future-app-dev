@@ -3,6 +3,7 @@ import { Animated, Modal, PanResponder, Platform, StyleSheet, Text, TouchableOpa
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { sheetChromeStyles } from './sheetChrome';
 
 export interface SheetOption {
   key: string;
@@ -101,15 +102,20 @@ export function OptionsSheet({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
-        sheet: {
-          backgroundColor: colors.surface,
-          borderTopLeftRadius: radius.card,
-          borderTopRightRadius: radius.card,
-          padding: spacing.lg,
-          paddingBottom: Math.max(insets.bottom, spacing.lg),
-        },
-        grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
+        // Design 5.1 Wave 4 — chrome from the one shared definition. The
+        // dismissal lifecycle above (deferring onSelect to onDismiss, with
+        // the Android fallback) is the documented modal-freeze guard and is
+        // deliberately NOT part of the consolidation.
+        ...sheetChromeStyles({
+          surface: colors.surface,
+          scrim: semantic.scrim,
+          grabber: colors.borderStrong,
+          radiusCard: radius.card,
+          spacingSm: spacing.sm,
+          spacingMd: spacing.md,
+          spacingLg: spacing.lg,
+          insetBottom: insets.bottom,
+        }),
         title: { ...typography.heading, fontSize: 16, color: colors.textPrimary, textAlign: 'center', marginBottom: 2 },
         subtitle: { ...typography.caption, fontSize: 12, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.md },
         row: {

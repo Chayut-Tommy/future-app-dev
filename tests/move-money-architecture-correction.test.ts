@@ -535,8 +535,15 @@ console.log('\n=== 8. Structural — Savings BNPL guidance, no second picker ===
     /Choose (a )?Cash or an Everyday Account( balance)? above to record this repayment\./.test(TRANSFER_FORM_SRC)
   );
   assert(
+    // Design 5.1 Wave 4 migrated the hand-rolled chips to the shared `Chip`
+    // primitive (which supplies accessibilityRole/State itself). The
+    // invariant is unchanged and is asserted directly against the source
+    // list: `sourceAssets` — the only list of things a transfer can come
+    // FROM — is iterated exactly once in the whole file.
     '8c. There is no second/alternate source-selection control anywhere in the BNPL group — the only asset-selection UI in the whole file is the single "From" chip row',
-    (TRANSFER_FORM_SRC.match(/accessibilityRole="button"\s*\n\s*accessibilityLabel=\{`\$\{balanceLabels\.get\(a\.id\)/g) || []).length === 1
+    (TRANSFER_FORM_SRC.match(/sourceAssets\.map\(/g) || []).length === 1 &&
+      /setFromId\(a\.id\)/.test(TRANSFER_FORM_SRC) &&
+      (TRANSFER_FORM_SRC.match(/setFromId\(a\.id\)/g) || []).length === 1
   );
   assert(
     '8d. confirmPlan is gated on fromSupportsRepayment before it is ever invoked — a Savings-sourced tap cannot reach confirmBnplRepayment at all',

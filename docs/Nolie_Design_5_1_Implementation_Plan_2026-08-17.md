@@ -1009,3 +1009,282 @@ Owner decision 6, recorded in full in `docs/Nolie_Design_5_1_Owner_Decisions_202
 **Wave 11 additions.** The Wave 11 device script (§ *Wave 11 — Accessibility and device verification*) gains an explicit Android backlog covering every wave deferred under this decision: the hardware-Back matrix at Add-workspace root / open tray / mid-`closingForAction`, catalogue-origin Back across all 14 Add tasks, TalkBack on the canonical catalogue rows and the `+` expanded state, and Android transition-stress/freeze verification. Wave 11 cannot be signed off while any of these remain unperformed.
 
 **Unchanged.** No wave scope, ordering, dependency, acceptance criterion or financial-protection rule is altered by this decision.
+
+---
+
+# Change control — Wave 4 embedded purpose/category selection (18 August 2026)
+
+Owner-authorised extension of the Wave 4 scope. Recorded before implementation.
+
+## Decision
+
+The **single-workspace Add consolidation** is authorised. Separate preliminary chooser pages are removed and the choice they made is **embedded into the form that needs it**.
+
+Removed as standalone pages:
+
+| Form | Removed page | Replacement |
+|---|---|---|
+| `QuickAddModal` | `formStep === 'category'` — *"What's this for?"* | Expense/Income `Segmented` + category `PickerTrigger`, in-form |
+| `AddRecurringItemModal` | `formStep === 'category'` — *"What's this bill for?"* | Category `PickerTrigger`, in-form |
+| `AddIncomeModal` | `formStep === 'category'` — income-source kind | Kind `PickerTrigger`, in-form |
+| `AddWealthItemModal` | `formStep === 'category'` — asset type | Asset-type `PickerTrigger`, in-form |
+
+The customer lands directly on the form. No task begins on a page that asks a single question.
+
+## Explicitly preserved
+
+- **`More → Add to Nolie` remains the intentional catalogue.** It is a deliberate destination for choosing *which task to start*, not a preliminary question inside a task. It is unchanged.
+- **Genuine nested linked-object steps and their breadcrumbs are preserved** — bill → linked loan → linked card, and the equivalent asset/liability handoffs. These create a *different object*; they are not a chooser page.
+- `AddIncomeModal`'s `'midCycle'` step is **not** a chooser and is preserved.
+- Every validator, calculation, persistence write, financial effect, balance effect, recurrence rule and repayment schedule is **reused verbatim**. No engine file is touched.
+- The origin contract, parked drafts and the five-phase Add machine are unchanged. `floatingAddTransition.ts` and its test remain byte-identical.
+
+## Contract established
+
+**Body-vs-container.** A form *body* owns fields, validation display and its own `isDirty`. It never owns the sheet chrome, the title, the footer, the Back affordance or the keyboard avoidance — those belong to the container (`KeyboardSheet` standalone, or the Add workspace when `embedded`). Bodies keep their existing `embedded` prop and continue returning bare content in that mode.
+
+**Reserved error line.** Every field reserves its error row's height whether or not an error is showing, so a validation message never shifts layout.
+
+**No bare `TouchableOpacity` in a new primitive.** Every interactive primitive declares an explicit `accessibilityRole`, an `accessibilityState` where one applies, and meets the 44 pt minimum target.
+
+## Non-goals reaffirmed
+
+No screen recomposition. No navigator change. No dependency change. No new persistence field. Wave 5 is not started.
+
+---
+
+# Change control — Wave 4 iOS device corrections (18 August 2026)
+
+Five corrections from the owner's iOS recording, implemented in place on the uncommitted Wave 4 worktree. No wave scope, dependency, financial engine or persistence schema changed.
+
+## 1. Blank direct transaction workspaces (release-blocking)
+
+**Symptom.** `+ → Record spending` and `+ → Income received` opened an "Add transaction" shell with no form body. `Add bill` was fine, and the same expense form reached via `More → Add to Nolie` was fine.
+
+**Root cause — two independent faults, both introduced by removing the preliminary page.**
+
+1. `QuickAddModal` is the only one of the seven forms that carries `autoFocus`. Before Wave 4 that field sat on the *details* step, which a direct quick entry could not reach without a tap, so it only ever fired on an already-presented, already-settled sheet. Removing the "What's this for?" page made it fire **during** the native Modal presentation and the workspace push transition: the keyboard rose before layout settled, `KeyboardAvoidingView` padded a not-yet-measured backdrop, and the absolutely-positioned destination layer collapsed. It is origin-specific for exactly that reason — from the catalogue the sheet is already presented before the field mounts. Bill, Goal, Transfer and Asset were unaffected because none of them autofocuses anything.
+2. `type` was initialised to `'expense'` and corrected to `initialType` by the reset effect, so an `income_received` entry rendered once as an expense form before flipping.
+
+**Correction.** `autoFocus={!embedded}` — a form body never steals focus while its container is presenting; the workspace already moves accessibility focus to the destination heading once its push settles. The opening mode is now derived synchronously via a lazy `useState` initialiser from `editTransaction?.type ?? initialType`. No timeout, no remount, no deferred repair. The five-phase machine and `addWorkspaceTransitionController.ts` are untouched.
+
+## 2. Explicit `Paid from` and `Received into`
+
+New presentation-only primitive `src/components/shared/fields/AccountSelectionField.tsx`: full-width 52 pt rows with icon, name, type, balance and a trailing tick; expanded when nothing is chosen, collapsing to the chosen row plus `Change`. It owns no eligibility, no balances and no persistence, and opens no modal.
+
+- **Expense.** The two-level chip model (kind, then which card/account) is flattened into one decision built entirely from lists the form already derived: Cash, each everyday account, each credit card, each non-credit liability, and "Something else". **An explicit choice is now required** — `paymentSource` still defaults to `'cash'` so every downstream derivation is unchanged, but Save is blocked until the customer has actually decided.
+- **Income.** Recorded income previously offered no destination and fell through to the engine's default Cash lookup. It now selects the **existing** `Transaction.targetAssetId` field, which `computeBalanceEffect` already honours for income, using the **shared** `resolveEligibleIncomeDestinations` helper. **No schema change and no new engine path.** A destination is required whenever the income is meant to move a balance; `Record only` remains a complete answer.
+
+`Add income source` is deliberately **not** given a planned-deposit destination: `RecurringItem` has no such field, and adding one would be a persistence-schema change. Its existing mid-cycle occurrence already uses the shared `IncomeDestinationPicker`, unchanged.
+
+## 3. Intentional sheet dismissal
+
+**Root cause.** `KeyboardSheet` spread its `PanResponder` across the **entire sheet**, making every form a dismissal target and putting that responder in direct competition with each form's own `ScrollView` for the same touches. Its claim threshold was 6 pt of downward movement, and release dismissed at 120 pt or 0.6 velocity — reachable by an ordinary scroll.
+
+**Correction.** New pure module `src/components/shared/sheetDismissal.ts`. The pan handlers now attach **only** to a padded drag handle. Dismissal requires: the gesture began on the handle, content offset is zero, the direction is downward and mostly vertical, and either ≥ 96 pt of travel or ≥ 48 pt with velocity ≥ 1.2. Exactly one dismissal request per gesture sequence. Cancel, Close, backdrop, accessibility escape and the dirty-discard guard are untouched. Native gesture arbitration cannot be unit-tested, so physical iOS verification remains required.
+
+## 4. Add goal hierarchy
+
+Recomposed into three labelled sections — *What are you working towards?*, *Goal details*, *Timing and priority* — plus a confirmation summary card. Goal purposes become 52 pt two-column cards (one column when compact or at a large font scale) that are radios reporting `checked`, with selection shown by border, fill and tick rather than colour alone. Priority becomes one labelled `Segmented` control with its three stored values unchanged. Blank-amount helper copy is now the factual "You can add or change the target later." — no recommendation. `requiredMonthlyForGoal`, goal allocation and milestone logic are untouched.
+
+## 5. Validator corrections (owner-authorised)
+
+Two new required terms in `QuickAddModal`'s `canSave`: an expense must have an explicitly chosen funding source, and an income intended to move a balance must have a destination. Both are additions; no existing term was relaxed.
+
+---
+
+# Change control — Wave 4 iOS device corrections, pass 2 (18 August 2026)
+
+The owner's second iOS recording confirmed pass 1 landed: direct Record spending and Income received render correctly, `Paid from` uses visible account rows, `Received into` offers Everyday and Savings, ordinary scrolling no longer dismisses the sheet, and the Goal hierarchy reads clearly. This pass corrects the three remaining presentation and interaction issues. **No financial, recurrence or date calculation changed.**
+
+## A. One icon language
+
+Platform emoji were being used as functional UI icons across the Add journey. Emoji are multicoloured, drawn by the operating system rather than by Nolie, and differ between OS versions and platforms — so the same screen read differently on two devices and never read as one designed system.
+
+New central map `src/lib/addIcons.ts` (pure, RN-free) covers all eight required sets: six quick actions, fourteen catalogue tasks, transaction categories, bill types, income sources, asset and debt types, account/source types, and goal purposes. New single renderer `src/components/shared/AddIcon.tsx` owns size, tint container and — critically — accessibility: **every icon is decorative and hidden from the tree, and the parent row or card keeps the complete label**.
+
+Rules: Ionicons `-outline` family only (no new dependency); 20 pt bare glyph, 22 pt inside a 36 pt low-contrast semantic tint tile; semantic colours only, no raw values; selection shown by border, fill and tick as well as colour. `src/lib/categoryEmoji.ts` now returns icon names — its old function name is retained as a deprecated alias so no unrelated screen was touched.
+
+A structural gate (`tests/design5-add-iconography.test.ts`) checks **every mapped name against Ionicons' own shipped glyph map** and proves no emoji survives in any Add or Goal surface or configuration. Decorative emoji outside Wave 4 remain in 27 files and are **recorded for the Wave 10 polish inventory**, not swept up here.
+
+## B. Two different date concepts, two different controls
+
+The forms conflated a **recurring anchor** ("the 25th of each month" — a number) with a **real calendar date** (a next due date, a target date, the date a transaction happened). Both were raw numeric boxes that raised a keyboard and could sit below it.
+
+- `DayOfMonthField` — full-width trigger showing the anchor in words, expanding to an inline 1–31 ordinal list. Used by the bill monthly anchor and the loan repayment anchor. A month calendar is deliberately **not** used to pick a repeating number.
+- `DateTriggerField` — full-width 52 pt row with the factual value (`Today` / `Yesterday` / weekday, plus the exact date, or `Not set`), expanding to an in-workspace panel with a heading, quick choices and Done/Cancel.
+
+**The keyboard rule is event-driven and contains no timeout anywhere**: on activation, a visible keyboard is dismissed and the reveal is deferred until the platform reports `keyboardDidHide`; the panel then measures its own position with a real layout event and scrolls itself into view; accessibility focus moves to the panel heading and returns to the trigger on Done or Cancel. With no keyboard up, the panel reveals in the same commit. Neither field opens a second native modal.
+
+Opening and cancelling can never change a date — the panel records the value it opened with and Cancel restores it; only Done calls `onChange`, once. Recurrence, anchor, local-date and timezone semantics are untouched: the forms keep the same state and `handleSave` still builds `new Date(year, month - 1, day)`.
+
+## C. One `Balance update` section
+
+Replaces a `Tracked balance` heading (internal wording), two unlabelled radio lines, five conditional hint paragraphs, and — in the missing state — a second card duplicating the same offer with its own `Add cash balance` button.
+
+New `BalanceUpdateField` renders exactly one of two states: two 52 pt rows naming the real account (`Update Everyday balance` / *Subtract this amount when the transaction is saved.* for an expense, *Add this amount when the income is saved.* for income, alongside `Record only`), or **one** informational card with at most one Add action. No internal wording is exposed. The false "No cards added yet" defect class is preserved: a card that exists but is unselected still says *No card selected*, never that the customer has none.
+
+## D. One transaction date section
+
+`When did this happen?` replaces a four-chip shortcut rail plus three permanently-visible DD/MM/YYYY boxes. One row shows `Today` with the exact date beneath and a Change action; the shortcuts (Today, Yesterday, 2 days ago, Last week) moved **inside** the picker and produce the **same local dates** as the chips they replace.
+
+## Preserved
+
+Everything corrected in pass 1, plus the origin contract, parked drafts, nested handoffs, handle-only dismissal and the five-phase machine. `floatingAddTransition.ts` and `addWorkspaceTransitionController.ts` remain byte-identical.
+
+---
+
+# Change control — Wave 4 closure pass (19 August 2026)
+
+The owner approved the overall direction from the second iOS recording. Two issues remained; both are corrected here. **No financial, recurrence, persistence or phase-machine behaviour changed.**
+
+## A. One canonical date-selection surface
+
+**Defect.** Bill date selection was inconsistent with recurring income. For a weekly/fortnightly bill, `Next due date` rendered an inline `<DateTimePicker>` beneath the form while the numeric keyboard could still be up, so on a long form the calendar landed below the fold and had to be found by scrolling. Recurring income already opened a focused surface with the keyboard gone — the approved experience.
+
+**Architecture.** New `FocusedPickerHost` (mounted once by `KeyboardSheet`) and `FocusedPickerTrigger`. The picker renders as an absolutely-positioned overlay **inside the sheet that is already presented** — not a second native `<Modal>`, not a navigation stack, and explicitly **not** `scrollTo` on the underlying form. Because it fills the sheet, the picker, its heading and its Done/Cancel row are visible **by construction** from any trigger at any scroll position on any device size. The picker scrolls internally; the form behind it never does. While it is open the sheet suspends its own drag-to-dismiss.
+
+**Inventory — nine triggers, three value types, one contract:**
+
+| Form | Trigger | Component |
+|---|---|---|
+| Transaction | occurrence date | `DateTriggerField` |
+| Income | next expected payment | `DateTriggerField` (`direction="future"`) |
+| Income | expected date (irregular) | `DateTriggerField` |
+| Bill | next due date (weekly/fortnightly) | `DateTriggerField` |
+| Bill | day of month due (monthly) | `DayOfMonthField` |
+| Loan/debt | next repayment date | `DateTriggerField` |
+| Loan/debt | day of month due | `DayOfMonthField` |
+| Credit card | due day of month | `DayOfMonthField` |
+| Goal | target month and year | `MonthYearField` (new) |
+
+The three field types differ **only** in their content — real dates, ordinals 1–31, or month + year. None owns keyboard sequencing, focus handling or Done/Cancel any more.
+
+**Behaviour.** Activation dismisses a visible keyboard and defers the reveal to the real `keyboardDidHide`; with no keyboard up it reveals in the same commit. No `setTimeout` anywhere. Opening never changes a value; Cancel resets the draft; Done commits exactly once. Focus moves to the picker heading and returns to the trigger. Done/Cancel close only the picker.
+
+**Removed.** The bill form's inline `<DateTimePicker>` branch and its `pickerOpen` state; the per-form native `DatePickerModal` usages in income and wealth, and the now-redundant `gesturesEnabled={!pickerOpen}` flags. `src/components/shared/DatePickerModal.tsx` is **retained but now has no consumers** — it is a shared component, not bill-only presentation code, so removing it is left to a later pass.
+
+**Preserved.** `minimumDate` semantics (the forward list starts at today), local-date handling, ordinals, short-month clamping, recurrence anchors and every save result.
+
+## B. Restrained icon tones
+
+**Defect.** The Ionicons system was structurally correct but uniformly grey/pale — nothing scannable.
+
+Six calm, low-saturation families, assigned by **domain** and stable everywhere the same concept appears: **ocean** (everyday money and transactions), **teal** (transfers and accounts), **mint** (income and savings), **amber** (bills and recurring commitments), **violet** (wealth, investments, property, retirement, goals), **coral** (debt and credit).
+
+Every mapped item in `lib/addIcons.ts` now resolves a spec — glyph **and** tone — so a call site cannot take one without the other. New `ADD_ICON_TONES` in `theme/semanticTokens.ts` holds the only raw values, scheme-scoped so all six themes resolve every family; components contain none. One flat hue per tile, softly tinted background, stronger same-family glyph, no gradients, no multicolour glyphs, no randomness. Existing tile dimensions (20/22/36 pt) are unchanged.
+
+**Safety rules, asserted:** `coral` is **not** the destructive/error red — debt is a normal part of a money picture, not an error. `mint` is **not** the success green — income is not an achievement. Selection continues to be carried by border, fill and tick; tone never carries it. Icons remain decorative and absent from the accessibility tree.
+
+## C. Test isolation fix (disclosed)
+
+`tests/pass-2d-narrow-correction.test.ts` began failing on a clock change alone: two fixture dates were hard-coded while `computeCategoryDeltas` compares rolling 30-day windows from `Date.now()`, and on 19 August 2026 the 60-day boundary landed exactly on the fixture's prior-period date. `src/lib/calculations` is byte-identical to the Wave 3 checkpoint. The dates are now derived from today; **the asserted amounts (140 current, 100 prior) are unchanged**.
+
+---
+
+# Change control — Wave 4 final closure pass (19 August 2026)
+
+Five P2 findings from the final iOS recording. No P0/P1 and no financial miscalculation remained. **No financial, recurrence, allocation, milestone or persistence-schema change.**
+
+## 1. Existing goals used the legacy editor
+
+**Root cause.** `GoalDetailSheet` was never modernised. It kept raw `MM`/`YYYY` boxes, an isolated `Set` button for the target amount, emoji priority chips and a Close-only footer, because every metadata field autosaved the instant it changed — so there was nothing for a Save button to commit.
+
+**Correction.** New shared `GoalFormFields` renders purpose cards, name, target amount, `MonthYearField` and the segmented priority. `AddGoalModal` is now the **create adapter** and `GoalDetailSheet` the **edit adapter**; both render the same fields, so the two designs cannot drift again. All four entry points (Today, Grow/Discover, Goals list, Today's contribute route) already mounted `GoalDetailSheet`, so modernising it modernised every route.
+
+**Persistence, before and after.** Before: `name`, `priority` and a complete date each wrote immediately; the target amount wrote on `Set`. After: every metadata field is a local draft, seeded from the saved goal on open, and committed by **one** `updateGoal` call from `Save changes`, guarded exactly-once, recomputing `estimatedMonthlyContribution` with the same shared engine. Cancel now has something to protect, so the existing discard guard was widened to cover any uncommitted metadata. `Record progress` remains a separate write touching only `currentAmount`; Delete keeps its confirmation and exact-once guard.
+
+`Goal.lifeGoalType` was already persisted, so purpose is editable with **no migration**.
+
+## 2. Serial keyboard-to-picker handoff
+
+**Root cause.** `FocusedPickerTrigger` mounted the picker only on `keyboardDidHide`, so the keyboard left, the form reflowed and settled for a frame, and only then did the picker appear.
+
+**Correction.** Activation is now a three-phase machine. On the tap the shell mounts **synchronously** — gestures suspend and the form leaves the accessibility tree — and only then is the keyboard dismissed. The reveal is completed by `keyboardWillHide` (carrying the keyboard's own duration, handed to the surface so the entrance runs *with* it), with `keyboardDidHide` as the Android fallback; `shouldConsumeKeyboardEvent` makes the second event a no-op so nothing mounts, focuses or commits twice. A second tap during the handoff closes rather than stacking. The entrance uses the Design 5.1 standard curve and collapses to an immediate state change under Reduced Motion. **Still zero `setTimeout` and no second native Modal.** Corrected once in the shared host — all nine picker entry points inherit it.
+
+The phase is written to a ref **synchronously**, not during render, because a keyboard event can arrive before React commits.
+
+## 3. Stale generated goal name
+
+**Root cause.** `selectType` filled the name only when it was empty (`if (!name.trim()) setName(label)`), so a second purpose choice left the first purpose's name behind.
+
+**Correction.** Shared `resolveGoalNameOnPurposeChange`: an empty name takes the new default; a name still equal to the **previous** purpose's default is itself a default and is replaced; anything else is the customer's and is never overwritten. Stateless and deterministic — no "was this generated?" flag is invented or persisted. A saved goal's name is treated as customer-owned unless it matches its own saved purpose's default.
+
+## 4. `0%` on a goal with no target
+
+**Root cause.** `goal.targetAmount ? current / target : 0` handed that `0` straight to the progress ring.
+
+**Correction.** `resolveGoalProgressState` returns `no-target` when there is no usable denominator. The ring is not rendered at all; a neutral "No target set — $X recorded so far" replaces it, recorded progress is preserved, the target field is the path to adding one, and VoiceOver hears "No target set", never "zero percent".
+
+## 5. Pace warning without a target date
+
+**Root cause.** `requiredMonthlyForGoal` divides by `monthsUntil(targetDate)`, which falls back to a **three-year planning horizon** when no date is set. The sheet showed the caution whenever the allocation engine reported the goal not fully funded against that invented horizon — a warning about a deadline the customer never gave.
+
+**Correction.** `resolveGoalPaceMessage` gates the caution on a real, stated target date. It recreates no formula: the engine's own `requiredMonthly` and `isFullyFunded` are passed in and simply not consulted when their inputs were never supplied. Without a date it shows the neutral "Add a target date to see a pace estimate." Supported behind-pace and on-track results are unchanged.
+
+---
+
+# Change control — Wave 4 goal-integrity and goal-UX pass (19 August 2026)
+
+Five P2 findings from the final iOS recording. **No financial formula changed.** One item is reported as an isolated blocker.
+
+## P1 — the −$6,802 Available Until Payday substitution
+
+**Root cause, in presentation wiring only.** `resolveSafeToSpendHeroState` returns `goals_underfunded` whenever any active goal is not fully funded from the MONTHLY surplus. That state then did two wrong things: it passed `resolveAmount(null)`, suppressing the canonical Available Until Payday figure entirely, and its sentence quoted `goalAllocation.availableForGoals` — which is `monthlyIncome − fixedCosts`, a monthly planning figure — so an AUP card read "only $-6,802 is currently available" while its own breakdown sheet showed the correct $12,050.
+
+The engine was never wrong: an unallocated goal reserves nothing, so `cycleRemainingPool` was $12,050 throughout.
+
+**Correction.** `goals_underfunded` now presents the SAME canonical `cycleRemainingPool` the `normal` state presents, and the goal statement is demoted to supporting copy naming only the monthly requirement. The hero's separate amount-less `goals_underfunded` card is removed; it falls through to the ordinary card, so there is exactly one amount source and the card and breakdown cannot disagree. A genuinely negative cycle keeps its existing `commitments_exceed_cash` / `recorded_overspend` presentation, so no `$-X` wording is reachable.
+
+## Shared, live goal pace summary
+
+`resolveGoalPaceSummary` in `lib/goalFormState.ts` is now the single rule both goal adapters render, derived from the **draft** rather than the saved goal — which is why picking January 2027 previously changed nothing until Save. It calls the shared `requiredMonthlyForGoal` engine (three-year fallback, remaining-amount subtraction and month arithmetic all stay inside it) and adds only wording. A target with no date shows the same labelled planning guide in create and edit; a caution now supplements the numeric estimate instead of replacing it.
+
+## Completed-goal experience
+
+One completed state, identical immediately after completion and when reopened. The keyboard is dismissed before the state is announced, focus moves to a single heading, and completion is announced exactly once per goal. Restrained success green replaces the previous gold. Action hierarchy: **Done** → **Create another goal** → tertiary **Extend goal** → quiet tertiary **Archive**, with copy explaining what Archive does (its distinct `archived` status and recovery path are preserved). A completed goal is **read-only**: editable fields and the progress editor are hidden, so progress cannot be pushed past 100% from this view.
+
+## Today with multiple active goals
+
+`View all goals (N)` appears only above one active goal, counts `status === 'active'` only, navigates to the **existing** Goals screen, meets the 44 pt minimum and carries the count in its accessible label. The focus-goal selection is untouched and Today still renders exactly one.
+
+## Progress copy
+
+Corrected to "This records goal progress; it does not move money between accounts." — verified against `applyContribution`, which writes only `currentAmount`.
+
+## Isolated blocker — optional goal contribution to AUP (§8)
+
+Not implemented. Goal allocation today is **automatic**: `computeGoalAllocation(data, availableForGoals)` distributes whatever monthly surplus exists across active goals, and `cycleGoalsReserved = goalContributionsMonthly × cycleFraction` reduces the cycle pool. There is no per-goal opt-in field, and `Goal.estimatedMonthlyContribution` is documented as a calculated cache, not a customer choice.
+
+Making contribution opt-in with a default of **off** therefore requires a new persisted per-goal field **and** changes the AUP figure for every existing customer who currently has surplus — a materially different financial rule and an owner decision with materially different outcomes. Reported rather than implemented, per the isolated-blocker rule.
+
+---
+
+# Change control — Wave 4 goal-progress interaction and motion (19 August 2026)
+
+Final Wave 4 closure item. **No financial calculation, persistence contract or model field changed.**
+
+## Root cause
+
+`GoalDetailSheet` rendered the progress ring at the top but placed the progress EDITOR last — below purpose, name, target amount, target date and priority. Recording progress therefore meant scrolling past every metadata field to reach a bare currency input paired with a small, generically-labelled `Add` button. The one genuinely rewarding action in the sheet was the hardest to find, and its result appeared instantly with no feedback.
+
+## Correction
+
+The top of an active goal now reads: ring → `$current of $target` → remaining → full-width **`Update progress`** → inline editor (when open) → then metadata. The old lower editor is deleted; exactly one progress-editing surface exists.
+
+The editor opens in place with a heading `Record progress`, a labelled `Amount to record` currency field, the current and remaining amounts, a `Record remaining $X` shortcut when a positive remainder exists, a primary action naming the exact amount (`Record $250`), `Cancel`, and the verified helper copy. The primary action is gated by the SAME strict parser the write uses, so it can never promise an amount the write would reject.
+
+After a successful exact-once write: the keyboard is dismissed, the editor collapses, the summary stays visible, and a confirmation states the update is **already recorded** — so `Save changes` can never read as still pending. Metadata and progress remain separate persistence operations.
+
+## Motion
+
+Feedback only; nothing waits on it (`MOTION_HARD_RULES` rule 5).
+
+- **Ring** — travels from the previous percentage to the new one, using Design 5.1 tokens (`progressFill + figureCrossfade` ordinarily, `celebration + progressFill` on a completion crossing). It animates **only for a genuine delta**: the Animated value starts at its first value, so scrolling, theme changes, unrelated metadata edits, parent re-renders and reopening an unchanged or completed goal move nothing. The displayed percentage is state, correct from the first frame, and the interpolating ring is hidden from the accessibility tree.
+- **Editor** — a restrained fade plus 6 pt lift from the shared travel token over `sheetInfoIn`. No bounce, no scale, no height animation; the editor occupies its final layout immediately.
+- **Confirmation** — the same restrained fade, announced once via a polite live region.
+- **Reduced Motion** — every entrance resolves to an immediate `setValue`; the write, focus movement, announcement and actions are unchanged.
+
+## Deferral, restated
+
+The **per-goal opt-in to include a contribution in Available Until Payday remains deferred**. The current automatic goal-allocation rule is unchanged in Wave 4. It requires a new persisted per-goal field and changes the AUP figure for existing customers with surplus — a financial-rule decision for Wave 5 or a dedicated Money-planning pass. It is not complete and must not be recorded as such.

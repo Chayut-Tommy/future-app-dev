@@ -404,27 +404,18 @@ export function SafeToSpendHero({
     );
   }
 
-  // Goals exist and need more than what's actually available — explain
-  // rather than pretend they're on track (PRD ask).
-  if (heroState === 'goals_underfunded') {
-    return (
-      <>
-        <View style={[styles.card, styles.cardWarning]}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-            <View style={styles.labelRowActions}>
-              {renderManageBalancesButton(true)}
-              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-        </View>
-        {breakdown}
-      </>
-    );
-  }
+  // Wave 4 closure, P1 — this state no longer has its own amount-less card.
+  //
+  // It used to render a warning card with NO Available Until Payday figure
+  // at all, and a sentence quoting the monthly cash-flow position, so the
+  // card said "only $-6,802 is currently available" while its own breakdown
+  // sheet showed the real $12,050. An active, unallocated goal is not an
+  // Available-Until-Payday condition: it never reduced the cycle pool.
+  //
+  // It now falls through to the ordinary card below, which renders the
+  // canonical amount — the same value the breakdown shows — and appends the
+  // goal statement as supporting copy. There is exactly one amount source
+  // for this surface, so the card and the breakdown cannot disagree.
 
   return (
     <>
@@ -440,6 +431,8 @@ export function SafeToSpendHero({
         </View>
         <Text style={styles.line}>{presentation.primaryCopy}</Text>
         {presentation.amountVisible ? <Text style={styles.value}>{presentation.displayAmount}</Text> : null}
+        {/* Advisory only — never a replacement for the amount above. */}
+        {presentation.supportingCopy ? <Text style={styles.explainer}>{presentation.supportingCopy}</Text> : null}
         {safeToSpend.daysRemaining > 0 ? (
           <Text style={styles.line}>
             ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day

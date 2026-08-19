@@ -87,7 +87,18 @@ console.log('\n=== 2. No other production caller ever passes embedded to AddWeal
 
 console.log('\n=== 3. AddWealthItemModal.tsx: embedded mode cannot bypass the category-step or liability-selector-step branches\' own gating (Class C) ===');
 {
-  assert('3a. the category-step branch still gates on kind/formStep unchanged', /if \(kind === 'asset' && formStep === 'category'\)/.test(ADD_WEALTH_SRC));
+  // SUPERSEDED by Design 5.1 Wave 4 (owner-authorised): the asset category
+  // STEP is removed and its choice is embedded in the form. The concern this
+  // section names — "embedded mode cannot bypass a step's own gating" — is
+  // asserted for the step that remains (3b), plus the two guarantees the
+  // removed step used to provide: the restricted list is still restricted,
+  // and the type choice still runs the same seed/reset handler.
+  assert('3a. no category step survives to be bypassed', !/formStep/.test(ADD_WEALTH_SRC));
+  assert(
+    '3a-i. the asset-type choice is in-form and still routes through chooseAssetCategory, so the include-in-money seed and the provider reset both still run',
+    /onChange=\{chooseAssetCategory\}/.test(ADD_WEALTH_SRC) &&
+      /function chooseAssetCategory\(type: AssetType\) \{[\s\S]*?setIncludeInMoney\([\s\S]*?setProvider\(''\);/.test(ADD_WEALTH_SRC)
+  );
   assert('3b. the liability-selector-step branch still gates on kind/showLiabilitySelector unchanged', /if \(kind === 'liability' && showLiabilitySelector\)/.test(ADD_WEALTH_SRC));
 }
 
@@ -163,16 +174,23 @@ console.log('\n=== 8. Premium-transition correction — the height-measurement p
   );
   assert(
     // The intent here is that no GUESSED sheet/workspace height is
-    // reintroduced (the pilot removed those). Wave 3's canonical catalogue
-    // adds two DOCUMENTED Design 5.1 dimensions — the 52pt task row (doc A
-    // p.5) and the 28pt leading icon tile (doc B p.3) — which are specified
-    // values, not guesses. They are allow-listed explicitly rather than by
-    // relaxing the pattern, so any genuinely new literal height still fails.
-    '8d. no new guessed/fixed pixel height constant was introduced anywhere in AddAnythingSheet.tsx — only the pre-existing 44px iconBadge and the documented Design 5.1 catalogue row/icon dimensions',
+    // reintroduced (the pilot removed those). This is now STRICTER than it
+    // was: the Wave 4 device correction moved every icon dimension out of
+    // this file into the one shared `AddIcon` renderer, so the former 44pt
+    // iconBadge and 28pt row-icon literals are gone entirely. The only
+    // literal left is the DOCUMENTED 52pt catalogue task row (doc A p.5).
+    '8d. no guessed/fixed pixel height constant exists anywhere in AddAnythingSheet.tsx — only the documented Design 5.1 52pt catalogue row',
     (() => {
-      const allowed: string[] = ['height: 44', 'minHeight: 52', 'height: 28'];
+      const allowed: string[] = ['minHeight: 52'];
       const matches: string[] = ADD_ANYTHING_SRC.match(/\b(min)?[Hh]eight:\s*\d+/g) ?? [];
-      return matches.every((m) => allowed.includes(m)) && matches.includes('height: 44');
+      return matches.every((m) => allowed.includes(m)) && matches.includes('minHeight: 52');
+    })()
+  );
+  assert(
+    '8d-i. and the icon dimensions it used to hard-code now come from AddIcon\'s own named constants',
+    (() => {
+      const icon = require('fs').readFileSync(require('path').resolve(__dirname, '../src/components/shared/AddIcon.tsx'), 'utf8');
+      return /export const ADD_ICON_SIZE = 20;/.test(icon) && /export const ADD_ICON_TILE_SIZE = 36;/.test(icon);
     })()
   );
   assert(

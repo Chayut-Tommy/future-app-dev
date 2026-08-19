@@ -144,12 +144,16 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Add bill' }));
 
-    // AddRecurringItemModal's own embedded first step ("category") reports
-    // this as its live title via onTitleChange, and its own heading
-    // (accessibilityRole="header") repeats it — the real, canonical Bill
-    // flow, not a duplicate form. Disambiguated from the outer KeyboardSheet
-    // chrome's own separate Text carrying the identical string.
-    await screen.findByRole('header', { name: "What's this bill for?" });
+    // Design 5.1 Wave 4 — the Bill task no longer opens on a preliminary
+    // "What's this bill for?" page; it opens directly on the form, which
+    // reports 'Add a bill' as its live title via onTitleChange and repeats
+    // it as its own heading (accessibilityRole="header"). Still the real,
+    // canonical Bill flow, not a duplicate form — and the choice that page
+    // used to make is now the in-form selector asserted below.
+    await screen.findByRole('header', { name: 'Add a bill' });
+    // The bill-type choice really is present in the form, not merely
+    // removed: the selector renders with its own label.
+    expect(await screen.findByLabelText("What's this bill for?, Choose a bill type")).toBeOnTheScreen();
     // The tray itself is gone (its own menu items no longer queryable) once a destination opens.
     expect(screen.queryByRole('menuitem', { name: 'Add bill' })).toBeNull();
     await waitFor(async () => {
@@ -244,12 +248,15 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Income received' }));
 
-    // QuickAddModal's own category-step heading — shared verbatim with
-    // Record spending below (same embedded component, same first step) by
-    // design; the exact income_received-vs-expense kind routing is proven
-    // at the pure-function level (tests/floating-navigation.test.ts,
-    // resolveQuickAction) since both share this identical first-step UI.
-    await screen.findByRole('header', { name: "What's this for?" });
+    // Design 5.1 Wave 4 — QuickAddModal opens directly on its form, whose
+    // title is shared verbatim with Record spending below (same embedded
+    // component) by design; the exact income_received-vs-expense kind
+    // routing is proven at the pure-function level
+    // (tests/floating-navigation.test.ts, resolveQuickAction) since both
+    // share this identical UI.
+    await screen.findByRole('header', { name: 'Add transaction' });
+    // The category choice the removed page used to make is in the form.
+    expect(await screen.findByLabelText('Category, Select a category')).toBeOnTheScreen();
     await expectTabsStillResponsive(user);
   });
 
@@ -260,7 +267,7 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Record spending' }));
 
-    await screen.findByRole('header', { name: "What's this for?" });
+    await screen.findByRole('header', { name: 'Add transaction' });
     await expectTabsStillResponsive(user);
   });
 
@@ -270,7 +277,7 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
 
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Add bill' }));
-    await screen.findByRole('header', { name: "What's this bill for?" });
+    await screen.findByRole('header', { name: 'Add a bill' });
     await expectTabsStillResponsive(user);
   });
 
@@ -316,14 +323,14 @@ describe('Floating navigation — dock capsule + FAB + quick-actions tray (rende
 
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Add bill' }));
-    await screen.findByRole('header', { name: "What's this bill for?" });
+    await screen.findByRole('header', { name: 'Add a bill' });
     await user.press(await screen.findByRole('button', { name: 'Cancel' }));
     await waitFor(async () => expect(await screen.findByRole('button', { name: 'Open quick actions' })).toBeTruthy());
 
     await user.press(await screen.findByRole('button', { name: 'Open quick actions' }));
     await user.press(await screen.findByRole('menuitem', { name: 'Add goal' }));
     await screen.findByRole('header', { name: 'Add a goal' });
-    expect(screen.queryByRole('header', { name: "What's this bill for?" })).toBeNull();
+    expect(screen.queryByRole('header', { name: 'Add a bill' })).toBeNull();
   });
 
   test('14. closing the tray without selecting anything (backdrop tap) leaves no invisible overlay — the tab underneath is immediately tappable', async () => {

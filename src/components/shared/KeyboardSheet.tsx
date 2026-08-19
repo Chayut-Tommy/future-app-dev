@@ -9,9 +9,9 @@ import {
   MIN_VISIBLE_HEIGHT_WHEN_KEYBOARD_OPEN,
 } from '../navigation/addWorkspaceGeometry';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { shouldClaimSheetGesture, shouldDismissSheet } from './sheetDismissal';
+import { FocusedPickerProvider } from './fields/FocusedPickerHost';
 
-const DISMISS_DISTANCE = 120;
-const DISMISS_VELOCITY = 0.6;
 
 /**
  * Bottom-sheet modal that stays usable when the keyboard is open: the sheet
@@ -324,39 +324,81 @@ export function KeyboardSheet({
   discardTitleRef.current = discardTitle;
   const discardMessageRef = useRef(discardMessage);
   discardMessageRef.current = discardMessage;
+  /** Wave 4 closure — true while a focused picker owns the screen. The
+   * sheet's own drag-to-dismiss is suspended for exactly that long, so a
+   * downward gesture can never close the whole Add journey out from under
+   * an open picker. */
+  const [pickerActive, setPickerActive] = useState(false);
   const gesturesEnabledRef = useRef(gesturesEnabled);
-  gesturesEnabledRef.current = gesturesEnabled;
+  gesturesEnabledRef.current = gesturesEnabled && !pickerActive;
   const onRequestDismissRef = useRef(onRequestDismiss);
   onRequestDismissRef.current = onRequestDismiss;
 
+  /**
+   * Wave 4 device correction — the sheet's own scroll offset, tracked so a
+   * dismissal can be refused while the customer is reading their content.
+   * Zero is the only offset at which a pull-down means anything else.
+   */
+  const contentOffsetYRef = useRef(0);
+  /** Exactly one dismissal request per gesture sequence, however rapidly
+   * the gesture is repeated. */
+  const dismissingRef = useRef(false);
+
+  /**
+   * Wave 4 device correction — these handlers are now attached ONLY to the
+   * drag handle, never to the sheet body.
+   *
+   * Previously they were spread across the whole sheet, which made every
+   * form a dismissal target and put this responder in direct competition
+   * with each form's own ScrollView for the same touches. An ordinary
+   * downward scroll could be claimed here and then satisfy the old release
+   * threshold, closing the screen — and on a dirty form, raising a discard
+   * alert the customer never asked for. With the handle owning the gesture
+   * and the ScrollView owning the content, the two can no longer compete.
+   *
+   * Every decision below is delegated to the pure rules in
+   * `sheetDismissal.ts` so the matrix is testable without a gesture system.
+   */
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gesture) =>
-        gesturesEnabledRef.current && gesture.dy > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+        gesturesEnabledRef.current && shouldClaimSheetGesture({ dy: gesture.dy, dx: gesture.dx, fromHandle: true }),
+      onPanResponderGrant: () => {
+        dismissingRef.current = false;
+      },
       onPanResponderMove: (_, gesture) => {
         if (gesture.dy > 0) translateY.setValue(gesture.dy);
       },
       onPanResponderRelease: (_, gesture) => {
-        if (gesture.dy > DISMISS_DISTANCE || gesture.vy > DISMISS_VELOCITY) {
-          if (onRequestDismissRef.current) {
-            // Delegated dismiss — never show a host-owned alert while the
-            // sheet still looks like it's mid-swipe. A clean (non-dirty)
-            // swipe still dismisses immediately, exactly like the
-            // non-delegated branch below, so an ordinary swipe-to-close
-            // isn't punished with an extra spring-back-then-close beat.
-            if (isDirtyRef.current) {
-              springBack(() => onRequestDismissRef.current?.());
-            } else {
-              dismiss();
-            }
-          } else if (isDirtyRef.current) {
-            springBack();
-            confirmDiscardIfDirty(true, dismiss, discardTitleRef.current, discardMessageRef.current);
+        const dismissNow = shouldDismissSheet({
+          dy: gesture.dy,
+          dx: gesture.dx,
+          vy: gesture.vy,
+          contentOffsetY: contentOffsetYRef.current,
+          fromHandle: true,
+          alreadyDismissing: dismissingRef.current,
+        });
+        if (!dismissNow) {
+          springBack();
+          return;
+        }
+        dismissingRef.current = true;
+        if (onRequestDismissRef.current) {
+          // Delegated dismiss — never show a host-owned alert while the
+          // sheet still looks like it's mid-swipe. A clean (non-dirty)
+          // swipe still dismisses immediately, exactly like the
+          // non-delegated branch below, so an ordinary swipe-to-close
+          // isn't punished with an extra spring-back-then-close beat.
+          if (isDirtyRef.current) {
+            springBack(() => onRequestDismissRef.current?.());
           } else {
             dismiss();
           }
-        } else {
+        } else if (isDirtyRef.current) {
           springBack();
+          confirmDiscardIfDirty(true, dismiss, discardTitleRef.current, discardMessageRef.current);
+        } else {
+          dismiss();
         }
       },
       // If responder ownership is revoked mid-drag (e.g. the ScrollView
@@ -366,7 +408,10 @@ export function KeyboardSheet({
       // (and its footer, since both are inside the same transformed view)
       // below its intended position (regression-protection review: rapid
       // up/down swiping reported leaving Cancel/Save unreachable).
-      onPanResponderTerminate: () => springBack(),
+      onPanResponderTerminate: () => {
+        dismissingRef.current = false;
+        springBack();
+      },
     })
   ).current;
 
@@ -396,6 +441,10 @@ export function KeyboardSheet({
           paddingTop: spacing.sm,
           maxHeight: '85%',
         },
+        // Wave 4 device correction — the touch target for the ONLY dismissal
+        // gesture. Generous vertical padding so a deliberate pull is easy to
+        // start, while the visible pill stays the same 36x4.
+        grabberTarget: { alignSelf: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.xl },
         grabber: {
           alignSelf: 'center',
           width: 36,
@@ -455,9 +504,15 @@ export function KeyboardSheet({
             minSheetHeight ? { minHeight: minSheetHeight } : null,
             adjustedFixedHeight !== undefined ? { height: adjustedFixedHeight, maxHeight: adjustedFixedHeight } : null,
           ]}
-          {...panResponder.panHandlers}
         >
-          <View style={styles.grabber} />
+          {/* The ONLY dismissal gesture target. Padded well beyond the
+              visible 4pt pill so it is comfortably grabbable, and given an
+              explicit accessibility role so the affordance is discoverable
+              rather than purely visual. */}
+          <View style={styles.grabberTarget} {...panResponder.panHandlers} accessible accessibilityRole="adjustable" accessibilityLabel="Drag down to close">
+            <View style={styles.grabber} />
+          </View>
+          <FocusedPickerProvider onActiveChange={setPickerActive}>
           <View style={styles.titleRow}>
             <Text style={styles.title}>{title}</Text>
             {headerRight}
@@ -466,11 +521,20 @@ export function KeyboardSheet({
           {fixedSheetHeight !== undefined ? (
             <View style={styles.fixedContentArea}>{children}</View>
           ) : (
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.scrollArea}>
+            <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.scrollArea}
+            scrollEventThrottle={16}
+            onScroll={(e) => {
+              contentOffsetYRef.current = e.nativeEvent.contentOffset.y;
+            }}
+          >
               {children}
             </ScrollView>
           )}
           <View style={styles.footer}>{footer}</View>
+          </FocusedPickerProvider>
         </Animated.View>
       </KeyboardAvoidingView>
     </Modal>

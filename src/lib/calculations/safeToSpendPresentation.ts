@@ -215,15 +215,39 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         compactSummary: 'Over budget',
       };
     case 'goals_underfunded':
+      /**
+       * Wave 4 closure, P1 — the recorded AUP substitution defect.
+       *
+       * This state used to do two wrong things at once:
+       *
+       *  1. `...resolveAmount(null)` SUPPRESSED the Available Until Payday
+       *     figure entirely, so the card showed no amount even though the
+       *     canonical result was a perfectly good $12,050 — which its own
+       *     "How this was calculated" sheet went on displaying.
+       *  2. Its sentence quoted `goalAllocation.availableForGoals`, which is
+       *     `monthlyIncome - fixedCosts` — a MONTHLY planning figure. On the
+       *     verified fixture that is -6,802, so an Available-Until-Payday
+       *     card read "only $-6,802 is currently available".
+       *
+       * Neither the goals nor the monthly shortfall change the cycle pool:
+       * an unallocated goal never reduced `cycleRemainingPool`. This was
+       * purely a presentation-wiring fault, and it is corrected here without
+       * touching any formula.
+       *
+       * The amount is now the SAME canonical value `normal` presents — so
+       * the card and its breakdown can no longer disagree — and the goal
+       * statement is demoted to supporting copy that names the monthly
+       * requirement without quoting a monthly figure as cycle availability.
+       */
       return {
         heroState,
         tone: 'warning',
         heading: eyebrow,
-        primaryCopy: `Your goals would need ${formatSafeToSpendAmount(safeToSpend.goalAllocation.totalRequiredMonthly)}/month but only ${formatSafeToSpendAmount(
-          safeToSpend.goalAllocation.availableForGoals
-        )} is currently available. Explore adjusting the timeline or contribution.`,
-        supportingCopy: null,
-        ...resolveAmount(null),
+        primaryCopy: heroCopy.amountLabel,
+        supportingCopy: `Your goals would need ${formatSafeToSpendAmount(
+          safeToSpend.goalAllocation.totalRequiredMonthly
+        )}/month. That's more than your current monthly plan covers — explore adjusting the timeline or contribution.`,
+        ...resolveAmount(Math.max(0, safeToSpend.cycleRemainingPool)),
         amountIsAvailableMoney: false,
         action: AUP_ACTION,
         compactSummary: 'Goals underfunded',

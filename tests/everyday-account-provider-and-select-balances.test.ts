@@ -256,10 +256,17 @@ console.log('\n=== Structural: the mirror above matches the shipped source (clos
     // still cleared on every type-chip switch, immediately after the
     // include-in-money seed is (re)computed — is unchanged and re-verified
     // below against the new, longer expression.
-    'S6. the type-chip tap handler clears provider on every asset-type switch',
-    /setAssetType\(t\.value as AssetType\);\s*\n\s*setIncludeInMoney\(\s*\n\s*forcedIncludeInMoneyDefault \?\? resolveIncludeInMoneyCalculations\(\{ type: t\.value as AssetType, includeInMoneyCalculations: undefined \}\)\s*\n\s*\);\s*\n(?:\s*\/\/.*\n)*\s*setProvider\(''\);/.test(
+    // Design 5.1 Wave 4 — the asset type is no longer chosen on a chip row
+    // built inline in the JSX; it is chosen by the in-form selector, whose
+    // onChange is `chooseAssetCategory`. That single handler is now the ONLY
+    // place an asset type is set, which makes this guarantee stronger than
+    // when two call sites had to agree. The property guarded is identical:
+    // provider is cleared on every asset-type switch, immediately after the
+    // include-in-money seed is (re)computed.
+    'S6. the one asset-type handler clears provider on every asset-type switch',
+    /function chooseAssetCategory\(type: AssetType\) \{\s*\n\s*setAssetType\(type\);\s*\n\s*setIncludeInMoney\(forcedIncludeInMoneyDefault \?\? resolveIncludeInMoneyCalculations\(\{ type, includeInMoneyCalculations: undefined \}\)\);\s*\n(?:\s*\/\/.*\n)*\s*setProvider\(''\);/.test(
       WEALTH_SRC
-    )
+    ) && !/setAssetType\(t\.value as AssetType\)/.test(WEALTH_SRC)
   );
   assert(
     'S7. performSave\'s providerPayload derivation matches the mirror exactly',
@@ -311,9 +318,13 @@ console.log('\n=== 9. Select Balances add journey — customer-facing action no 
   );
   assert(
     '9f. Everyday Account, Cash and Savings are all genuine, unfiltered tiles inside the reused chooser (AddAnythingSheet.tsx\'s own Wealth group) — nothing about this hand-off narrows or filters that tile list',
-    /\{ key: 'everyday', label: 'Add everyday account', emoji: '🏧' \}/.test(SHEET_SRC) &&
-      /\{ key: 'cash', label: 'Add cash', emoji: '💵' \}/.test(SHEET_SRC) &&
-      /\{ key: 'savings', label: 'Add savings', emoji: '🏦' \}/.test(SHEET_SRC)
+    // The Wave 4 device correction removed the `emoji` field from every
+    // catalogue entry — icons now resolve from the central `lib/addIcons.ts`
+    // map. The tiles themselves, which is what this assertion protects, are
+    // unchanged and still unfiltered.
+    /\{ key: 'everyday', label: 'Add everyday account' \}/.test(SHEET_SRC) &&
+      /\{ key: 'cash', label: 'Add cash' \}/.test(SHEET_SRC) &&
+      /\{ key: 'savings', label: 'Add savings' \}/.test(SHEET_SRC)
   );
   assert(
     // Correction round, 2026-08-10 — SelectBalancesSheet's toggles became a

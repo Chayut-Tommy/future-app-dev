@@ -261,9 +261,14 @@ console.log('\n=== 12. QuickAddModal insufficient-funds / canSave gating (Mirror
       QUICK_ADD_SRC
     )
   );
+  // Wave 4 device correction added two further required terms after this
+  // one (an expense's explicit funding source, and an income's explicit
+  // destination), so it is no longer the LAST term in the expression. The
+  // guarantee is unchanged and asserted directly: it is still a conjunct of
+  // canSave, so insufficient funds still block Save.
   assert(
     '12f. canSave includes !insufficientEverydayFunds as a gating condition in shipped source',
-    /!insufficientEverydayFunds;/.test(QUICK_ADD_SRC)
+    /const canSave =[\s\S]*?!insufficientEverydayFunds(\s*&&|;)/.test(QUICK_ADD_SRC)
   );
   assert(
     '12g. everydayAvailableBalance accounts for the transaction\'s own prior amount on the same account when editing (edit-in-place is not falsely blocked)',

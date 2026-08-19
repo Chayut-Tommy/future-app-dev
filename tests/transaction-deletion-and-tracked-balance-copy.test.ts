@@ -283,81 +283,93 @@ console.log('\n=== 7. describeReversalTarget — deletion-confirmation reversal 
   );
 }
 
-console.log('\n=== 8. Tracked-balance hint copy — no false "no cards/loans" claim, names the real target (Mirrored, tied to shipped source) ===');
+console.log('\n=== 8. Missing-balance copy — no false "no cards/loans" claim, names the real target (Mirrored, tied to shipped source) ===');
 {
-  function trackedBalanceHint(
-    hasValidBalanceTarget: boolean,
-    balanceEffect: 'update' | 'none',
-    targetLabel: string | undefined,
+  // SUPERSEDED IN FORM by the Wave 4 device correction: the five-branch
+  // "Tracked balance" hint paragraph is gone, replaced by the single
+  // `Balance update` section and its ONE missing-balance card. The DEFECT
+  // this section exists to protect — never claiming "No cards added yet"
+  // when cards exist but none is selected — is unchanged, and is mirrored
+  // here against the shipped `missingBalanceCopy` derivation instead.
+  function missingBalanceCopy(
     paymentSource: string,
     creditCardsLength: number,
-    liabilitiesLength: number,
-    brandName: string
-  ): string {
-    if (hasValidBalanceTarget) {
-      return balanceEffect === 'none' && targetLabel
-        ? `Record this transaction without changing your ${targetLabel} balance.`
-        : `Record only saves this transaction without changing a balance tracked in ${brandName}.`;
+    liabilitiesLength: number
+  ): { title: string; body: string; hasAction: boolean } {
+    if (paymentSource === 'cash') {
+      return {
+        title: "Cash balance isn't set up",
+        body: 'Add a cash balance to update it, or record this transaction without changing a balance.',
+        hasAction: true,
+      };
     }
     if (paymentSource === 'credit_card') {
-      return creditCardsLength > 0
-        ? 'Select a card above to track this against it, or continue recording only.'
-        : 'No cards added yet. This transaction will be recorded without changing a card balance.';
+      return {
+        title: creditCardsLength > 0 ? 'No card selected' : "You haven't added a card yet",
+        body:
+          creditCardsLength > 0
+            ? 'Choose a card above to update its balance, or record this transaction without changing a balance.'
+            : 'Add a credit card in Wealth to update its balance, or record this transaction without changing a balance.',
+        hasAction: false,
+      };
     }
     if (paymentSource === 'loan') {
-      return liabilitiesLength > 0
-        ? 'Select a loan above to track this against it, or continue recording only.'
-        : 'No loans added yet. This transaction will be recorded without changing a liability balance.';
+      return {
+        title: liabilitiesLength > 0 ? 'No loan selected' : "You haven't added a loan yet",
+        body:
+          liabilitiesLength > 0
+            ? 'Choose a loan above to update its balance, or record this transaction without changing a balance.'
+            : 'Add a loan in Wealth to update its balance, or record this transaction without changing a balance.',
+        hasAction: false,
+      };
     }
-    if (paymentSource === 'cash') return 'Add a cash balance above to track this against it, or continue recording only.';
-    if (paymentSource === 'everyday') return 'Choose which everyday account this was paid from above to track this against it.';
-    return `Record only saves this transaction without changing a balance tracked in ${brandName}.`;
+    if (paymentSource === 'everyday') {
+      return {
+        title: 'No everyday account selected',
+        body: 'Choose an account above to update its balance, or record this transaction without changing a balance.',
+        hasAction: false,
+      };
+    }
+    return { title: 'No balance to update', body: 'This transaction will be recorded without changing a balance.', hasAction: false };
   }
 
   // 8a. THE CONFIRMED DEFECT SCENARIO: a card exists but none is selected
-  // yet (hasValidBalanceTarget false purely because creditCardId is null) —
-  // must no longer claim "No cards added yet."
-  const hint8a = trackedBalanceHint(false, 'none', undefined, 'credit_card', 1, 0, 'Nolie');
-  assert('8a. card exists but none selected: no longer falsely claims "No cards added yet"', !/No cards added yet/.test(hint8a));
-  assert('8a-correct. card exists but none selected: correctly prompts selection instead', /Select a card above/.test(hint8a));
+  // yet — must never claim the customer has no cards.
+  const copy8a = missingBalanceCopy('credit_card', 1, 0);
+  assert('8a. card exists but none selected: never claims the customer has no cards', !/added a card yet/.test(copy8a.title) && !/added a card yet/.test(copy8a.body));
+  assert('8a-correct. card exists but none selected: correctly prompts selection instead', copy8a.title === 'No card selected' && /Choose a card above/.test(copy8a.body));
 
-  // 8b. Genuinely zero cards — the "No cards added yet" message remains
-  // accurate and is preserved.
-  const hint8b = trackedBalanceHint(false, 'none', undefined, 'credit_card', 0, 0, 'Nolie');
-  assert('8b. zero cards genuinely exist: "No cards added yet" is still shown (still true in this case)', /No cards added yet/.test(hint8b));
+  // 8b. Genuinely zero cards — saying so remains accurate.
+  const copy8b = missingBalanceCopy('credit_card', 0, 0);
+  assert('8b. zero cards genuinely exist: the copy still says so (still true in this case)', /added a card yet/.test(copy8b.title));
 
-  // 8c. A card IS selected and Record only is active — names the card,
-  // matching the suggested direction ("...without changing your AMEX balance.").
-  const hint8c = trackedBalanceHint(true, 'none', 'AMEX', 'credit_card', 1, 0, 'Nolie');
-  assert('8c. card selected + Record only: names the actual card', hint8c === 'Record this transaction without changing your AMEX balance.');
+  // 8c-8e. The identical defect class for loans.
+  const copy8c = missingBalanceCopy('loan', 0, 1);
+  assert('8c. loan exists but none selected: never claims the customer has no loans', !/added a loan yet/.test(copy8c.title) && /Choose a loan above/.test(copy8c.body));
+  const copy8d = missingBalanceCopy('loan', 0, 0);
+  assert('8d. zero loans genuinely exist: the copy still says so', /added a loan yet/.test(copy8d.title));
 
-  // 8d. Same pattern for loans (the identical defect class, per the
-  // root-cause investigation's "does the same defect affect other sources" check).
-  const hint8d = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 1, 'Nolie');
-  assert('8d. loan exists but none selected: no longer falsely claims "No loans added yet"', !/No loans added yet/.test(hint8d));
-  const hint8e = trackedBalanceHint(false, 'none', undefined, 'loan', 0, 0, 'Nolie');
-  assert('8e. zero loans genuinely exist: "No loans added yet" is still shown', /No loans added yet/.test(hint8e));
+  // 8e. Cash keeps its own dedicated action; every other source offers none,
+  // so there is never a duplicate "Add ..." button in the form.
+  const copy8e = missingBalanceCopy('cash', 0, 0);
+  assert('8e. cash is the ONLY source offering an Add action', copy8e.hasAction && !missingBalanceCopy('everyday', 0, 0).hasAction && !copy8b.hasAction && !copy8d.hasAction);
+  assert("8f. and its copy is the specified wording", copy8e.title === "Cash balance isn't set up" && copy8e.body === 'Add a cash balance to update it, or record this transaction without changing a balance.');
 
-  // 8f. Cash and Everyday were already correct (never falsely claimed
-  // nonexistence) — confirm unaffected by this pass.
-  const hint8f = trackedBalanceHint(false, 'none', undefined, 'cash', 0, 0, 'Nolie');
-  assert('8f. cash source unaffected — unchanged existing wording', hint8f === 'Add a cash balance above to track this against it, or continue recording only.');
-
+  // 8g-8j. The mirror is tied to the shipped source.
+  assert('8g. mirror matches shipped trackedBalanceTargetLabel derivation exactly', /const trackedBalanceTargetLabel = !hasValidBalanceTarget/.test(QUICK_ADD_SRC));
   assert(
-    '8g. mirror matches shipped trackedBalanceTargetLabel derivation exactly',
-    /const trackedBalanceTargetLabel = !hasValidBalanceTarget/.test(QUICK_ADD_SRC)
+    '8h. mirror matches the shipped card-exists-but-unselected branch exactly',
+    /title: data\.creditCards\.length > 0 \? 'No card selected' : "You haven't added a card yet",/.test(QUICK_ADD_SRC) &&
+      /\? 'Choose a card above to update its balance, or record this transaction without changing a balance\.'/.test(QUICK_ADD_SRC)
   );
   assert(
-    '8h. mirror matches shipped hint ternary\'s card-exists-but-unselected branch exactly',
-    /data\.creditCards\.length > 0\s*\n\s*\? 'Select a card above to track this against it, or continue recording only\.'/.test(QUICK_ADD_SRC)
+    '8i. mirror matches the shipped loan-exists-but-unselected branch exactly',
+    /title: nonCreditLiabilities\.length > 0 \? 'No loan selected' : "You haven't added a loan yet",/.test(QUICK_ADD_SRC) &&
+      /\? 'Choose a loan above to update its balance, or record this transaction without changing a balance\.'/.test(QUICK_ADD_SRC)
   );
   assert(
-    '8i. mirror matches shipped hint ternary\'s loan-exists-but-unselected branch exactly',
-    /nonCreditLiabilities\.length > 0\s*\n\s*\? 'Select a loan above to track this against it, or continue recording only\.'/.test(QUICK_ADD_SRC)
-  );
-  assert(
-    '8j. mirror matches shipped named-target Record-only sentence exactly',
-    /`Record this transaction without changing your \$\{trackedBalanceTargetLabel\} balance\.`/.test(QUICK_ADD_SRC)
+    '8j. the selected account is still named in the update option, via the same trackedBalanceTargetLabel',
+    /accountName=\{hasValidBalanceTarget \? trackedBalanceTargetLabel \?\? null : null\}/.test(QUICK_ADD_SRC)
   );
 }
 

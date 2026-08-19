@@ -6,7 +6,13 @@ import { useAppState } from '../../state/AppStateContext';
 import type { BnplScheduleInput } from '../../state/AppStateContext';
 import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
-import { DatePickerModal } from '../shared/DatePickerModal';
+import { Chip } from '../shared/Chip';
+import { InlineSelect } from '../shared/fields/InlineSelect';
+import { assetTypeIcon } from '../../lib/addIcons';
+import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
+import { DateTriggerField } from '../shared/fields/DateTriggerField';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
 import { Button } from '../shared/Button';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { brand } from '../../lib/brand';
@@ -91,15 +97,15 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
 // below, which still lets the user refine e.g. Investments into ETF vs.
 // Shares vs. Crypto. Wealth Map calculations are untouched; this only
 // changes how picking an asset type feels.
-const ASSET_CARD_GROUPS: { value: AssetType; emoji: string; label: string; description: string }[] = [
-  { value: 'cash', emoji: '💵', label: 'Cash', description: 'Money in your wallet' },
-  { value: 'savings', emoji: '🏦', label: 'Savings', description: 'Money earning interest' },
-  { value: 'everyday', emoji: '🏧', label: 'Everyday Account', description: 'A bank account you use for everyday spending, usually through a debit card' },
-  { value: 'etf', emoji: '📈', label: 'Investments', description: 'Stocks, ETFs, crypto, funds' },
-  { value: 'property', emoji: '🏠', label: 'Property', description: 'Home or investment property' },
-  { value: 'super', emoji: '🛡', label: 'Retirement Savings', description: 'Superannuation, 401(k), IRA, pension' },
-  { value: 'car', emoji: '🚗', label: 'Vehicle', description: 'Car, motorbike, boat' },
-  { value: 'other', emoji: '💎', label: 'Other assets', description: 'Everything else you own' },
+const ASSET_CARD_GROUPS: { value: AssetType; label: string; description: string }[] = [
+  { value: 'cash', label: 'Cash', description: 'Money in your wallet' },
+  { value: 'savings', label: 'Savings', description: 'Money earning interest' },
+  { value: 'everyday', label: 'Everyday Account', description: 'A bank account you use for everyday spending, usually through a debit card' },
+  { value: 'etf', label: 'Investments', description: 'Stocks, ETFs, crypto, funds' },
+  { value: 'property', label: 'Property', description: 'Home or investment property' },
+  { value: 'super', label: 'Retirement Savings', description: 'Superannuation, 401(k), IRA, pension' },
+  { value: 'car', label: 'Vehicle', description: 'Car, motorbike, boat' },
+  { value: 'other', label: 'Other assets', description: 'Everything else you own' },
 ];
 
 const LIABILITY_TYPES: { value: LiabilityType; label: string }[] = [
@@ -427,7 +433,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // "next due date" picker for the same frequencies, PRD bug report: a
   // fortnightly car loan repayment still asked for "day of month").
   const [repaymentNextDueDate, setRepaymentNextDueDate] = useState<string | null>(null);
-  const [repaymentPickerOpen, setRepaymentPickerOpen] = useState(false);
   const [propertyLinkMode, setPropertyLinkMode] = useState<'none' | 'existing' | 'new'>('none');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const [newPropertyValue, setNewPropertyValue] = useState('');
@@ -448,7 +453,11 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // new asset with no preset already chosen (most entry points already
   // preset a type, e.g. tapping "Property" on the Wealth Map, so there's
   // nothing to pick). Liabilities keep their existing single-step flow.
-  const [formStep, setFormStep] = useState<'category' | 'details'>('details');
+  // Design 5.1 Wave 4 — the preliminary "What are you adding?" page is
+  // removed. Its ASSET_CARD_GROUPS list (labels, emoji AND descriptions) is
+  // now the in-form asset-type selector below, and `onlyLiquidCategories`
+  // filters that selector instead of the page — the restriction is carried
+  // over intact, not dropped.
   // Stream C correction (Correction 1) — the "select or create for
   // repayment" step. Shown only for liabilityFlowIntent ===
   // 'select_or_create_for_repayment' sessions where at least one same-type
@@ -754,7 +763,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // the old schedule (same rule Income and Bills already follow).
     setRepaymentDayOfMonth('');
     setRepaymentNextDueDate(null);
-    setRepaymentPickerOpen(false);
   }
 
   // Correction pass (repayment-schedule contract) — returns the section to
@@ -874,7 +882,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setRepaymentFrequencyTouched(false);
       setRepaymentDayOfMonth('');
       setRepaymentNextDueDate(null);
-      setRepaymentPickerOpen(false);
       resetLiabilityFieldsBlank();
       setLabel('');
       setValue('');
@@ -896,7 +903,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       setTargetLiabilityId(null);
       setEditingLoanDetails(true);
     }
-    setFormStep(kindProp === 'asset' && !editAsset && !presetAssetType ? 'category' : 'details');
     // data.liabilities is read only to decide whether to offer the
     // selector on open — deliberately not a dependency, matching the
     // established convention for this effect (it always reflects data at
@@ -930,7 +936,11 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
     setIncludeInMoney(forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type, includeInMoneyCalculations: undefined }));
-    setFormStep('details');
+    // `provider` correction — only ever meaningful for 'everyday'; switching
+    // to any other type (or back to 'everyday' from one) must never retain a
+    // stale value from whatever type was previously selected. Identical to
+    // the type-chip handler's own reset, which this now shares.
+    setProvider('');
   }
 
   // Round 6 correction — creating a brand-new secured-loan asset (never an
@@ -1378,15 +1388,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         typeChipText: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
         typeChipTextActive: { color: colors.accentStrong, fontWeight: '600' },
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          marginBottom: spacing.md,
-          color: colors.textPrimary,
-        },
         inputLocked: { opacity: 0.55 },
         footerButton: { flex: 1 },
         deleteButton: { marginTop: spacing.sm },
@@ -1400,17 +1401,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         freqChipActive: { backgroundColor: colors.accentSoft },
         freqText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
         freqTextActive: { color: colors.accentStrong },
-        dateButton: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 14,
-        },
-        dateButtonText: { ...typography.body, fontSize: 15, color: colors.textPrimary },
-        dateButtonPlaceholder: { color: colors.textMuted },
         dateHint: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs },
         deferRepaymentLink: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs, marginBottom: spacing.md },
         deferRepaymentText: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
@@ -1419,18 +1409,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         moneyIncludeCopy: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
         moneyIncludeToggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
         moneyIncludeToggleText: { ...typography.caption, fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
-        categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-        categoryCard: {
-          flexBasis: '46%',
-          flexGrow: 1,
-          alignItems: 'center',
-          paddingVertical: spacing.lg,
-          borderRadius: radius.control,
-          backgroundColor: colors.surfaceMuted,
-        },
-        categoryCardEmoji: { fontSize: 30, marginBottom: spacing.xs },
-        categoryCardLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginBottom: 2 },
-        categoryCardDescription: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center' },
         selectorRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -1465,28 +1443,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       }),
     [colors, radius, spacing, typography]
   );
-
-  if (kind === 'asset' && formStep === 'category') {
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="💎 What are you adding?"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-      >
-        <View style={styles.categoryGrid}>
-          {(onlyLiquidCategories ? ASSET_CARD_GROUPS.filter((g) => LIQUID_BALANCE_TYPES.includes(g.value)) : ASSET_CARD_GROUPS).map((g) => (
-            <TouchableOpacity key={g.value} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseAssetCategory(g.value)}>
-              <Text style={styles.categoryCardEmoji}>{g.emoji}</Text>
-              <Text style={styles.categoryCardLabel}>{g.label}</Text>
-              <Text style={styles.categoryCardDescription}>{g.description}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </KeyboardSheet>
-    );
-  }
 
   // CORRECTION 1, "SELECT OR CREATE FOR REPAYMENT" — the new explicit
   // selection step. Only ever shown for liabilityFlowIntent ===
@@ -1562,7 +1518,21 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // full ASSET_TYPES row as before. Reuses the existing form; no new
   // component.
   const isLiquidPresetJourney = kind === 'asset' && !!presetAssetType && LIQUID_BALANCE_TYPES.includes(presetAssetType);
-  const assetTypeChipOptions = isLiquidPresetJourney ? ASSET_TYPES.filter((t) => LIQUID_BALANCE_TYPES.includes(t.value)) : ASSET_TYPES;
+  // Design 5.1 Wave 4 — the in-form asset-type selector. Same
+  // ASSET_CARD_GROUPS list the removed page rendered as cards, including its
+  // descriptions, and BOTH restrictions are carried over: the liquid-preset
+  // journey, and `onlyLiquidCategories` (which used to filter the page).
+  // Dropping the second one would silently let the Income "Add a money
+  // balance" route create a property or an ETF.
+  /** Local midnight today — where the forward repayment-date list starts. */
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+  const restrictToLiquid = isLiquidPresetJourney || !!onlyLiquidCategories;
+  const assetTypeSelectOptions = (restrictToLiquid ? ASSET_CARD_GROUPS.filter((g) => LIQUID_BALANCE_TYPES.includes(g.value)) : ASSET_CARD_GROUPS).map(
+    (g) => ({ value: g.value, label: g.label, supporting: g.description, icon: assetTypeIcon(g.value) })
+  );
 
   // Navigation Transitions, Option B pilot — the exact same field/section
   // JSX every standalone caller already renders, now also reused verbatim
@@ -1600,70 +1570,64 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           <Text style={styles.helperText}>Already track this repayment as a regular bill? Check your bills first to avoid counting it twice.</Text>
         </View>
       ) : null}
-      {showTypeChips ? (
+      {showTypeChips && kind === 'asset' ? (
+        <InlineSelect
+          label="What are you adding?"
+          placeholder="Choose a type"
+          value={assetType}
+          onChange={chooseAssetCategory}
+          options={assetTypeSelectOptions}
+          testID="add-asset-type"
+        />
+      ) : null}
+      {showTypeChips && kind === 'liability' ? (
         <View style={styles.typeRow}>
-          {(kind === 'asset' ? assetTypeChipOptions : LIABILITY_TYPES).map((t) => {
-            const active = kind === 'asset' ? assetType === t.value : liabilityType === t.value;
-            return (
-              <TouchableOpacity
-                key={t.value}
-                style={[styles.typeChip, active ? styles.typeChipActive : null]}
-                onPress={() => {
-                  if (kind === 'liability' && t.value === 'credit_card') {
-                    // Full-workspace extension — embedded: no Modal to
-                    // dismiss, so no defer/timer dance at all. Directly and
-                    // synchronously hands off to the host's own route
-                    // controller (chooser<->liability<->creditCard, all
-                    // routes in the same persistent workspace).
-                    if (embedded) {
-                      onRequestCreditCard?.();
-                      return;
-                    }
-                    // Standalone — unchanged. First-accepted-tap-wins
-                    // deferred handoff (Stream D, D1, corrected) —
-                    // onSelectCreditCard is never called in the same tick
-                    // as onClose(): on iOS it's deferred to KeyboardSheet's
-                    // real onDismiss (wired below); only on Android — where
-                    // RN never calls onDismiss — is the
-                    // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
-                    if (ccHandoffInProgressRef.current) return;
-                    ccHandoffInProgressRef.current = true;
-                    // Skip the animated dismissal for an accepted handoff
-                    // (Stream D, Option B) — flips animationType to 'none'
-                    // in the SAME synchronous call as onClose(), so React
-                    // 18's automatic batching lands both in one commit
-                    // (verified against RN's own Fabric
-                    // RCTModalHostViewComponentView.mm: updateProps applies
-                    // animationType before ensurePresentedOnlyIfNeeded
-                    // checks visible, within one synchronous native call
-                    // per commit).
-                    setDismissAnimationType('none');
-                    onClose();
-                    if (Platform.OS === 'android') {
-                      if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
-                      ccHandoffTimerRef.current = setTimeout(runPendingCreditCardHandoff, CREDIT_CARD_HANDOFF_DEFER_MS);
-                    }
+          {LIABILITY_TYPES.map((t) => (
+            <Chip
+              key={t.value}
+              label={t.label}
+              selected={liabilityType === t.value}
+              onPress={() => {
+                if (t.value === 'credit_card') {
+                  // Full-workspace extension — embedded: no Modal to
+                  // dismiss, so no defer/timer dance at all. Directly and
+                  // synchronously hands off to the host's own route
+                  // controller (chooser<->liability<->creditCard, all
+                  // routes in the same persistent workspace).
+                  if (embedded) {
+                    onRequestCreditCard?.();
                     return;
                   }
-                  if (kind === 'asset') {
-                    setAssetType(t.value as AssetType);
-                    setIncludeInMoney(
-                      forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type: t.value as AssetType, includeInMoneyCalculations: undefined })
-                    );
-                    // `provider` correction — only ever meaningful for
-                    // 'everyday'; switching to any other type (or back to
-                    // 'everyday' from one) must never retain a stale value
-                    // from whatever type chip was previously selected.
-                    setProvider('');
-                  } else {
-                    setLiabilityType(t.value as LiabilityType);
+                  // Standalone — unchanged. First-accepted-tap-wins
+                  // deferred handoff (Stream D, D1, corrected) —
+                  // onSelectCreditCard is never called in the same tick
+                  // as onClose(): on iOS it's deferred to KeyboardSheet's
+                  // real onDismiss (wired below); only on Android — where
+                  // RN never calls onDismiss — is the
+                  // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
+                  if (ccHandoffInProgressRef.current) return;
+                  ccHandoffInProgressRef.current = true;
+                  // Skip the animated dismissal for an accepted handoff
+                  // (Stream D, Option B) — flips animationType to 'none'
+                  // in the SAME synchronous call as onClose(), so React
+                  // 18's automatic batching lands both in one commit
+                  // (verified against RN's own Fabric
+                  // RCTModalHostViewComponentView.mm: updateProps applies
+                  // animationType before ensurePresentedOnlyIfNeeded
+                  // checks visible, within one synchronous native call
+                  // per commit).
+                  setDismissAnimationType('none');
+                  onClose();
+                  if (Platform.OS === 'android') {
+                    if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
+                    ccHandoffTimerRef.current = setTimeout(runPendingCreditCardHandoff, CREDIT_CARD_HANDOFF_DEFER_MS);
                   }
-                }}
-              >
-                <Text style={[styles.typeChipText, active ? styles.typeChipTextActive : null]}>{t.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
+                  return;
+                }
+                setLiabilityType(t.value);
+              }}
+            />
+          ))}
         </View>
       ) : null}
       {loanDetailsLocked ? (
@@ -1681,11 +1645,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         </View>
       ) : (
         <>
-          <Text style={styles.label}>
-            {kind === 'liability' && nameField ? nameField.field : kind === 'asset' && assetType === 'everyday' ? 'Account name' : 'Label'}
-          </Text>
-          <TextInput
-            style={styles.input}
+          <TextField
+            label={kind === 'liability' && nameField ? nameField.field : kind === 'asset' && assetType === 'everyday' ? 'Account name' : 'Label'}
+            required
             placeholder={
               kind === 'asset'
                 ? assetType === 'everyday'
@@ -1693,32 +1655,17 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                   : 'e.g. Vanguard ETF'
                 : nameField?.placeholder ?? 'e.g. Home loan'
             }
-            placeholderTextColor={colors.textMuted}
             value={label}
             onChangeText={setLabel}
           />
           {kind === 'asset' && assetType === 'everyday' ? (
             <>
-              <Text style={styles.label}>Bank or provider (optional)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Commonwealth Bank"
-                placeholderTextColor={colors.textMuted}
-                value={provider}
-                onChangeText={setProvider}
-              />
+              <TextField label="Bank or provider (optional)" placeholder="e.g. Commonwealth Bank" value={provider} onChangeText={setProvider} />
             </>
           ) : null}
           {isBnpl ? (
             <>
-              <Text style={styles.label}>Provider (optional)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Afterpay"
-                placeholderTextColor={colors.textMuted}
-                value={provider}
-                onChangeText={setProvider}
-              />
+              <TextField label="Provider (optional)" placeholder="e.g. Afterpay" value={provider} onChangeText={setProvider} />
               <View style={styles.helperBox}>
                 <Text style={styles.helperText}>Track what you still owe and what's due next.</Text>
                 <Text style={[styles.helperText, { marginTop: spacing.xs }]}>
@@ -1730,14 +1677,16 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
               </View>
             </>
           ) : null}
-          <Text style={styles.label}>
-            {kind === 'liability' ? 'Amount you still owe today' : kind === 'asset' && assetType === 'everyday' ? 'Current balance' : 'Value'}
-          </Text>
-          <TextInput
-            style={styles.input}
+          {/* `allowZero` mirrors this form's OWN existing parser choice
+              (`usesStrictLiquidParser` selects parseMoneyInputAllowZero for
+              the three liquid-balance types) so the field describes exactly
+              what Save already accepts. It decides nothing. */}
+          <CurrencyField
+            label={kind === 'liability' ? 'Amount you still owe today' : kind === 'asset' && assetType === 'everyday' ? 'Current balance' : 'Value'}
+            required
+            large
+            allowZero={usesStrictLiquidParser}
             placeholder="$0"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="decimal-pad"
             value={value}
             onChangeText={setValue}
           />
@@ -1754,11 +1703,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       )}
       {kind === 'asset' && (assetType === 'cash' || assetType === 'savings') ? (
         <>
-          <Text style={styles.label}>Interest rate % (optional)</Text>
-          <TextInput
-            style={styles.input}
+          {/* A rate, NOT a money amount — never a CurrencyField. */}
+          <TextField
+            label="Interest rate % (optional)"
             placeholder="e.g. 4.50"
-            placeholderTextColor={colors.textMuted}
             keyboardType="decimal-pad"
             value={interestRate}
             onChangeText={setInterestRate}
@@ -1787,11 +1735,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       ) : null}
       {kind === 'liability' && !loanDetailsLocked ? (
         <>
-          <Text style={styles.label}>Interest rate % (optional)</Text>
-          <TextInput
-            style={styles.input}
+          {/* A rate, NOT a money amount — never a CurrencyField. */}
+          <TextField
+            label="Interest rate % (optional)"
             placeholder="e.g. 6.50"
-            placeholderTextColor={colors.textMuted}
             keyboardType="decimal-pad"
             value={liabilityInterestRate}
             onChangeText={setLiabilityInterestRate}
@@ -1845,23 +1792,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           ) : null}
           {propertyLinkMode === 'new' ? (
             <>
-              <Text style={styles.label}>Property name or address</Text>
-              <TextInput
-                style={styles.input}
+              <TextField
+                label="Property name or address"
+                required
                 placeholder="e.g. Richmond home"
-                placeholderTextColor={colors.textMuted}
                 value={newPropertyName}
                 onChangeText={setNewPropertyName}
               />
-              <Text style={styles.label}>Current property value</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 1,000,000"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="decimal-pad"
-                value={newPropertyValue}
-                onChangeText={setNewPropertyValue}
-              />
+              <CurrencyField label="Current property value" placeholder="e.g. 1,000,000" value={newPropertyValue} onChangeText={setNewPropertyValue} />
             </>
           ) : null}
         </>
@@ -1913,23 +1851,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           ) : null}
           {vehicleLinkMode === 'new' ? (
             <>
-              <Text style={styles.label}>Vehicle name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Toyota Camry"
-                placeholderTextColor={colors.textMuted}
-                value={newVehicleName}
-                onChangeText={setNewVehicleName}
-              />
-              <Text style={styles.label}>Current vehicle value</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 25,000"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="decimal-pad"
-                value={newVehicleValue}
-                onChangeText={setNewVehicleValue}
-              />
+              <TextField label="Vehicle name" required placeholder="e.g. Toyota Camry" value={newVehicleName} onChangeText={setNewVehicleName} />
+              <CurrencyField label="Current vehicle value" placeholder="e.g. 25,000" value={newVehicleValue} onChangeText={setNewVehicleValue} />
             </>
           ) : null}
         </>
@@ -1956,15 +1879,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
               repayment" to your Bills Calendar. Leave every field blank to skip this for now.
             </Text>
           </View>
-          <Text style={styles.label}>Repayment amount</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. 3,000"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="decimal-pad"
-            value={repaymentAmount}
-            onChangeText={setRepaymentAmount}
-          />
+          <CurrencyField label="Repayment amount" placeholder="e.g. 3,000" value={repaymentAmount} onChangeText={setRepaymentAmount} />
           <Text style={styles.label}>Repayment frequency</Text>
           <View style={styles.freqRow}>
             {REPAYMENT_FREQUENCIES.map((f) => {
@@ -1987,37 +1902,32 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           </View>
           {usesRepaymentDayOfMonth ? (
             <>
-              <Text style={styles.label}>Day of month due</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 15"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="number-pad"
-                value={repaymentDayOfMonth}
-                onChangeText={setRepaymentDayOfMonth}
+              {/* Wave 4 device correction — a recurring anchor, not a date.
+                  `repaymentDayOfMonth` stays a string and
+                  `nextOccurrenceFromDay` is untouched. */}
+              <DayOfMonthField
+                label="Day of month due"
+                value={repaymentDayOfMonth.trim() === '' ? null : parseInt(repaymentDayOfMonth, 10)}
+                onChange={(day) => setRepaymentDayOfMonth(String(day))}
+                testID="repayment-day-of-month"
               />
             </>
           ) : (
             <>
-              <Text style={styles.label}>Next repayment date</Text>
-              <TouchableOpacity
-                style={styles.dateButton}
-                onPress={() => {
-                  // Same gesture-isolation/keyboard-dismissal correction as
-                  // Income's date field (UX correction round) — a dedicated
-                  // modal instead of an inline calendar sharing this sheet's
-                  // own swipe-to-dismiss surface, so scrolling the calendar
-                  // can never be read as "close the whole loan form" and
-                  // silently discard entered name/amount/vehicle-link data.
-                  Keyboard.dismiss();
-                  setRepaymentPickerOpen(true);
-                }}
-              >
-                <Text style={[styles.dateButtonText, !repaymentNextDueDate ? styles.dateButtonPlaceholder : null]}>
-                  {repaymentNextDueDate ? formatDate(repaymentNextDueDate) : 'Choose a date'}
-                </Text>
-                <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
+              {/* Wave 4 closure — the SAME shared focused picker surface the
+                  bill, income, transaction and goal now use. Previously its
+                  own native <Modal>; the keyboard-dismissal and gesture-
+                  isolation behaviour it existed for are preserved by the
+                  shared trigger, without a second modal. */}
+              <DateTriggerField
+                label="Next repayment date"
+                direction="future"
+                value={repaymentNextDueDate ? new Date(repaymentNextDueDate) : null}
+                today={startOfTodayLocal}
+                optional
+                onChange={(next) => setRepaymentNextDueDate(next.toISOString())}
+                testID="repayment-next-due-date"
+              />
               <Text style={styles.dateHint}>
                 {repaymentFrequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
               </Text>
@@ -2066,13 +1976,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           <Text style={styles.deleteText}>Delete {kind}</Text>
         </TouchableOpacity>
       ) : null}
-      <DatePickerModal
-        visible={repaymentPickerOpen}
-        value={repaymentNextDueDate ? new Date(repaymentNextDueDate) : new Date()}
-        minimumDate={new Date()}
-        onChange={(date) => setRepaymentNextDueDate(date.toISOString())}
-        onClose={() => setRepaymentPickerOpen(false)}
-      />
     </>
   );
 
@@ -2094,7 +1997,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       visible={visible}
       onClose={handleClose}
       isDirty={isDirty}
-      gesturesEnabled={!repaymentPickerOpen}
       title={title}
       footer={
         <>

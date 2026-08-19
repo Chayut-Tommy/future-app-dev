@@ -184,7 +184,12 @@ console.log('\n=== 12. Canonical catalogue structure ===');
 {
   assert('12a. rows, not a tile grid', /taskRow: \{/.test(SHEET) && /rowGroup: \{/.test(SHEET));
   assert('12b. rows are at least 52pt', /minHeight: 52/.test(SHEET));
-  assert('12c. leading icon tile', /rowIcon: \{/.test(SHEET));
+  // The Wave 4 device correction moved the leading tile out of this file
+  // into the one shared `AddIcon` renderer, so the row now declares WHICH
+  // icon rather than how big its container is. Both halves are asserted.
+  // Wave 4 closure — the icon now carries its DOMAIN TONE as well as its
+  // glyph, so the prop is the whole spec rather than a bare name.
+  assert('12c. leading icon tile', /<AddIcon icon=\{addTaskIcon\(o\.key\)\} tile \/>/.test(SHEET));
   assert('12d. trailing DRAFT badge exists', /draftBadgeText/.test(SHEET) && /DRAFT<\/Text>/.test(SHEET));
   assert('12e. the badge is driven by real parked-draft state', /const parked = hasParkedDraft\(o\.key\)/.test(SHEET));
   assert('12f. one announcement per row, including qualifier and draft', /\[o\.label, o\.qualifier, parked \? 'draft saved' : null\]\.filter\(Boolean\)\.join\(', '\)/.test(SHEET));

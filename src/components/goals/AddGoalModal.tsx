@@ -1,30 +1,22 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
 import { Button } from '../shared/Button';
+import { Segmented } from '../shared/Segmented';
+import { AddIcon } from '../shared/AddIcon';
+import { MonthYearField } from '../shared/fields/MonthYearField';
+import { GoalFormFields } from './GoalFormFields';
+import { GOAL_PURPOSES, resolveGoalNameOnPurposeChange, resolveGoalPaceSummary } from '../../lib/goalFormState';
+import { goalPurposeIcon } from '../../lib/addIcons';
 import { LifeGoalType, GoalPriority } from '../../types/models';
 import { requiredMonthlyForGoal, classifyGoalDateFields, GoalDateFieldState } from '../../lib/calculations/goalAllocation';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
-
-const GOAL_TYPES: { value: LifeGoalType; label: string; emoji: string }[] = [
-  { value: 'house_deposit', label: 'Buy property', emoji: '🏠' },
-  { value: 'holiday', label: 'Travel', emoji: '✈️' },
-  { value: 'investment_target', label: 'Build wealth', emoji: '📈' },
-  { value: 'debt_payoff', label: 'Pay debt', emoji: '💳' },
-  { value: 'financial_freedom', label: 'Financial freedom', emoji: '🚀' },
-  { value: 'emergency_fund', label: 'Emergency fund', emoji: '💰' },
-  { value: 'car', label: 'New car', emoji: '🚗' },
-  { value: 'custom', label: 'Custom', emoji: '⭐' },
-];
-
-const PRIORITIES: { value: GoalPriority; label: string }[] = [
-  { value: 'high', label: '⭐ High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'flexible', label: 'Flexible' },
-];
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -116,21 +108,36 @@ export const AddGoalModal = forwardRef<
   // formatMoney, identical to GoalDetailSheet). No estimate is computed at
   // all while the amount is blank/invalid or the date is partial/invalid/past
   // — those states show validation guidance instead (see the render below).
-  const previewMonthly = useMemo(() => {
-    if (amountState !== 'valid') return null;
-    if (dateState !== 'empty' && dateState !== 'valid') return null;
-    const amount = parseFloat(targetAmount);
-    const targetDate = dateState === 'valid' ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString() : null;
-    return requiredMonthlyForGoal({
-      id: 'preview',
-      name: '',
-      lifeGoalType: 'custom',
-      targetAmount: amount,
-      currentAmount: 0,
-      targetDate,
-      status: 'active',
-    });
-  }, [amountState, targetAmount, dateState, targetMonth, targetYear]);
+  /**
+   * Wave 4 closure — the SAME shared summary the edit sheet renders, so the
+   * same inputs produce the same copy and the same amount in both modes.
+   * Still the shared `requiredMonthlyForGoal` engine; nothing about the
+   * three-year horizon or the arithmetic moved into the UI.
+   */
+  const paceSummary = useMemo(
+    () =>
+      resolveGoalPaceSummary(
+        {
+          targetAmount: amountState === 'valid' ? parseFloat(targetAmount) : null,
+          targetDate:
+            dateState === 'valid' ? new Date(parseInt(targetYear, 10), parseInt(targetMonth, 10) - 1, 1).toISOString() : null,
+          dateState,
+          // A goal being created has no recorded progress yet.
+          currentAmount: 0,
+        },
+        (input) =>
+          requiredMonthlyForGoal({
+            id: 'preview',
+            name: '',
+            lifeGoalType: 'custom',
+            targetAmount: input.targetAmount,
+            currentAmount: input.currentAmount,
+            targetDate: input.targetDate,
+            status: 'active',
+          })
+      ),
+    [amountState, targetAmount, dateState, targetMonth, targetYear]
+  );
 
   function reset() {
     setType(null);
@@ -176,9 +183,16 @@ export const AddGoalModal = forwardRef<
     );
   }
 
-  function selectType(value: LifeGoalType, label: string) {
+  /**
+   * Wave 4 closure — the recorded defect. The old rule only filled an EMPTY
+   * name, so picking `Buy property` and then `New car` left the stale
+   * "Buy property" behind for the customer to correct by hand. The shared
+   * rule replaces a name that is still a generated default and never touches
+   * one the customer typed.
+   */
+  function selectType(value: LifeGoalType) {
+    setName((current) => resolveGoalNameOnPurposeChange({ currentName: current, previousPurpose: type, nextPurpose: value }));
     setType(value);
-    if (!name.trim()) setName(label);
   }
 
   function handleSave() {
@@ -198,7 +212,10 @@ export const AddGoalModal = forwardRef<
       // reads this cached field any more (Stream A follow-up §6); every
       // consumer, including this preview, calls requiredMonthlyForGoal
       // fresh.
-      estimatedMonthlyContribution: previewMonthly ?? undefined,
+      // The same engine value the summary displays — read from the shared
+      // summary rather than a second, parallel preview calculation.
+      estimatedMonthlyContribution:
+        paceSummary.kind === 'estimate' || paceSummary.kind === 'planning-guide' ? paceSummary.monthly : undefined,
       status: 'active',
     });
     reset();
@@ -219,31 +236,27 @@ export const AddGoalModal = forwardRef<
     () =>
       StyleSheet.create({
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
-        grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
-        tile: {
+        // Wave 4 device correction — a real, readable card per purpose,
+        // replacing the tiny visually-equal chip cloud the owner recorded.
+        // Two columns at normal width; one at compact width or a large
+        // accessibility font size, where two would clip the label.
+
+        summaryCard: {
+          backgroundColor: colors.surfaceMuted,
+          borderRadius: radius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          padding: spacing.md,
+          marginTop: spacing.md,
+          marginBottom: spacing.md,
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 6,
-          paddingHorizontal: spacing.md,
-          paddingVertical: spacing.sm,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surfaceMuted,
+          gap: spacing.md,
         },
-        tileActive: { backgroundColor: colors.accentSoft },
-        tileEmoji: { fontSize: 15 },
-        tileLabel: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        tileLabelActive: { color: colors.accentStrong, fontWeight: '600' },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 16,
-          marginBottom: spacing.md,
-          color: colors.textPrimary,
-        },
+        summaryName: { ...typography.body, fontWeight: '600', color: colors.textPrimary },
+        summaryMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
         row: { flexDirection: 'row', gap: spacing.sm },
-        dateInput: { flex: 1 },
+        dateFieldHalf: { flex: 1 },
         helperText: { ...typography.micro, color: colors.textSecondary, marginTop: spacing.sm, marginBottom: spacing.md, lineHeight: 16 },
         dateValidationText: { ...typography.caption, fontSize: 12, color: colors.warning, marginTop: spacing.sm, marginBottom: spacing.md, lineHeight: 16 },
         previewBox: { backgroundColor: colors.accentSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
@@ -254,124 +267,82 @@ export const AddGoalModal = forwardRef<
     [colors, radius, spacing, typography]
   );
 
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+
+  /** A restatement of the choices already made — never a new calculation.
+   * Appears only once the goal has both a purpose and a name to confirm. */
+  const summary = (() => {
+    const trimmedName = name.trim();
+    if (!trimmedName) return null;
+    const selectedType = GOAL_PURPOSES.find((g) => g.value === type);
+    if (!selectedType) return null;
+    const amountLabel = amountState === 'valid' ? formatMoney(parseFloat(targetAmount.trim())) : 'No target set';
+    const dateLabel = dateState === 'valid' ? `${targetMonth.padStart(2, '0')}/${targetYear}` : 'No target date';
+    return {
+      icon: goalPurposeIcon(selectedType.value),
+      name: trimmedName,
+      meta: `${selectedType.label} · ${amountLabel} · ${dateLabel}`,
+      spoken: `${trimmedName}. ${selectedType.label}. ${amountLabel}. ${dateLabel}.`,
+    };
+  })();
+
   const content = (
     <>
-      <Text style={styles.label}>What are you working towards?</Text>
-      <View style={styles.grid}>
-        {GOAL_TYPES.map((g) => {
-          const active = type === g.value;
-          return (
-            <TouchableOpacity
-              key={g.value}
-              style={[styles.tile, active ? styles.tileActive : null]}
-              onPress={() => selectType(g.value, g.label)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={`${g.label}${active ? ', selected' : ''}`}
-            >
-              <Text style={styles.tileEmoji}>{g.emoji}</Text>
-              <Text style={[styles.tileLabel, active ? styles.tileLabelActive : null]}>{g.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.label}>Goal name</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. House deposit"
-        placeholderTextColor={colors.textMuted}
-        value={name}
-        onChangeText={setName}
-        returnKeyType="next"
+      {/* Wave 4 closure — the SAME field system the edit adapter renders.
+          Create and edit can no longer drift into two designs for the same
+          five fields; this component is now purely the CREATE adapter,
+          holding its own state and deciding what saving means. */}
+      <GoalFormFields
+        testIDPrefix="goal"
+        today={startOfTodayLocal}
+        values={{ purpose: type, name, targetAmount, targetMonth, targetYear, priority }}
+        onChangePurpose={selectType}
+        onChangeName={setName}
+        onChangeTargetAmount={setTargetAmount}
+        onChangeTargetDate={(next) => {
+          setTargetMonth(next.month === null ? '' : String(next.month));
+          setTargetYear(next.year === null ? '' : String(next.year));
+        }}
+        onChangePriority={setPriority}
+        amountMessage={amountState === 'invalid' ? 'Enter a valid target amount, or leave it blank.' : null}
+        // Factual, and deliberately NOT a recommendation — Navilo never
+        // suggests how much a goal should be worth.
+        amountHelper={amountState === 'blank' ? 'You can add or change the target later.' : null}
+        dateMessage={dateMessage}
       />
-      <Text style={styles.label}>Target amount (optional)</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="$0"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
-        value={targetAmount}
-        onChangeText={setTargetAmount}
-        accessibilityLabel="Target amount, optional"
-      />
-      {/* Amount guidance sits directly beneath its own field, driven only by
-          amountState — independent of whatever the date fields are doing
-          (Stream A final correction pass §4/§2). */}
-      {amountState === 'blank' ? (
-        <Text style={styles.helperText}>Add a target amount to see an estimated monthly goal amount.</Text>
-      ) : amountState === 'invalid' ? (
-        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
-          Enter a valid target amount, or leave it blank.
-        </Text>
-      ) : null}
 
-      <Text style={styles.label}>Target date (optional)</Text>
-      <View style={styles.row}>
-        <TextInput
-          style={[styles.input, styles.dateInput]}
-          placeholder="MM"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="number-pad"
-          value={targetMonth}
-          onChangeText={setTargetMonth}
-          maxLength={2}
-          accessibilityLabel="Target month"
-        />
-        <TextInput
-          style={[styles.input, styles.dateInput]}
-          placeholder="YYYY"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="number-pad"
-          value={targetYear}
-          onChangeText={setTargetYear}
-          maxLength={4}
-          accessibilityLabel="Target year"
-        />
-      </View>
-      {/* Date validation sits directly beneath its own fields, driven only
-          by dateState — shown whenever the date itself is broken, whether
-          or not the amount is also invalid, so the two errors can appear
-          simultaneously without either masking the other. */}
-      {dateMessage ? (
-        <Text style={styles.dateValidationText} accessibilityLiveRegion="polite">
-          {dateMessage}
-        </Text>
-      ) : null}
-
-      {/* The combined estimate only ever appears once both fields are
-          independently valid — previewMonthly is already null whenever
-          amountState isn't 'valid' or dateState isn't 'empty'/'valid', so
-          no further gating is needed here. */}
-      {previewMonthly && previewMonthly > 0 ? (
-        <View style={styles.previewBox}>
-          <Text style={styles.previewText}>Estimated monthly goal amount: {formatMoney(previewMonthly)}</Text>
-          <Text style={styles.previewSubtext}>
-            {dateState === 'valid'
-              ? 'Based on your target amount and target date.'
-              : 'Based on a 3-year planning horizon. Add a target date for a date-based estimate.'}
-          </Text>
+      {/* Wave 4 closure — the shared, live pace summary. Identical wording
+          and identical amount to the edit sheet, from the same rule and the
+          same engine. */}
+      {paceSummary.kind === 'planning-guide' ? (
+        <View style={styles.previewBox} testID="goal-pace-planning-guide">
+          <Text style={styles.previewText}>{paceSummary.message}</Text>
+          <Text style={styles.previewSubtext}>{paceSummary.hint}</Text>
+        </View>
+      ) : paceSummary.kind === 'estimate' ? (
+        <View style={styles.previewBox} testID="goal-pace-estimate">
+          <Text style={styles.previewText}>{paceSummary.message}</Text>
+          <Text style={styles.previewSubtext}>Based on your target amount and target date.</Text>
+          {paceSummary.caution ? <Text style={styles.previewSubtext}>{paceSummary.caution}</Text> : null}
         </View>
       ) : null}
 
-      <Text style={styles.label}>Priority</Text>
-      <View style={styles.grid}>
-        {PRIORITIES.map((p) => {
-          const active = priority === p.value;
-          return (
-            <TouchableOpacity
-              key={p.value}
-              style={[styles.tile, active ? styles.tileActive : null]}
-              onPress={() => setPriority(p.value)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={`Priority: ${p.label}${active ? ', selected' : ''}`}
-            >
-              <Text style={[styles.tileLabel, active ? styles.tileLabelActive : null]}>{p.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* ---- Confirmation summary --------------------------------------- */}
+      {/* A restatement of what is about to be saved — no new calculation,
+          no advice, no urgency. Only appears once there is something real
+          to confirm. */}
+      {summary ? (
+        <View style={styles.summaryCard} accessible accessibilityLabel={summary.spoken}>
+          <AddIcon icon={summary.icon} tile emphasis="selected" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.summaryName}>{summary.name}</Text>
+            <Text style={styles.summaryMeta}>{summary.meta}</Text>
+          </View>
+        </View>
+      ) : null}
     </>
   );
 

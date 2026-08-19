@@ -578,3 +578,71 @@ export function buildComponentThemeMatrix(): Record<
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Add-icon decorative tones (Design 5.1 Wave 4 closure)
+// ---------------------------------------------------------------------------
+
+/**
+ * The owner's second recording showed the new Ionicons system reading as
+ * structurally correct but uniformly grey/pale — every domain the same
+ * weight, so nothing was scannable. These are the six restrained tone
+ * families that give the Add journey quiet category differentiation.
+ *
+ * They are IDENTITY accents, never financial status:
+ *
+ * - `coral` is deliberately NOT the destructive/error red. Debt is a normal
+ *   part of a money picture, not an error, and reusing the error role would
+ *   say otherwise every time a customer opened the catalogue. It is a muted,
+ *   desaturated warm tone that shares no value with `danger`.
+ * - `mint` must not be read as "success". Income and savings get a green
+ *   family because that is the conventional colour for money coming in, not
+ *   because anything succeeded, so it is deliberately softer and cooler than
+ *   the `success` role.
+ *
+ * Selection state continues to be carried by border, fill and tick. These
+ * tones never carry it, and nothing here is the sole indicator of anything.
+ */
+export type AddIconToneName = 'ocean' | 'teal' | 'mint' | 'amber' | 'violet' | 'coral';
+
+export interface AddIconTonePair {
+  /** The glyph colour — the stronger member of the family. */
+  fg: string;
+  /** The tile behind it — the softly tinted member. */
+  bg: string;
+}
+
+export const ADD_ICON_TONE_NAMES: readonly AddIconToneName[] = ['ocean', 'teal', 'mint', 'amber', 'violet', 'coral'];
+
+/**
+ * Scheme-scoped rather than style-scoped, deliberately: these are a fixed
+ * taxonomy of domains, not brand accents, so an item keeps the same tone
+ * whichever of the three colour styles the customer has chosen. All six
+ * themes (3 styles x 2 schemes) therefore resolve every family.
+ *
+ * Light values are low-saturation on a near-white tile; dark values lift the
+ * glyph and drop the tile to a translucent wash so it never glows.
+ */
+export const ADD_ICON_TONES: Readonly<Record<DesignScheme, Readonly<Record<AddIconToneName, AddIconTonePair>>>> = {
+  light: {
+    ocean: { fg: '#2C5F92', bg: '#E7EFF7' },
+    teal: { fg: '#1F6B6E', bg: '#E3F0F0' },
+    mint: { fg: '#2A6B4F', bg: '#E6F1EB' },
+    amber: { fg: '#8A6316', bg: '#F6EEDF' },
+    violet: { fg: '#5A4A8C', bg: '#EDEAF6' },
+    coral: { fg: '#96524B', bg: '#F6E9E7' },
+  },
+  dark: {
+    ocean: { fg: '#8FB6DC', bg: 'rgba(143,182,220,0.16)' },
+    teal: { fg: '#7FC2C4', bg: 'rgba(127,194,196,0.16)' },
+    mint: { fg: '#8CC3A6', bg: 'rgba(140,195,166,0.16)' },
+    amber: { fg: '#D8B473', bg: 'rgba(216,180,115,0.16)' },
+    violet: { fg: '#AEA2D9', bg: 'rgba(174,162,217,0.16)' },
+    coral: { fg: '#D2A09A', bg: 'rgba(210,160,154,0.16)' },
+  },
+};
+
+/** The tone pair for a scheme, never throwing on an unknown name. */
+export function resolveAddIconTone(scheme: DesignScheme, tone: AddIconToneName): AddIconTonePair {
+  return ADD_ICON_TONES[scheme][tone] ?? ADD_ICON_TONES[scheme].ocean;
+}

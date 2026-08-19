@@ -315,8 +315,25 @@ console.log('\n=== 12. Same-name disambiguation — blank providers, identical b
     /function disambiguateEverydayAccountLabels\(accounts: Asset\[\]\): Map<string, string> \{/.test(QUICK_ADD_SRC)
   );
   assert(
-    '12g. every chip in shipped source carries an explicit accessibilityLabel using the disambiguated text — VoiceOver/TalkBack announce it directly, not just via nested Text traversal',
-    /accessibilityLabel=\{label\}/.test(QUICK_ADD_SRC) && /accessibilityRole="button"\s*\n\s*accessibilityLabel=\{label\}/.test(QUICK_ADD_SRC)
+    // SUPERSEDED IN FORM by the Wave 4 device correction: the everyday-
+    // account chips are gone, replaced by the prominent AccountSelectionField
+    // rows. The GUARANTEE is unchanged and is now stronger — every row is a
+    // `radio` whose accessibility label is composed from the SAME
+    // disambiguated text plus its type, balance and selected state, built in
+    // one place (AccountSelectionField.rowLabel) rather than repeated per
+    // chip. Asserted here at both ends: this file still supplies the
+    // disambiguated name, and the shared field still announces it.
+    '12g. every account row carries an explicit accessibilityLabel built from the disambiguated text — VoiceOver/TalkBack announce it directly, not just via nested Text traversal',
+    (() => {
+      const usesDisambiguated = /name: everydayAccountLabels\.get\(a\.id\) \?\? everydayChipBaseText\(a\),/.test(QUICK_ADD_SRC);
+      const field = require('fs').readFileSync(
+        require('path').resolve(__dirname, '../src/components/shared/fields/AccountSelectionField.tsx'),
+        'utf8'
+      );
+      const announcesName = /function rowLabel\(choice: AccountChoice, isSelected: boolean\): string \{\s*\n\s*const parts = \[choice\.name, choice\.typeLabel\];/.test(field);
+      const onEveryRow = /accessibilityRole="radio"\s*\n\s*accessibilityLabel=\{rowLabel\(choice, isSelected\)\}/.test(field);
+      return usesDisambiguated && announcesName && onEveryRow;
+    })()
   );
 }
 

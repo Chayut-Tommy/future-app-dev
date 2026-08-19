@@ -7,10 +7,15 @@ export function ProgressBar({
   color,
   height = 6,
   accessibilityLabel,
+  tone,
 }: {
   progress: number;
   color?: string;
   height?: number;
+  /** Design 5.1 Wave 4 — ADDITIVE semantic alternative to `color`. An
+   * explicit `color` still wins, so every pre-existing caller's fill colour
+   * is unchanged. */
+  tone?: 'accent' | 'positive' | 'warning' | 'negative';
   /** Pass 2E — omitted by every pre-existing caller (unchanged, byte-
    * identical behaviour: a plain, non-accessible decorative View, since its
    * value is already conveyed by adjacent sibling/parent text). When
@@ -20,7 +25,9 @@ export function ProgressBar({
   accessibilityLabel?: string;
 }) {
   const { colors, radius } = useTheme();
-  const fillColor = color ?? colors.accent;
+  const toneColor =
+    tone === 'positive' ? colors.success : tone === 'warning' ? colors.warning : tone === 'negative' ? colors.danger : colors.accent;
+  const fillColor = color ?? toneColor;
   const pct = Math.max(0, Math.min(1, progress)) * 100;
   const styles = useMemo(
     () =>

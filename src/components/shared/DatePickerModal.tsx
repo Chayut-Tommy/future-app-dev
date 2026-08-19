@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTheme } from '../../theme/ThemeContext';
 import { Button } from './Button';
+import { sheetChromeStyles } from './sheetChrome';
 
 /**
  * A dedicated modal surface for date selection, isolated from any parent
@@ -60,15 +61,19 @@ export function DatePickerModal({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
-        sheet: {
-          backgroundColor: colors.surface,
-          borderTopLeftRadius: radius.card,
-          borderTopRightRadius: radius.card,
-          paddingHorizontal: spacing.lg,
-          paddingTop: spacing.md,
-          paddingBottom: Math.max(insets.bottom, spacing.lg),
-        },
+        // Design 5.1 Wave 4 — chrome from the one shared definition. The
+        // iOS-only Modal wrapping and the gesture-isolation boundary below
+        // are behaviour, not chrome, and are unchanged.
+        ...sheetChromeStyles({
+          surface: colors.surface,
+          scrim: semantic.scrim,
+          grabber: colors.borderStrong,
+          radiusCard: radius.card,
+          spacingSm: spacing.sm,
+          spacingMd: spacing.md,
+          spacingLg: spacing.lg,
+          insetBottom: insets.bottom,
+        }),
         title: { ...typography.heading, color: colors.textPrimary, marginBottom: spacing.sm },
         footer: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.md },
         doneButton: { paddingHorizontal: spacing.xl, flex: 0 },

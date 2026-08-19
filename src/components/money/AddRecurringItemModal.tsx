@@ -1,6 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
@@ -10,6 +9,12 @@ import { Button } from '../shared/Button';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { anchoredMonthlyDate } from '../../lib/calculations/recurringSchedule';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
+import { InlineSelect } from '../shared/fields/InlineSelect';
+import { billTypeIcon } from '../../lib/addIcons';
+import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
+import { DateTriggerField } from '../shared/fields/DateTriggerField';
+import { TextField } from '../shared/fields/TextField';
+import { CurrencyField } from '../shared/fields/CurrencyField';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
 // Rent and Mortgage are deliberately separate presets, not one combined
@@ -24,23 +29,23 @@ import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorksp
 // function"). Icons for Car Loan/Personal Loan match the icons
 // AddWealthItemModal itself already assigns those bill types, so the
 // picker and the eventual bill never visually disagree.
-const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; emoji: string; handoffLoanType?: LiabilityType }[] = [
-  { label: 'Rent', icon: 'home-outline', emoji: '🏠' },
-  { label: 'Mortgage', icon: 'home', emoji: '🏠', handoffLoanType: 'mortgage' },
-  { label: 'Utilities', icon: 'flash-outline', emoji: '⚡' },
-  { label: 'Phone', icon: 'phone-portrait-outline', emoji: '📱' },
-  { label: 'Internet', icon: 'wifi-outline', emoji: '🌐' },
-  { label: 'Gym', icon: 'barbell-outline', emoji: '🏋️' },
-  { label: 'Subscription', icon: 'play-circle-outline', emoji: '🎬' },
-  { label: 'Car', icon: 'car-outline', emoji: '🚗' },
+const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; handoffLoanType?: LiabilityType }[] = [
+  { label: 'Rent', icon: 'home-outline' },
+  { label: 'Mortgage', icon: 'home', handoffLoanType: 'mortgage' },
+  { label: 'Utilities', icon: 'flash-outline' },
+  { label: 'Phone', icon: 'phone-portrait-outline' },
+  { label: 'Internet', icon: 'wifi-outline' },
+  { label: 'Gym', icon: 'barbell-outline' },
+  { label: 'Subscription', icon: 'play-circle-outline' },
+  { label: 'Car', icon: 'car-outline' },
   // Distinct icon from the plain 'Car' expense preset above — both were
   // briefly 'car-outline', which made the details-step header's
   // `BILL_PRESETS.find(p => p.icon === icon)` lookup ambiguous and always
   // resolve to 'Car' instead of 'Car Loan' when editing a car-loan bill.
-  { label: 'Car Loan', icon: 'car-sport-outline', emoji: '🚙', handoffLoanType: 'car_loan' },
-  { label: 'Personal Loan', icon: 'document-text-outline', emoji: '📄', handoffLoanType: 'personal_loan' },
-  { label: 'Insurance', icon: 'shield-checkmark-outline', emoji: '🛡️' },
-  { label: 'Other', icon: 'ellipse-outline', emoji: '➕' },
+  { label: 'Car Loan', icon: 'car-sport-outline', handoffLoanType: 'car_loan' },
+  { label: 'Personal Loan', icon: 'document-text-outline', handoffLoanType: 'personal_loan' },
+  { label: 'Insurance', icon: 'shield-checkmark-outline' },
+  { label: 'Other', icon: 'ellipse-outline' },
 ];
 
 // Deferred loan handoff (Stream D, D1, corrected): chooseBillType() used to
@@ -153,6 +158,7 @@ export const AddRecurringItemModal = forwardRef<
   const { addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('home-outline');
+  const [billTypeLabel, setBillTypeLabel] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
   const [frequency, setFrequency] = useState<PayFrequency>('monthly');
@@ -162,11 +168,16 @@ export const AddRecurringItemModal = forwardRef<
   // with "day of month = 10" silently behaved like a monthly one). Mirrors
   // Income's own "Next expected payday" picker for the same frequencies.
   const [nextDueDate, setNextDueDate] = useState<string | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
   // Category-first, like the other add flows (PRD ask) — picking what kind
   // of bill this is comes before the amount/date details. Editing an
   // existing bill already has a type, so it skips straight to details.
-  const [formStep, setFormStep] = useState<'category' | 'details'>('category');
+  // Design 5.1 Wave 4 — the preliminary "What's this bill for?" page is
+  // removed; its twelve presets are now the in-form selector below. The
+  // loan handoff inside `chooseBillType` is a GENUINE nested linked-object
+  // step (a mortgage/car/personal loan is a different object with its own
+  // liability and repayment date) and is preserved exactly, including its
+  // deferred-dismissal race guard.
+
 
   const isEditing = !!editItem;
   const usesDayOfMonth = frequency === 'monthly';
@@ -272,7 +283,7 @@ export const AddRecurringItemModal = forwardRef<
       setDayOfMonth(day);
       const due = itemFrequency === 'monthly' ? null : editItem.nextDueDate;
       setNextDueDate(due);
-      setFormStep('details');
+      setBillTypeLabel(BILL_PRESETS.find((p) => p.icon === editItem.icon)?.label ?? null);
       initialSnapshot.current = { label: editItem.label, amount: String(editItem.amount), frequency: itemFrequency, dayOfMonth: day, nextDueDate: due };
     } else {
       setIcon('home-outline');
@@ -281,15 +292,14 @@ export const AddRecurringItemModal = forwardRef<
       setFrequency('monthly');
       setDayOfMonth('1');
       setNextDueDate(null);
-      setFormStep('category');
+      setBillTypeLabel(null);
       initialSnapshot.current = { label: '', amount: '', frequency: 'monthly', dayOfMonth: '1', nextDueDate: null };
     }
-    setPickerOpen(false);
   }, [visible, editItem]);
 
   useEffect(() => {
-    onTitleChange?.(formStep === 'category' ? "What's this bill for?" : isEditing ? 'Edit bill' : 'Add a bill');
-  }, [formStep, isEditing, onTitleChange]);
+    onTitleChange?.(isEditing ? 'Edit bill' : 'Add a bill');
+  }, [isEditing, onTitleChange]);
 
   function chooseFrequency(f: PayFrequency) {
     setFrequency(f);
@@ -298,7 +308,6 @@ export const AddRecurringItemModal = forwardRef<
     // frequency (same rule Income already follows).
     setDayOfMonth('1');
     setNextDueDate(null);
-    setPickerOpen(false);
   }
 
   // Strict money-input contract (regression-protection review, B2.0B
@@ -355,9 +364,11 @@ export const AddRecurringItemModal = forwardRef<
       }
       return;
     }
+    setBillTypeLabel(p.label);
     setIcon(p.icon);
+    // Unchanged: the preset's name replaces whatever is in the field. This
+    // is exactly what the removed page's "Change" round-trip already did.
     setLabel(p.label);
-    setFormStep('details');
   }
 
   // UX correction — full-workspace extension. Embedded Cancel/backdrop/
@@ -421,114 +432,69 @@ export const AddRecurringItemModal = forwardRef<
     () =>
       StyleSheet.create({
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: colors.textPrimary,
-        },
         chipRow: { flexDirection: 'row', gap: spacing.sm },
         chip: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         chipActive: { backgroundColor: colors.accentSoft },
         chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
         chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
-        dateButton: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 14,
-        },
-        dateButtonText: { ...typography.body, fontSize: 15, color: colors.textPrimary },
-        dateButtonPlaceholder: { color: colors.textMuted },
         dateHint: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs },
         footerButton: { flex: 1 },
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
-        amountError: { ...typography.caption, fontSize: 12, color: colors.danger, marginTop: -spacing.xs, marginBottom: spacing.sm },
-        categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-        categoryCard: {
-          flexBasis: '30%',
-          flexGrow: 1,
-          alignItems: 'center',
-          paddingVertical: spacing.md,
-          borderRadius: radius.control,
-          backgroundColor: colors.surfaceMuted,
-        },
-        categoryCardEmoji: { fontSize: 26, marginBottom: spacing.xs },
-        categoryCardLabel: { ...typography.micro, fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontWeight: '600' },
-        selectedTypeRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: spacing.sm,
-          backgroundColor: colors.accentSoft,
-          borderRadius: radius.control,
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.md,
-          marginBottom: spacing.md,
-        },
-        selectedTypeEmoji: { fontSize: 20 },
-        selectedTypeLabel: { ...typography.body, fontSize: 14, color: colors.accentStrong, fontWeight: '700', flex: 1 },
-        selectedTypeChange: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '700' },
       }),
     [colors, radius, spacing, typography]
   );
 
-  const selectedPreset = BILL_PRESETS.find((p) => p.icon === icon) ?? null;
-
-  if (formStep === 'category') {
-    const categoryContent = (
-      <View style={styles.categoryGrid}>
-        {BILL_PRESETS.map((p) => (
-          <TouchableOpacity key={p.label} style={styles.categoryCard} activeOpacity={0.8} onPress={() => chooseBillType(p)}>
-            <Text style={styles.categoryCardEmoji}>{p.emoji}</Text>
-            <Text style={styles.categoryCardLabel}>{p.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-
-    if (embedded) return categoryContent;
-
-    return (
-      <KeyboardSheet
-        visible={visible}
-        onClose={onClose}
-        isDirty={false}
-        title="📅 What's this bill for?"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}
-        onDismiss={Platform.OS === 'ios' ? runPendingLoanHandoff : undefined}
-        animationType={dismissAnimationType}
-      >
-        {categoryContent}
-      </KeyboardSheet>
-    );
-  }
+  // Design 5.1 Wave 4 — `icon` defaults to 'home-outline' on reset, which
+  // resolves to the Rent preset. The removed page always overwrote that
+  // default before the form was reachable, so the default was never visible.
+  // Now that the selector IS the form, showing "Rent" as pre-selected would
+  // be inventing a choice the customer never made — so the selector's own
+  // value is tracked explicitly and starts empty. Nothing about `icon`, its
+  // default, or what is persisted has changed.
+  /** Local midnight today — what the forward date list starts from. */
+  const startOfTodayLocal = (() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  })();
+  const selectedPreset = billTypeLabel ? BILL_PRESETS.find((p) => p.label === billTypeLabel) ?? null : null;
+  // Exactly the presets the removed page rendered as a grid — same order,
+  // same labels, same emoji. Keyed by label because the label is what
+  // uniquely identifies a preset (two presets briefly shared an icon).
+  // Wave 4 device correction — the designed icon from the central map,
+  // never a platform emoji.
+  const billTypeOptions = BILL_PRESETS.map((b) => ({ value: b.label, label: b.label, icon: billTypeIcon(b.label) }));
 
   const content = (
     <>
-      <View style={styles.selectedTypeRow}>
-        <Text style={styles.selectedTypeEmoji}>{selectedPreset?.emoji ?? '📅'}</Text>
-        <Text style={styles.selectedTypeLabel}>{selectedPreset?.label ?? 'Bill'}</Text>
-        <TouchableOpacity onPress={() => setFormStep('category')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.selectedTypeChange}>Change</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Design 5.1 Wave 4 — the twelve presets from the removed page, in
+          the form. `chooseBillType` is called unchanged, so choosing
+          Mortgage / Car Loan / Personal Loan still hands off to the shared
+          loan flow with its existing race guard rather than continuing
+          here. */}
+      <InlineSelect
+        label="What's this bill for?"
+        placeholder="Choose a bill type"
+        value={selectedPreset?.label ?? null}
+        onChange={(nextLabel) => {
+          const preset = BILL_PRESETS.find((b) => b.label === nextLabel);
+          if (preset) chooseBillType(preset);
+        }}
+        options={billTypeOptions}
+        testID="add-bill-type"
+      />
 
-      <Text style={styles.label}>Name</Text>
-      <TextInput style={styles.input} placeholder="e.g. Netflix" placeholderTextColor={colors.textMuted} value={label} onChangeText={setLabel} />
+      <TextField label="Name" required placeholder="e.g. Netflix" value={label} onChangeText={setLabel} />
 
-      <Text style={styles.label}>Amount</Text>
-      <TextInput style={styles.input} placeholder="$0" placeholderTextColor={colors.textMuted} keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
-      {amountError ? (
-        <Text style={styles.amountError} accessibilityLiveRegion="polite">
-          Enter an amount to the nearest cent (up to 2 decimal places).
-        </Text>
-      ) : null}
+      <CurrencyField
+        label="Amount"
+        required
+        large
+        placeholder="$0"
+        value={amount}
+        onChangeText={setAmount}
+        message={amountError ? 'Enter an amount to the nearest cent (up to 2 decimal places).' : null}
+      />
 
       <Text style={styles.label}>How often</Text>
       <View style={styles.chipRow}>
@@ -543,35 +509,41 @@ export const AddRecurringItemModal = forwardRef<
       </View>
 
       {usesDayOfMonth ? (
-        <>
-          <Text style={styles.label}>Day of month due</Text>
-          <TextInput style={styles.input} placeholder="1" placeholderTextColor={colors.textMuted} keyboardType="number-pad" value={dayOfMonth} onChangeText={setDayOfMonth} />
-        </>
+        /* Wave 4 device correction — this is a RECURRING ANCHOR, not a
+           date. It was a bare numeric box that raised the number pad and
+           could sit under it; it is now a compact trigger showing the
+           anchor in words with an inline 1-31 list. `dayOfMonth` stays a
+           string and `nextOccurrence`/`anchoredMonthlyDate` are untouched,
+           so the short-month clamp behaves exactly as before. */
+        <DayOfMonthField
+          label="Day of month due"
+          value={dayOfMonth.trim() === '' ? null : parseInt(dayOfMonth, 10)}
+          onChange={(day) => setDayOfMonth(String(day))}
+          testID="bill-day-of-month"
+        />
       ) : (
         <>
-          <Text style={styles.label}>Next due date</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={() => setPickerOpen(true)}>
-            <Text style={[styles.dateButtonText, !nextDueDate ? styles.dateButtonPlaceholder : null]}>
-              {nextDueDate ? formatDate(nextDueDate) : 'Choose a date'}
-            </Text>
-            <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+          {/* Wave 4 closure — THE recorded defect. This was an inline
+              <DateTimePicker> that expanded beneath the form while the
+              numeric keyboard could still be up, so on a weekly/fortnightly
+              bill the calendar landed below the fold and had to be hunted
+              for by scrolling. It now uses the SAME focused picker surface
+              recurring income already used: the keyboard goes first, the
+              picker covers the sheet, and nothing needs scrolling.
+              `direction="future"` preserves the old picker's minimumDate
+              rule by construction — the list starts at today. */}
+          <DateTriggerField
+            label="Next due date"
+            direction="future"
+            value={nextDueDate ? new Date(nextDueDate) : null}
+            today={startOfTodayLocal}
+            optional
+            onChange={(next) => setNextDueDate(next.toISOString())}
+            testID="bill-next-due-date"
+          />
           <Text style={styles.dateHint}>
             {frequency === 'weekly' ? 'Repeats every 7 days from this date.' : 'Repeats every 14 days from this date.'}
           </Text>
-          {pickerOpen ? (
-            <DateTimePicker
-              value={nextDueDate ? new Date(nextDueDate) : new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              minimumDate={new Date()}
-              onChange={(event, date) => {
-                if (Platform.OS === 'android') setPickerOpen(false);
-                if (event.type === 'dismissed') return;
-                if (date) setNextDueDate(date.toISOString());
-              }}
-            />
-          ) : null}
         </>
       )}
 

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { sheetChromeStyles } from './sheetChrome';
 
 /**
  * Generic bottom-sheet for short "here's how this works" explanations —
@@ -28,16 +29,21 @@ export function InfoSheet({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
-        sheet: {
-          backgroundColor: colors.surface,
-          borderTopLeftRadius: radius.card,
-          borderTopRightRadius: radius.card,
-          paddingHorizontal: spacing.lg,
-          paddingTop: spacing.sm,
-          maxHeight: '80%',
-        },
-        grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
+        // Design 5.1 Wave 4 — backdrop/sheet/grabber now come from the one
+        // shared definition in sheetChrome.ts. This sheet's own additions
+        // (a scroll cap, and its own bottom padding supplied by the close
+        // row below rather than the sheet) are layered on top.
+        ...sheetChromeStyles({
+          surface: colors.surface,
+          scrim: semantic.scrim,
+          grabber: colors.borderStrong,
+          radiusCard: radius.card,
+          spacingSm: spacing.sm,
+          spacingMd: spacing.md,
+          spacingLg: spacing.lg,
+          insetBottom: 0,
+        }),
+        sheetCap: { maxHeight: '80%', paddingBottom: 0 },
         title: { ...typography.heading, fontSize: 18, color: colors.textPrimary, marginBottom: 2 },
         subtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.lg },
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
@@ -50,7 +56,7 @@ export function InfoSheet({
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, styles.sheetCap]}>
           <View style={styles.grabber} />
           <Text style={styles.title}>{title}</Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}

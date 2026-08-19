@@ -54,7 +54,7 @@ export function TodayScreen() {
   const navigation = useNavigation<any>();
   const { t } = useTranslation();
   const { celebrate } = useCelebration();
-  const { colors, spacing, typography, radius, glow, cardShadow } = useTheme();
+  const { colors, spacing, typography, radius, glow, cardShadow, minTouchTarget } = useTheme();
   const insets = useSafeAreaInsets();
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
@@ -187,6 +187,11 @@ export function TodayScreen() {
   // full list. Full multi-goal management (reorder, priority, all goals)
   // remains exclusively in Grow, unchanged.
   const primaryActiveGoal = data.goals.find((g) => g.status === 'active') ?? null;
+  /** Wave 4 closure — Today shows ONE focus goal, so with several active
+   * goals a customer had no visible route to the rest. Completed and
+   * archived goals are never counted; the existing focus-goal selection is
+   * untouched. */
+  const activeGoalCount = data.goals.filter((g) => g.status === 'active').length;
   // Derived live from data.goals by id, not a snapshot taken at tap-time —
   // otherwise a contribution that completes a goal wouldn't be reflected
   // in the already-open sheet (PRD bug report: "still behaves like active"
@@ -439,9 +444,19 @@ export function TodayScreen() {
         sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
         sectionLink: { ...typography.micro, color: colors.accent, fontWeight: '700' },
         goalName: { ...typography.body, fontSize: 15, color: colors.textPrimary, fontWeight: '700', marginBottom: 6 },
+        // Wave 4 closure — the multi-goal route. 44pt minimum target.
+        viewAllGoalsRow: {
+          minHeight: minTouchTarget,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: spacing.md,
+          marginBottom: spacing.md,
+        },
+        viewAllGoalsText: { ...typography.body, fontWeight: '600', color: colors.accentStrong },
         goalAmount: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 6 },
       }),
-    [colors, spacing, typography, radius, glow, cardShadow, insets.top]
+    [colors, spacing, typography, radius, glow, cardShadow, insets.top, minTouchTarget]
   );
 
   return (
@@ -618,6 +633,24 @@ export function TodayScreen() {
           onAction={() => setGoalModalVisible(true)}
         />
       )}
+
+      {/* Wave 4 closure — with more than one active goal, a visible route to
+          the EXISTING full goals list. Reuses that screen and its navigation
+          route; no new sheet, no new layer, and Today still renders exactly
+          one focus goal. */}
+      {activeGoalCount > 1 ? (
+        <TouchableOpacity
+          style={styles.viewAllGoalsRow}
+          onPress={() => navigation.navigate('Goals')}
+          accessibilityRole="button"
+          accessibilityLabel={`View all goals, ${activeGoalCount} active`}
+          accessibilityHint="Opens your full goals list"
+          testID="today-view-all-goals"
+        >
+          <Text style={styles.viewAllGoalsText}>View all goals ({activeGoalCount})</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.accentStrong} />
+        </TouchableOpacity>
+      ) : null}
 
       {/* Correction pass — recovery/first-run affordances (locked Score,
           incomplete first-run money picture) are genuinely necessary

@@ -59,6 +59,12 @@ function dISO(iso: string): string {
   return d(iso).toISOString();
 }
 
+/** A date exactly N days before now, carrying the same time-of-day, so a
+ * fixture sits robustly inside a rolling window rather than on its edge. */
+function daysAgoISO(days: number): string {
+  return new Date(Date.now() - days * 86400000).toISOString();
+}
+
 function baseData(): AppData {
   return createEmptyAppData();
 }
@@ -540,9 +546,21 @@ console.log('=== SECTION 6: Aggregate debt cost vs category-based coaching (fina
     // above, which never does regardless of baseline (proven in 6c/6j/6m).
     const manualDebtCatWithBaseline: AppData = {
       ...manualDebtCatData,
+      // ISOLATION FIX (Wave 4 closure) — these two dates were hard-coded
+      // ('2026-06-20' and '2026-08-13') while computeCategoryDeltas compares
+      // ROLLING 30-day windows measured back from Date.now(). On 19 August
+      // 2026 the 60-day boundary landed exactly on 2026-06-20, and because
+      // `now` carries a time-of-day while the fixture date is midnight, the
+      // prior-period transaction fell just outside its own window and the
+      // assertion below began failing on a clock change alone. Nothing in
+      // src/lib/calculations changed — it is byte-identical to the Wave 3
+      // checkpoint. The dates are now derived from today so the fixture
+      // means the same thing every day: one expense comfortably inside the
+      // current window, one comfortably inside the prior one. The asserted
+      // amounts (140 current, 100 prior) are unchanged.
       transactions: [
-        { id: 'manual-debt-prior', type: 'expense', amount: 100, categoryId: 'cat-debt', date: dISO('2026-06-20') },
-        { id: 'manual-debt-current', type: 'expense', amount: 140, categoryId: 'cat-debt', date: dISO('2026-08-13') },
+        { id: 'manual-debt-prior', type: 'expense', amount: 100, categoryId: 'cat-debt', date: daysAgoISO(40) },
+        { id: 'manual-debt-current', type: 'expense', amount: 140, categoryId: 'cat-debt', date: daysAgoISO(6) },
       ],
     };
     const manualDeltas = computeCategoryDeltas(manualDebtCatWithBaseline);

@@ -444,7 +444,14 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
       (SAFE_TO_SPEND_PRESENTATION_SRC.match(/const heroState = selectSafeToSpendHeroState\(safeToSpend\);/g) || []).length === 1
   );
   assert(
-    'every one of the 8 card-state branches gates on heroState, not a locally re-derived boolean (final Pass 1 closure: invalid_data split into unavailable_balance_data / unavailable_other_data)',
+    // Wave 4 closure, P1 — `goals_underfunded` deliberately no longer has a
+    // branch of its own. It was the ONLY state whose branch suppressed the
+    // Available Until Payday amount for a reason that is not an AUP
+    // condition, which is what produced the "-$6,802" substitution; it now
+    // falls through to the ordinary card. The guarantee this assertion
+    // exists to protect — every branch that DOES exist gates on the shared
+    // heroState rather than a locally re-derived boolean — is unchanged.
+    'every remaining card-state branch gates on heroState, not a locally re-derived boolean',
     [
       "'unavailable_balance_data'",
       "'unavailable_other_data'",
@@ -452,8 +459,17 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
       "'missing_balance'",
       "'recorded_overspend'",
       "'commitments_exceed_cash'",
-      "'goals_underfunded'",
-    ].every((state) => SAFE_TO_SPEND_HERO_SRC.includes(`heroState === ${state}`))
+    ].every((state) => SAFE_TO_SPEND_HERO_SRC.includes(`heroState === ${state}`)) &&
+      !/heroState === 'goals_underfunded'/.test(SAFE_TO_SPEND_HERO_SRC)
+  );
+  assert(
+    'and goals_underfunded now presents the SAME canonical cycle amount as the normal state, so the card and its breakdown cannot disagree',
+    /case 'goals_underfunded':[\s\S]*?\.\.\.resolveAmount\(Math\.max\(0, safeToSpend\.cycleRemainingPool\)\),/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
+  );
+  assert(
+    'and its goal statement is supporting copy, never the primary amount line, and never quotes the monthly cash-flow figure',
+    /case 'goals_underfunded':[\s\S]*?primaryCopy: heroCopy\.amountLabel,/.test(SAFE_TO_SPEND_PRESENTATION_SRC) &&
+      !/availableForGoals\s*\n?\s*\)\} is currently available/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
   );
   assert(
     'the unavailable_balance_data branch renders neither $0 nor any numeric formatMoney call, does not render the "≈ .../day" daily-rate line, and renders whatever primaryCopy/supportingCopy the shared selector returns (Pass 2A correction: statusLines was replaced by these two explicit fields; the literal balance-specific wording itself now lives once in safeToSpendPresentation.ts, checked separately below, not duplicated here)',
