@@ -228,3 +228,233 @@ All 20 functional and data invariants from the audit §14 remain preserved uncha
 6. Transition-stress and freeze behaviour under Android's own animation and lifecycle timing.
 
 These become explicit Wave 11 sign-off items.
+
+---
+
+# Change control — Wave 5 (Today) implementation record (19 August 2026)
+
+**Status.** Implemented, all automated gates passed, **unstaged and uncommitted** pending owner iOS device testing. Wave 6 not started.
+
+## 1. The composed Today hierarchy
+
+Today now composes, in this order: greeting → money-picture checklist → Today Briefing hero → journey snapshot → current-month snapshot → Worth Knowing → goal → Score footnote.
+
+The setup checklist keeps its previously accepted third-from-top priority and still owns its own `moneyPictureChecklistDismissed || allDone` visibility rule — Today renders it unconditionally and does not gate it. For an established customer the card returns null exactly as it always did, so the completed-user hierarchy begins at the Briefing.
+
+## 2. Cards excluded from the default composition — dispositions
+
+Each card below is **removed from Today's default composition only**. Every component file, every engine and every navigation destination is preserved unchanged. Nothing was deleted from the repository.
+
+| Card | Disposition | Where its value now lives |
+|---|---|---|
+| `ProfileNudgeCard` | Removed from Today | Setup prompting is the money-picture checklist's job; two competing setup prompts on one page was the defect. |
+| `FinancialStateCard` | Removed from Today | `financialState.ts` is untouched and still serves the Wealth Map. It is no longer a fallback beneath Worth Knowing. |
+| `SavingFactsCard` | Removed from Today | Generic, non-personal content; it competed with a real personalised insight for the same slot. |
+| `LuluCheckInCard` | Removed from Today | Retained in the codebase, unrouted from Today. |
+| `LuluRecommendationCard` | Removed from Today | Retained in the codebase, unrouted from Today. |
+| `SmartReminderCard` | No longer a standalone default card | The top reminder is represented by the Briefing's reminder tile; `ReminderDetailSheet`, the full reminder lifecycle and `reminders.ts` are all unchanged and still reachable. |
+
+**No engine, no persistence path, no navigation route and no financial calculation was altered by any of these removals.**
+
+## 3. Worth Knowing owns the insight slot alone
+
+`pickWorthKnowingInsight` is called exactly once and at most one insight card can render. There is no `FinancialStateCard` fallback, no negative-net-worth suppression, and when nothing qualifies the slot renders nothing at all — no card and no spacer. `worthKnowing.ts` itself is unchanged.
+
+## 4. Score containment
+
+The Score is no longer Briefing content in any form. It renders as a quiet supporting footnote row after the goal section, carrying one accessible sentence that conveys the label and the containment together.
+
+Copy changes (presentation only — `luluScore.ts` is unchanged):
+
+- available → `Interim · Based on what you’ve recorded · Not a credit score`
+- locked → `Not enough recorded yet` (was `Add income to unlock`)
+- unavailable/invalid → `Not enough recorded yet` (was `Score unavailable`)
+
+A locked, invalid or out-of-range score shows **no number** — never `0` as a stand-in, and never a clamped value. The existing Score explanation destination is unchanged.
+
+## 5. `contrastOverrides.ts` retired
+
+The module is **deleted**, with zero remaining consumers. Its two gradient-contrast roles moved into `semanticTokens.ts` with their derivations carried over unchanged (`HERO_SCRIM_OPACITY`, `INSIGHT_PROVENANCE_OPACITY`).
+
+`WARNING_TEXT_LIGHT_OVERRIDE` was **replaced outright rather than moved**. Its four consumers (`MonthSnapshotCard`, `FinancialStateCard`, `SmartReminderCard`, `WorthKnowingCard`) now read the Design 5.1 `semantic.warning` role, which at `#8A5E14` in light is **darker** than the legacy override `#986209` it existed to correct — so the override is no longer needed to meet the floor. All six-theme contrast floors pass (`design5-contrast` 141/141, `pass-2e-contrast-corrections` 43/43).
+
+## 6. Superseded test assertions
+
+Presentation and source-order assertions were updated **only** where the authorised Design 5.1 hierarchy supersedes them. In every case the behavioural, financial, lifecycle, navigation and accessibility intent was preserved and re-asserted against the new hierarchy — no financial expectation was edited to accommodate a changed output.
+
+Files reconciled: `design5-wave4-picker-inventory`, `pass-2b-correction`, `pass-2b-score-journey`, `pass-2b-visual-correction`, `pass-2d-today-grow-hierarchy`, `pass-2e-contrast-corrections` (+ rendered), `worth-knowing`.
+
+## 7. Out of scope, unchanged
+
+The deferred per-goal AUP opt-in is **not** Wave 5 work and was not started. Ionicons remains the approved icon mapping; Lucide was not adopted. Android physical testing remains deferred to Wave 11.
+
+---
+
+# Change control — Wave 5 visual-fidelity pass for Today (20 August 2026)
+
+**Status.** Implemented, all automated gates passed, **unstaged and uncommitted** pending owner iOS device testing. Wave 5 not checkpointed. Wave 6 not started.
+
+## 1. Why the first Wave 5 pass looked unchanged
+
+The first pass implemented the Design 5.1 **composition** — which cards appear, in what order, under what caps — and proved it with source-order and selector assertions. Every one of those assertions was still true of the pre-5.1 *appearance*, so the pass could be fully green while the screen looked identical.
+
+Concretely: the Briefing kept its saturated `naviloPalette` gradient and its three-column tile grid; the AUP figure rendered at tile scale beside the words "Bill due"; the Journey kept its five-piece card; the month card kept two shadowed mini-tiles plus a boxed net strip; Worth Knowing kept a second gradient; there was no ambient field and no date eyebrow. The hierarchy was right and nothing else was.
+
+## 2. Ambient field and header
+
+`TodayAmbientField` mounts into `Screen`'s existing ambient slot: the `ambient` semantic role's ordered stops, eased (t²) so the tint is strongest at the top and has mostly resolved by two-thirds down, over `220pt + safe-area inset` so the fade is measured from the true top of the screen. `pointerEvents="none"` on both the slot and the layer. No image, no dependency, no entrance animation, no raw colour. It renders nothing rather than a flat block if a theme ever supplies fewer than two stops.
+
+Header anatomy is now local date eyebrow → greeting (`titleScreen`) → 44pt circular Settings control. The date comes from `formatTodayDateEyebrow(currentDate)` — the customer's own live local calendar — and is uppercased by the `eyebrow` **type role**, which suppresses the transform for Thai. The brand lockup was removed.
+
+## 3. The hero
+
+One `heroSurface` gradient at `designRadius.hero` (20pt), replacing the saturated purple block. Anatomy: eyebrow → measure label → `figureHero` (46pt) figure → timeframe line → divider → up to two priority rows → provenance footer left / **How this works** right.
+
+The measure block is one tap target opening the same authoritative AUP destination as before. The timeframe line (`formatHeroTimeframe`) is read straight off the Safe-to-Spend result and returns **null** rather than guessing when no payday is known. Setup state keeps the hero's geometry, renders **no figure slot at all**, states the presentation's own exact missing-input copy, and carries the same `AVAILABLE…` accessible name so the affordance keeps one identity in every state.
+
+## 4. Priority rows
+
+`selectBriefingPriorityRows` takes the array `selectBriefingTiles` already produced, drops the AUP tile (now the hero headline) and enriches each remaining tile with the exact date and amount a third-width tile had no room for — joining against the same timeline events and the same reminder the Briefing was already given, via the engine's own occurrence-identity functions. **Order and cap are inherited by construction**, not re-derived.
+
+Each row: 28pt marker tile, the engine's own label verbatim, exact date, amount, chevron, one composed spoken sentence, ≥52pt height over a 44pt touch floor. Four markers, not two: `urgent` is reserved for money genuinely already late; a bill due **today** is `caution`. Income is only ever `positive`. Amounts drop to their own line rather than truncating at compact width or accessibility text sizes.
+
+## 5. Journey, month, Worth Knowing, goal, Score
+
+- **Journey** — one compact row (28pt tile, title, stage, slim bar, metadata, chevron), flat and bordered. Its separate "View full journey" footer is gone; the whole row is the target, same destination. Metadata moves below the title at accessibility sizes.
+- **Month** — one flat card with three labelled measures, reflowing three-column → two-plus-one → stacked. **No arithmetic in the component**: `selectMonthMeasures` produces labelled, formatted, toned view models.
+- **Worth Knowing** — flat highlighted tier (`infoTint` + `infoBorder`), no gradient. `info` is a shared role, so it is invariant across Ocean/Purple/Sunrise **by Design 5.1's rule** that a style may not retint status roles.
+- **Goal** — one compact row using the shared Wave 4 `resolveGoalProgressState`; percentage trails, or moves below at accessibility sizes.
+- **Score** — unchanged containment; restyled to quiet `meta` ink with no fill, radius or elevation.
+
+## 6. Third month measure — documented variance
+
+Design 5.1 p.7 prefers "Money in / Spending recorded / **Moved to savings**". **No canonical selector for money moved to savings exists.** `monthlySummary.ts` exposes income, aggregate spending and three payment-source buckets; `PaymentSource` has no `savings` value (`computeThisMonthRecordedSummary` records savings as explicitly deferred scope). Creating it would be an engine change — a stop condition for this pass and barred by Wave 5's read-only engine list.
+
+The third measure is therefore **Net recorded** = recorded income − recorded spending: the exact figure this card already displayed as "Net this month", lifted out of the component into a pure function. **Its value is byte-identical to before this pass.** Money in keeps its established `+` sign; spending is a magnitude under its own explicit label (the previous `-$860` read as a correction); a negative net keeps its minus. Spending is always neutral ink, never urgent red; a negative net is caution, never urgent.
+
+## 7. A false positive this pass exposed
+
+`grow-tab-navigation.render.test.tsx` asserted canonical Grow content via `findByText('Your Journey')`. **Today's own section header rendered that same string**, so on paths where Grow was never reached the helper matched Today's header and reported success. Two tests were passing on that. Since Pass 2E, Today's Score and Journey controls **push `GrowDetail`, a root-stack route this tab-only harness does not register**, so those navigations never resolved there. The helper now asserts the **header role**, which only Grow's section heading carries; the two tests keep the regression they actually guard (a later plain tab tap still renders canonical Grow content) and no longer claim a navigation the harness cannot perform. The pushed destinations remain fully covered by `pass-2e-pushed-destinations.render.test.tsx` against the real `RootNavigator`.
+
+## 8. Superseded presentation assertions
+
+Updated **only** where the authorised Design 5.1 anatomy supersedes them; each kept its behavioural, financial, lifecycle, navigation and accessibility intent and was re-asserted against the new construction. **No financial expectation was edited.**
+
+`design5-today-checklist-priority`, `pass-2b-correction`, `pass-2b-score-journey`, `pass-2b-visual-correction`, `pass-2d-today-grow-hierarchy`, `today-briefing`; rendered: `accessibility-semantics`, `grow-tab-navigation`, `pass-2e-pushed-destinations`, `pass-2e-final-corrections`, `reminder-lifecycle`, `reminder-focus-announcements`, `worth-knowing`, `design5-wave5-today`.
+
+Accessible names that deliberately changed: an event/reminder row is now named by the **item itself** rather than a category word; the Journey row leads with its own name; the Briefing's header role sits on its Design 5.1 eyebrow; the goal row speaks amounts as well as percentage.
+
+## 9. Out of scope, unchanged
+
+All read-only engine hashes verified unchanged. No dependency, Expo-config, navigation, persistence or model change. `contrastOverrides.ts` stays retired with no local colour override reintroduced. Ionicons remains the approved mapping. The deferred per-goal AUP opt-in was not started. Wave 6's This Month Sources sheet was not started. Android physical testing remains deferred to Wave 11.
+
+---
+
+# Change control — Wave 5 closure corrections (20 August 2026)
+
+**Status.** Implemented, all automated gates passed, **unstaged and uncommitted** pending owner iOS device testing. Wave 5 not checkpointed. Wave 6 not started.
+
+Three authorised corrections following the owner's iOS device test of the Wave 5 visual pass.
+
+## A. Duplicate setup guidance removed from Today
+
+**Root cause.** Today rendered the month heading and `MonthSnapshotCard` unconditionally. The card owned its own empty state ("Not enough information yet. Add your income and spending to unlock your monthly snapshot."), so an incomplete customer saw the money-picture checklist *and* a second, differently-worded ask for the same thing directly beneath it. The card's `hasData` rule and the screen's decision to render the heading were two separate things, so the heading could not be suppressed with the card.
+
+**Fix.** One eligibility rule, `isMonthSectionEligible(activity)` — the *same* `income > 0 || spend > 0` test the card already applied — now gates the heading and the card **together**. When ineligible the whole section is absent: no unlock copy, no empty card, no orphaned month heading, no spacer.
+
+`computeMonthToDateActivity` (unchanged) is called **once**, in the screen, and its result passed to the card, so the two cannot disagree. The card no longer has an empty state at all.
+
+**Consequence, deliberate.** The empty card's Add-transaction entry point went with it, leaving `transactionModalVisible` and Today's `QuickAddModal` with no caller. A permanently unreachable second Modal in Today's tree is worse than none, so both were removed. **Add transaction is unaffected** — the global `+` owns it via `AddAnythingSheet`, which mounts its own `QuickAddModal`.
+
+**Money is untouched.** Money's This Month card is a different component (`ThisMonthCard`); its empty state and its own Add-transaction action remain.
+
+## B. Today's no-goal entry
+
+**Root cause — and a correction to the reported symptom.** The owner reported that Goal creation from Today "still looks like the old design". Inspection shows that is **not** a routing defect. There is exactly one goal form in the codebase, and all five entry points — Today, Goals, Grow, Money and `AddAnythingSheet` (both the direct `+` and the catalogue) — already render `AddGoalModal`. Its body is a single shared `content` constant used by both standalone and embedded modes, rendering one `GoalFormFields` instance, so the two paths cannot drift.
+
+What looked old was **Today's no-goal card, not the form it opened**. That slot used the shared `UnlockPromptCard`: a pale accent-tinted panel whose only tap target was a small filled pill nested inside an otherwise non-actionable card. Three problems — the pill read as a success/confirm action for what is a neutral invitation; most of a full-width surface was dead to touch; and the tinted panel competed with the two tiers above it that are meant to stand out.
+
+**Fix.** Today's goal slot is now one calm interactive row on the same flat supporting surface as the active-goal row: outline flag in `interactiveTint`, **"Plan a goal"**, "Choose what you're working towards and track progress over time.", trailing **"Create goal"** in the interactive role, chevron. One whole-row press target, 56pt minimum height, one accessible announcement plus hint, no emoji, **no success green**. Supporting copy and trailing action reflow at accessibility text sizes rather than truncating.
+
+`UnlockPromptCard` itself is untouched and still used by Today's Score unlock and by other screens. No form was created, changed or unwired; the row opens the same `setGoalModalVisible` state and the same `AddGoalModal`. Origin behaviour, Cancel, dirty-discard and Save contracts are all unchanged.
+
+## C. Restrained Briefing colour
+
+**Root cause.** The hero read entirely in neutral ink — `textFigure` for the figure, `textTertiary` for the eyebrow — so nothing in it carried emphasis.
+
+**Fix.** One Ocean Blue anchor plus, where it genuinely applies, one status colour:
+
+| State | Treatment |
+|---|---|
+| Normal AUP figure | `semantic.interactive` |
+| Eyebrow, "What's missing", "How this works" | `semantic.interactive` |
+| Genuine shortfall | `semantic.warning` + alert glyph |
+| Incomplete/missing input | neutral `textPrimary` — a gap is not a money problem |
+| Overdue row | `semantic.urgentText` |
+| Due-today / due-soon row | `semantic.warning` |
+| Incoming money | `semantic.success` |
+| Measure label, timeframe, explanatory copy, dates, provenance | neutral secondary/tertiary |
+
+`presentation.tone` alone could not drive this — it is `'warning'` for **both** a genuine shortfall and a plain missing input. `resolveHeroEmphasis` reads the already-structured `heroState` instead, so `recorded_overspend` / `commitments_exceed_cash` / `goals_underfunded` are distinguished from `missing_balance` / `unavailable_*`. **No currency is parsed out of any display string and no financial value is recomputed.** An unknown future state fails safe to neutral.
+
+State is never colour-alone: the shortfall pairs warning ink with an alert glyph and with the presentation's own wording.
+
+**Contrast, measured against every `heroSurface` stop in all six themes:** `interactive` worst case **4.71:1**, `warning` worst case **4.73:1** — both clear the 4.5:1 body floor, well above the 3.0 large-figure floor.
+
+## Superseded assertions
+
+Updated only where an authorised change supersedes them, each keeping its behavioural claim: `pass-2d-today-grow-hierarchy` (no-goal route), `pass-2b-visual-correction` (hero ink roles), `move-money-architecture-correction` (month empty-state wiring), plus the Wave 5 hierarchy suite's own zero-goal clause. No financial expectation was edited.
+
+## Verification
+
+TypeScript 0. Legacy **72 files / 4,871**. Rendered **25 suites / 174**, clean twice. Wave 5 hierarchy **277/277**. Contrast 141/141 and 43/43. Expo Doctor 17/18. Both exports exit 0. Dependency diff empty. `git diff --check` clean. **Every read-only financial engine byte-identical**; the only file changed under `src/lib/calculations` is `todayComposition.ts`, the Wave 5 pure presentation helper.
+
+---
+
+# Change control — Wave 5 final visual polish (20 August 2026)
+
+**Status.** Implemented, all automated gates passed, **unstaged and uncommitted** pending the owner's final iOS device test. Wave 5 not checkpointed. Wave 6 not started.
+
+## A. Your Today Briefing — identity and prominence
+
+**Root cause.** The Briefing's title was `typeStyle('eyebrow')` — 12.5pt, all caps, tracking 1 — with nothing beside it. At that size and weight it read as a caption above a number rather than as the name of the page's primary surface.
+
+**Fix.** A compact identity row inside the hero: a 36pt `interactiveTint` tile holding Ionicons `sunny-outline` at 20pt, beside the title-case **"Your Today Briefing"** at `titleSection` (20/26/600) in `semantic.interactive` ink. Title case, not caps. The Ocean Blue ink distinguishes the hero's own title from Today's neutral section headings.
+
+**A vector icon, not an emoji** — the Add surfaces were deliberately migrated away from emoji, and that decision is preserved. No new package: Ionicons is already the approved Wave 9 mapping.
+
+**One announcement, not two.** The tile carries `accessibilityElementsHidden` *and* `importantForAccessibility="no-hide-descendants"`; the title alone holds `accessibilityRole="header"` and remains the `headingRef` focus target the reminder lifecycle restores to.
+
+**Height.** The row costs one spacing token over the label it replaced (16pt line → 36pt tile); the measure label beneath gives back a step (`designSpacing.md` → `sm`). The title wraps rather than clipping at large text (`flexShrink: 1`, no `numberOfLines`). No animation was added.
+
+Everything else in the hero is unchanged: the AUP figure, shortfall presentation, missing-input state, the two-row cap, *What's missing*, *How this works*, provenance, row destinations and the semantic colour mapping.
+
+## B. August so far — the broken two-line currency
+
+**Root cause — and a correction to the reported symptom.** The value was **already one `<Text>` node containing one string**. It was not two nodes and not two flex items. It broke because it did not *fit*: `figureLarge` is 28pt, `"+$15,000"` needs ~126pt at that size, and a 390pt phone affords ~98pt per column. The only line-break opportunity in that string sits immediately after the sign, so it wrapped there and the customer saw a lone `+` above the amount.
+
+The real defect was in the layout gate: `resolveMonthMeasureLayout` asked only whether a column was wide enough for a **label** (`MIN_MEASURE_COLUMN_WIDTH = 88`). It never asked whether the column could hold the **amount**.
+
+**Fix, in three parts.**
+
+1. **The gate now measures the actual values.** `requiredMeasureColumnWidth` takes the formatted strings being rendered and requires the column to fit the widest at a readable size, so a column count is only offered when it can genuinely carry its values.
+2. **A tested discrete size ladder.** Design 5.1 asks for three columns at standard phone width *and* a supporting figure of ~24–26pt. Those meet a hard physical limit — no single size satisfies every device. So `resolveMonthMeasureFigureSize` picks the largest rung of `[28, 26, 24, 22, 20, 17]` at which every value fits the real column: **24pt at 430pt, 22pt at 390pt**, stepping up to 28pt when a column affords it. The top rung is the `figureLarge` role and the floor is the `figureRow` role, so the figure never leaves the established scale. This is a discrete tested decision, **not** `adjustsFontSizeToFit`.
+3. **`numberOfLines={1}`** on every value — the hard guarantee that no amount can split at the sign whatever an estimate said. Values carry `flexShrink: 0`; labels shrink instead.
+
+**Documented variance.** At 390pt the figure resolves to 22pt, just below the brief's 24–26pt target. Three 26pt currency values cannot fit a 390pt phone; the explicit "three columns, one line each, at standard width" requirement was treated as binding and the soft size target yielded to it. At 430pt the figure is 24pt, inside the target.
+
+**A second defect found and fixed.** The first version of the gate qualified a column if its values fit at the 17pt floor. That produced a genuinely wrong outcome — a 430pt screen took three columns at 17pt while a 390pt screen took two at 24pt, so the **wider device showed the smaller number**. The gate now measures at a comfortable rung (22pt), so a column count that would force a cramped figure is not offered at all.
+
+**Signed formatting.** One string per value, sign included: `+$15,000`, `$500`, `+$14,500`, `−$500`, `$0`. The minus is **U+2212**, which shares the tabular advance of the digits beside it so a column of amounts stays aligned. Zero is never signed — `+$0` and `−$0` both assert a direction the number denies. No sign is ever a separate node, element or field.
+
+**Accessibility.** Each metric is one spoken statement with its sign as a **word** — "Money in, positive 2,400 dollars" — so a screen reader never stops on a bare "plus" and never depends on a glyph it may skip.
+
+**Colour rules unchanged:** positive success green, spending neutral (never red), negative net caution.
+
+## Superseded assertions
+
+Anchors only, each keeping its behavioural claim: the hero-order and hero-ink markers (`pass-2b-visual-correction`, Wave 5 hierarchy §9a/§18h), the ASCII-hyphen expectations (§11j/§16v), and the Briefing header's accessible name in two rendered suites. **No financial expectation was edited.**
+
+## Verification
+
+TypeScript 0. Legacy **72 files / 4,945**. Rendered **25 suites / 176**, clean twice. Wave 5 hierarchy **351/351**. Contrast 141/141 and 43/43. Expo Doctor 17/18. Both exports exit 0. Dependency diff empty. `git diff --check` clean. All 18 read-only financial engines byte-identical; the only file changed under `src/lib/calculations` is `todayComposition.ts`, the Wave 5 pure presentation helper.

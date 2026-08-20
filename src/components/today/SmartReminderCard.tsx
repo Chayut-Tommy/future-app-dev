@@ -4,7 +4,6 @@ import type { RefObject } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { WARNING_TEXT_LIGHT_OVERRIDE } from '../../theme/contrastOverrides';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { SmartReminder } from '../../lib/calculations/reminders';
@@ -130,7 +129,7 @@ export function SmartReminderCard({
 }) {
   const { data, confirmRecurringOccurrence, confirmBnplRepayment } = useAppState();
   const navigation = useNavigation<any>();
-  const { colors, radius, spacing, typography, scheme } = useTheme();
+  const { colors, radius, spacing, typography, scheme, semantic } = useTheme();
   const [awaitingSource, setAwaitingSource] = useState(false);
   // Correction pass, §2 — BNPL confirmation's Everyday Account choice needs
   // a second step (which specific account), unlike Cash/Credit card which
@@ -213,10 +212,11 @@ export function SmartReminderCard({
         actionButtonDisabled: { opacity: 0.5 },
         actionText: { ...typography.caption, fontSize: 12, color: colors.onAccent, fontWeight: '700' },
         actionTextSecondary: { color: colors.textSecondary },
-        // Pass 2E contrast correction — see WARNING_TEXT_LIGHT_OVERRIDE.
-        errorText: { ...typography.caption, fontSize: 12, color: scheme === 'light' ? WARNING_TEXT_LIGHT_OVERRIDE : colors.warning, lineHeight: 16, marginTop: spacing.sm },
+        // Wave 5 — the Design 5.1 semantic warning role, which is darker
+        // than the legacy token and needs no per-scheme override.
+        errorText: { ...typography.caption, fontSize: 12, color: semantic.warning, lineHeight: 16, marginTop: spacing.sm },
       }),
-    [colors, radius, spacing, typography, scheme]
+    [colors, radius, spacing, typography, scheme, semantic]
   );
 
   if (!reminder) return null;

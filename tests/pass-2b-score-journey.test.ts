@@ -61,7 +61,12 @@ console.log('=== Section 1: selectScoreChipPresentation — every state (real fu
   const lockedChip = selectScoreChipPresentation(lockedResult);
   assert(
     'locked: state locked, no numeric score ever shown (never 0 as a stand-in for missing)',
-    lockedChip.state === 'locked' && lockedChip.scoreValue === null && lockedChip.label === 'Nolie Score' && lockedChip.supportingText === 'Add income to unlock' && lockedChip.tone === 'muted'
+    // Wave 5 Score containment — the wording is now the approved
+    // "Not enough recorded yet" for BOTH non-valid states, because from the
+    // customer's point of view locked and unavailable are the same fact.
+    // The guarantee this protects is unchanged and still asserted: no
+    // numeric score, and never 0 as a stand-in for missing.
+    lockedChip.state === 'locked' && lockedChip.scoreValue === null && lockedChip.label === 'Nolie Score' && lockedChip.supportingText === 'Not enough recorded yet' && lockedChip.tone === 'muted'
   );
 
   // available — an ordinary, real, unlocked scenario. Also covers
@@ -78,7 +83,11 @@ console.log('=== Section 1: selectScoreChipPresentation — every state (real fu
     incompleteChip.state === 'available' &&
       incompleteChip.scoreValue === incompleteResult.score &&
       incompleteChip.label === `Nolie Score ${incompleteResult.score}` &&
-      incompleteChip.supportingText === 'Based on what you’ve recorded'
+      // Wave 5 containment: interim, sourced from recorded information, and
+      // explicitly not a credit score. The prior sentence is retained inside
+      // the longer one, so the factual-wording intent is unchanged.
+      incompleteChip.supportingText === 'Interim · Based on what you’ve recorded · Not a credit score' &&
+      incompleteChip.supportingText.includes('Based on what you’ve recorded')
   );
   assert(
     'NEVER INVENTS A TREND: the available-state wording never mentions improvement/decline/change — no trend claim without an established one',
@@ -224,23 +233,35 @@ console.log('\n=== Section 4: component wiring (Structural — .tsx files cannot
   // The property that must survive is unchanged: the Score chip is authored
   // after the header and before the financial tiles, and it is never one of
   // the tiles selectBriefingTiles() produces.
+  // SUPERSEDED by Design 5.1 Wave 5 Score containment. Both assertions
+  // described WHERE inside the Briefing the Score sat; the Score is no
+  // longer Briefing content at all. Their shared intent — Score must never
+  // compete with the hero measure or consume a financial tile slot — is now
+  // guaranteed by construction and asserted directly.
   assert(
-    'TodayBriefingCard.tsx: the ScoreChip is authored after the date/context header and BEFORE BriefingTileRow (AUP/reminder/event tiles)',
+    'TodayBriefingCard.tsx: the Score is no longer Briefing content — it is a footnote row after the Goal section',
     (() => {
-      const dateIdx = TODAY_BRIEFING_CARD_SRC.indexOf('{formatBriefingDateContext(today)}');
-      const chipIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<ScoreChip presentation={scoreChip} onPress={onPressScoreChip} />');
-      const tileRowIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<BriefingTileRow');
-      return dateIdx !== -1 && chipIdx !== -1 && tileRowIdx !== -1 && dateIdx < chipIdx && chipIdx < tileRowIdx;
+      const briefingHasNoScore = !/ScoreChip|scoreChip/.test(TODAY_BRIEFING_CARD_SRC);
+      const goalIdx = TODAY_SCREEN_SRC.indexOf('View all goals ({activeGoalCount})');
+      const footnoteIdx = TODAY_SCREEN_SRC.indexOf('testID="today-score-footnote"');
+      return briefingHasNoScore && goalIdx !== -1 && footnoteIdx > goalIdx;
     })()
   );
   assert(
-    'Score chip excluded from the three-tile financial cap: it is authored outside BriefingTileRow, and selectBriefingTiles() is never passed the score chip presentation',
+    'Score is excluded from the three-tile financial cap: selectBriefingTiles() is never passed a score presentation, and the Briefing never receives one',
     (() => {
-      const tileRowIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<BriefingTileRow');
-      const chipIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<ScoreChip');
+      // Wave 5's visual pass renders the financial slots as full-width
+      // priority rows instead of a three-column tile grid. They are still
+      // selected by the SAME selectBriefingTiles call, so the cap and the
+      // Score's exclusion from it are unchanged.
+      const financialSlotsIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<BriefingPriorityRow');
       const selectTilesCall = TODAY_BRIEFING_CARD_SRC.match(/selectBriefingTiles\(([^)]*)\)/);
-      return chipIdx !== -1 && tileRowIdx !== -1 && chipIdx < tileRowIdx && !!selectTilesCall && !/scoreChip/.test(selectTilesCall[1]);
+      return financialSlotsIdx !== -1 && !!selectTilesCall && !/scoreChip/.test(selectTilesCall[1]) && !/scoreChip/.test(TODAY_BRIEFING_CARD_SRC);
     })()
+  );
+  assert(
+    'and the footnote is a quiet supporting row, not a second hero or highlighted card',
+    /scoreFootnoteRow: \{\s*\n\s*minHeight: minTouchTarget,/.test(TODAY_SCREEN_SRC) && /borderTopWidth: StyleSheet\.hairlineWidth,/.test(TODAY_SCREEN_SRC)
   );
   assert(
     'TodayScreen.tsx computes the Score chip and Journey snapshot exactly once each via useMemo, wrapping the existing luluScore/achievements results — never recomputing the formula or achievement rules',

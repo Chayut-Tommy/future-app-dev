@@ -646,3 +646,47 @@ export const ADD_ICON_TONES: Readonly<Record<DesignScheme, Readonly<Record<AddIc
 export function resolveAddIconTone(scheme: DesignScheme, tone: AddIconToneName): AddIconTonePair {
   return ADD_ICON_TONES[scheme][tone] ?? ADD_ICON_TONES[scheme].ocean;
 }
+
+
+// ---------------------------------------------------------------------------
+// Gradient-backed contrast roles (Design 5.1 Wave 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wave 5 — the two contrast values that used to live in
+ * `theme/contrastOverrides.ts`, moved here as first-class semantic roles so
+ * that file could be retired.
+ *
+ * They are NOT overrides of a colour role: they are the derived scrim and
+ * opacity weights that make text legible over the app's two GRADIENT
+ * surfaces, which no flat token can express. Every derivation below is the
+ * measured one from the original module, carried over unchanged — this is a
+ * move, not a re-derivation, so no contrast floor moved with it.
+ *
+ * They live in the theme layer precisely because raw values belong here and
+ * never in a component.
+ */
+
+/**
+ * Scrim weight under white text on the Grow opportunities hero gradient.
+ * Kept per style AND scheme rather than one uniform value, so combinations
+ * that need less darkening (purple/dark) are not darkened as heavily as the
+ * ones that need more (blue/dark). Clears 4.5:1 for every text element on
+ * that card, including the row index at its lowest opacity (0.6).
+ */
+export const HERO_SCRIM_OPACITY: Readonly<Record<DesignColorStyle | 'blue' | 'purple' | 'sunrise', Record<DesignScheme, number>>> = {
+  blue: { light: 0.55, dark: 0.59 },
+  ocean: { light: 0.55, dark: 0.59 },
+  purple: { light: 0.3, dark: 0.14 },
+  sunrise: { light: 0.58, dark: 0.49 },
+};
+
+/**
+ * Opacity of Worth Knowing's provenance line over the muted insight
+ * gradient. A single flat value: that gradient's stops sit close together in
+ * luminance within each style/scheme, so one weight clears the worst case
+ * (sunrise/light, measured 4.61:1) with margin. Deliberately below the
+ * body weight (0.85) so the line stays the most subordinate text on the
+ * card, exactly as intended — raised only as far as contrast requires.
+ */
+export const INSIGHT_PROVENANCE_OPACITY = 0.83;

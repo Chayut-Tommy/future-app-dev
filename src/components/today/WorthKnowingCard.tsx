@@ -1,64 +1,79 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { WorthKnowingInsight } from '../../lib/calculations/worthKnowing';
-import { INSIGHT_PROVENANCE_OPACITY } from '../../theme/contrastOverrides';
+import { INSIGHT_PROVENANCE_OPACITY, designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 /**
- * "Worth Knowing" — replaces Cashflow Focus's presentation on Today (see
- * worthKnowing.ts's own header comment for the full architecture decision).
- * Deliberately NOT the warning-yellow treatment FinancialStateCard used —
- * this is a calm, observational surface, never implying urgency by default
- * (spec §8). Reuses the same muted `aiInsightSurface*` tokens
- * LuluCheckInCard already reads (the established "Nolie noticed something"
- * visual language on Today), so the two presentations stay visually
- * consistent with each other even though only one of them can ever be on
- * screen at a time.
+ * "Worth Knowing" — Design 5.1's highlighted supporting tier.
  *
- * Card density is deliberately fixed at exactly what the spec asks for: one
- * section label, one headline, one short explanation, one optional CTA line
- * — no button row, no secondary metrics, no expandable content.
+ * Previously this rendered as a gradient card reading from the hero-scoped
+ * `naviloPalette.aiInsightSurface*` tokens. On a page that now has one
+ * genuine hero, a second gradient surface competed with it directly, and
+ * Design 5.1's density budget allows exactly one expressive hero per
+ * screen. It is now the flat highlighted tier: a low-saturation info tint
+ * with a matching border, which is a clear step above the plain supporting
+ * cards around it without pretending to be a hero.
  *
- * Accessibility — every inner Text/icon is marked
- * importantForAccessibility="no": the caller (TodayScreen.tsx) wraps this
- * card in a single tappable container carrying one composed
- * accessibilityLabel ("Worth Knowing. <title>. <body> <cta>."), matching the
- * spec's own suggested VoiceOver structure (§29) — a single coherent
- * announcement, never one pass per inner Text node.
+ * `info` is a SHARED role — identical across Ocean, Purple and Sunrise.
+ * That is deliberate and required: Design 5.1 bars a colour style from
+ * retinting status roles, and an insight tier is a status, so this card
+ * looks the same in all three styles by design rather than by omission.
+ *
+ * The selector, the maximum-one rule, occurrence identity, dismissal and
+ * contextual navigation are all untouched — this is presentation only, and
+ * this component still renders exactly what `insight` already decided.
+ *
+ * Accessibility — every inner node stays hidden because the caller wraps
+ * this card in a single tappable container carrying one composed label.
  */
 export function WorthKnowingCard({ insight }: { insight: WorthKnowingInsight }) {
-  const { spacing, radius, typography, cardShadow, naviloPalette } = useTheme();
+  const { semantic } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, ...cardShadow },
-        labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.sm },
-        label: { ...typography.micro, fontSize: 11, color: naviloPalette.aiInsightForeground, fontWeight: '700', letterSpacing: 0.5 },
-        headline: { ...typography.heading, fontSize: 16, color: naviloPalette.aiInsightForeground, marginBottom: 4 },
-        body: { ...typography.caption, fontSize: 13, color: naviloPalette.aiInsightForeground, opacity: 0.85, lineHeight: 18, marginBottom: spacing.sm },
-        ctaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-        ctaText: { ...typography.caption, fontSize: 13, color: naviloPalette.aiInsightForeground, fontWeight: '700' },
-        // Correction round — raised from 0.65 to INSIGHT_PROVENANCE_OPACITY
-        // (0.83): a device test found this line too faint in Sunrise/light,
-        // confirmed as a genuine 4.5:1 contrast failure at the old opacity
-        // (see contrastOverrides.ts's own derivation).
-        provenance: { ...typography.micro, fontSize: 11, color: naviloPalette.aiInsightForeground, opacity: INSIGHT_PROVENANCE_OPACITY, marginTop: spacing.sm },
+        card: {
+          backgroundColor: semantic.infoTint,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.infoBorder,
+          padding: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
+        },
+        labelRow: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs },
+        label: { ...typeStyle('eyebrow', locale), color: semantic.infoText },
+        headline: { ...typeStyle('titleCard', locale), color: semantic.textPrimary, marginTop: designSpacing.sm },
+        body: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
+        // Actions wrap rather than truncate or overflow at large text sizes.
+        actionRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          marginTop: designSpacing.md,
+          minHeight: designLayout.touchTargetMin,
+        },
+        actionText: { ...typeStyle('labelButton', locale), color: semantic.infoText },
+        provenance: {
+          ...typeStyle('meta', locale),
+          color: semantic.textTertiary,
+          opacity: INSIGHT_PROVENANCE_OPACITY,
+          marginTop: designSpacing.sm,
+        },
       }),
-    [spacing, radius, typography, cardShadow, naviloPalette]
+    [semantic, locale]
   );
 
   return (
-    <LinearGradient
-      colors={[naviloPalette.aiInsightSurfaceStart, naviloPalette.aiInsightSurfaceEnd]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.card}
-    >
+    <View style={styles.card} testID="today-worth-knowing-card">
       <View style={styles.labelRow} importantForAccessibility="no-hide-descendants">
-        <Ionicons name="sparkles" size={13} color={naviloPalette.aiInsightForeground} />
+        <Ionicons name="sparkles-outline" size={13} color={semantic.infoText} />
         <Text style={styles.label}>WORTH KNOWING</Text>
       </View>
       <Text style={styles.headline} importantForAccessibility="no">
@@ -67,13 +82,13 @@ export function WorthKnowingCard({ insight }: { insight: WorthKnowingInsight }) 
       <Text style={styles.body} importantForAccessibility="no">
         {insight.body}
       </Text>
-      <View style={styles.ctaRow} importantForAccessibility="no-hide-descendants">
-        <Text style={styles.ctaText}>{insight.ctaLabel}</Text>
-        <Ionicons name="arrow-forward" size={13} color={naviloPalette.aiInsightForeground} />
+      <View style={styles.actionRow} importantForAccessibility="no-hide-descendants">
+        <Text style={styles.actionText}>{insight.ctaLabel}</Text>
+        <Ionicons name="arrow-forward" size={14} color={semantic.infoText} />
       </View>
       <Text style={styles.provenance} importantForAccessibility="no">
         Based on what you’ve recorded
       </Text>
-    </LinearGradient>
+    </View>
   );
 }

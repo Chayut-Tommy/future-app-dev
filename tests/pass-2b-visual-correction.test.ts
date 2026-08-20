@@ -215,20 +215,35 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
   // tokens were intentionally replaced by the 3-way aiAccentColor/
   // aiAccentSoft pair (ThemeContext), so this card recolours with the
   // user's selected Navilo colour style instead of staying stuck on blue.
-  assert('TodayJourneySnapshotCard.tsx uses the central aiAccentColor/aiAccentSoft tokens (3-way Ocean Blue/Purple/Sunrise), not a hard-coded Ocean Blue literal', /aiAccentColor/.test(JOURNEY_SNAPSHOT_SRC) && /aiAccentSoft/.test(JOURNEY_SNAPSHOT_SRC) && !/colors\.aiBlue\b/.test(JOURNEY_SNAPSHOT_SRC) && !/colors\.aiBlueSoft/.test(JOURNEY_SNAPSHOT_SRC));
+  // Wave 5 visual pass — the Journey row now reads the Design 5.1
+  // `interactive`/`interactiveTint` semantic roles. The underlying claim is
+  // unchanged and still asserted: never a hard-coded colour literal. What
+  // IS deliberately superseded is the 3-way retint — Design 5.1 bars a
+  // colour style from touching interactive roles, so a supporting row's
+  // accent is invariant across Ocean/Purple/Sunrise by rule, not by
+  // omission. The ambient field is what carries the style now.
+  assert('TodayJourneySnapshotCard.tsx reads semantic interactive roles, never a hard-coded colour literal', /semantic\.interactive\b/.test(JOURNEY_SNAPSHOT_SRC) && /semantic\.interactiveTint/.test(JOURNEY_SNAPSHOT_SRC) && !/colors\.aiBlue\b/.test(JOURNEY_SNAPSHOT_SRC) && !/colors\.aiBlueSoft/.test(JOURNEY_SNAPSHOT_SRC) && !/#[0-9a-fA-F]{3,8}\b/.test(JOURNEY_SNAPSHOT_SRC));
   assert('TodayJourneySnapshotCard.tsx uses a route/compass icon, distinct from both Journey\'s own trophy nodes and Score\'s gauge', /compass-outline/.test(JOURNEY_SNAPSHOT_SRC) && !/name="trophy"/.test(JOURNEY_SNAPSHOT_SRC) && !/speedometer/.test(JOURNEY_SNAPSHOT_SRC));
   assert(
     'TodayJourneySnapshotCard.tsx renders exactly one chevron-forward — the single "View full journey" footer control, not a second competing one mid-card',
     (JOURNEY_SNAPSHOT_SRC.match(/name="chevron-forward"/g) || []).length === 1
   );
-  assert('TodayJourneySnapshotCard.tsx still renders the exact preserved data fields verbatim — completedCount/totalCount/next/nextProgress — never recomputed', /\{snapshot\.completedCount\} of \{snapshot\.totalCount\} milestones completed/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.nextProgress\.formatted/.test(JOURNEY_SNAPSHOT_SRC));
+  // The compact row presents the same fields in one line instead of a
+  // stacked block. Every value still comes from `snapshot` and nothing is
+  // recomputed: the bar's fraction is formed only from already-decided
+  // pairs (nextProgress.current/target, or completedCount/totalCount), and
+  // no milestone, target or recommendation is invented.
+  assert('TodayJourneySnapshotCard.tsx still renders the preserved snapshot fields verbatim — completedCount/totalCount/next/nextProgress — never recomputed', /snapshot\.completedCount/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.totalCount/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.next\.title/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.nextProgress\.formatted/.test(JOURNEY_SNAPSHOT_SRC) && !/computeAchievements|computeJourneySnapshot/.test(JOURNEY_SNAPSHOT_SRC.replace(/\/\*[\s\S]*?\*\//g, '')));
 
   // --- Score and Journey do not reuse the same trophy presentation, anywhere touched this pass ---
   assert(
     "Score's two compact surfaces (Today's chip, Grow's launcher row) and Journey's compact surface (Today's snapshot) never share an icon glyph with each other",
     (() => {
       const scoreChipIcon = SCORE_CHIP_SRC.match(/Ionicons name="([\w-]+)" size=\{13\}/)?.[1];
-      const journeySnapshotIcon = JOURNEY_SNAPSHOT_SRC.match(/Ionicons name="([\w-]+)" size=\{17\}/)?.[1];
+      // Wave 5 — the compact row's icon sits in a 28pt marker tile, so its
+      // glyph size dropped from 17 to 15. The GLYPH, which is what this
+      // assertion is about, is unchanged.
+      const journeySnapshotIcon = JOURNEY_SNAPSHOT_SRC.match(/Ionicons name="([\w-]+)" size=\{15\}/)?.[1];
       const growScoreRowIcon = DISCOVER_SCREEN_SRC.match(/Ionicons name="([\w-]+)" size=\{20\} color=\{colors\.accent\} \/>/)?.[1];
       return scoreChipIcon === 'speedometer-outline' && journeySnapshotIcon === 'compass-outline' && growScoreRowIcon === 'speedometer-outline';
     })()
@@ -245,10 +260,19 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
   // same coherent single-composition property and the same Score-outside-
   // budget contract, just expressed against the new structure.
   assert(
-    'TodayBriefingCard.tsx wraps the header, Score chip, and BriefingTileRow together inside one LinearGradient hero driven by naviloPalette (Ocean Blue/Purple/Sunrise) — a single coherent composition, not three separate objects',
-    /<LinearGradient colors=\{\[naviloPalette\.heroGradientStart, naviloPalette\.heroGradientEnd\]\}[^>]*style=\{styles\.hero\}>/.test(BRIEFING_CARD_SRC) &&
+    // Wave 5 visual pass — the hero's surface moved from the old saturated
+    // naviloPalette gradient to the Design 5.1 `heroSurface` role, which is
+    // the one Premium Expressive surface a style is permitted to retint. The
+    // property this assertion protects — ONE coherent composition wrapping
+    // the header and the financial slots, not several separate objects — is
+    // unchanged, and is asserted below against the new structure.
+    // Wave 5 polish — the all-caps eyebrow became a title-case identity
+    // row (36pt tint tile + "Your Today Briefing"). Same position, same
+    // role in the composition; only its presentation changed.
+    'TodayBriefingCard.tsx wraps the identity row, the figure and the priority rows inside one LinearGradient hero driven by the heroSurface semantic role — a single coherent composition, not separate objects',
+    /<LinearGradient\s+colors=\{semantic\.heroSurface/.test(BRIEFING_CARD_SRC) &&
       (() => {
-        const heroOpen = BRIEFING_CARD_SRC.indexOf('<LinearGradient colors={[naviloPalette.heroGradientStart, naviloPalette.heroGradientEnd]}');
+        const heroOpen = BRIEFING_CARD_SRC.indexOf('<LinearGradient');
         const heroClose = BRIEFING_CARD_SRC.lastIndexOf('</LinearGradient>');
         // Searched from heroOpen onward — the doc comment above also
         // mentions "Your Today Briefing" in prose, which would otherwise be
@@ -256,34 +280,57 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
         // Pass 2E accessibility correction added accessibilityRole="header"
         // to this Text — search for the still-unique "Your Today Briefing"
         // text content itself rather than the exact opening-tag literal.
-        const titleIdx = BRIEFING_CARD_SRC.indexOf('>Your Today Briefing</Text>', heroOpen);
-        const chipIdx = BRIEFING_CARD_SRC.indexOf('<ScoreChip', heroOpen);
-        const tileRowIdx = BRIEFING_CARD_SRC.indexOf('<BriefingTileRow', heroOpen);
-        return heroOpen !== -1 && heroClose !== -1 && titleIdx > heroOpen && chipIdx > titleIdx && tileRowIdx > chipIdx && tileRowIdx < heroClose;
+        // Wave 5 removed the Score chip from the Briefing entirely, so the
+        // hero now wraps the header and the tile row. The property this
+        // asserts — ONE coherent gradient composition rather than separate
+        // objects — is unchanged.
+        const titleIdx = BRIEFING_CARD_SRC.indexOf('Your Today Briefing', heroOpen);
+        const slotsIdx = BRIEFING_CARD_SRC.indexOf('<BriefingPriorityRow', heroOpen);
+        return heroOpen !== -1 && heroClose !== -1 && titleIdx > heroOpen && slotsIdx > titleIdx && slotsIdx < heroClose;
       })()
   );
   assert(
-    'TodayBriefingCard.tsx still preserves the Score chip outside BriefingTileRow — the three-tile cap and Score-chip-exclusion contract is unaffected by resolving the hero gradient through naviloPalette',
-    (() => {
-      const tileRowStart = BRIEFING_CARD_SRC.indexOf('<BriefingTileRow');
-      const chipIdx = BRIEFING_CARD_SRC.indexOf('<ScoreChip');
-      return chipIdx !== -1 && tileRowStart !== -1 && chipIdx < tileRowStart;
-    })()
+    // Wave 5 Score containment makes this stronger: the Score cannot be in
+    // the tile row because it is not in the Briefing at all.
+    'TodayBriefingCard.tsx no longer contains the Score in any form — the three-tile cap and Score-exclusion contract holds by construction',
+    !/ScoreChip|scoreChip/.test(BRIEFING_CARD_SRC)
   );
   assert(
-    "TodayBriefingCard.tsx title/date use naviloPalette.heroForeground — legible against every hero gradient (Ocean Blue/Purple/Sunrise) in both light and dark mode, and palettes.ts pins heroForeground to solid white for every style/scheme combination so this is never a low-contrast colour",
-    /color: naviloPalette\.heroForeground/.test(BRIEFING_CARD_SRC) &&
-      /opacity: 0\.82/.test(BRIEFING_CARD_SRC) &&
-      (() => {
-        const PALETTES_SRC = readFileSync('src/theme/palettes.ts', 'utf8');
-        return /heroForeground: '#FFFFFF'/.test(PALETTES_SRC);
-      })()
+    // Wave 5 visual pass — the hero is no longer a saturated gradient
+    // needing a pinned white foreground. It sits on `heroSurface`, a light
+    // surface in every theme, so its text reads from the ordinary SHARED
+    // ink roles, which design5-contrast.test.ts already proves against
+    // surface-class backgrounds in all six themes. The claim this assertion
+    // protects — hero text is never a low-contrast or opacity-faded colour
+    // — is unchanged and asserted directly against the new construction.
+    // Wave 5 closure C — the hero gained restrained semantic colour: the
+    // figure and eyebrow now carry the Ocean Blue `interactive` role as the
+    // page's single anchor, and a GENUINE shortfall (never a mere missing
+    // input) carries `warning`. Both clear the 4.5:1 body floor against
+    // every heroSurface stop in all six themes — proven numerically in
+    // design5-wave5-today-hierarchy.test.ts §18v/§18x. The claim protected
+    // here is unchanged: every colour is a shared semantic role, never a
+    // pinned foreground, a raw literal, or an opacity fade.
+    "TodayBriefingCard.tsx's hero text reads semantic roles against heroSurface — never a pinned foreground, a raw colour, or an opacity-faded amount",
+    /color: semantic\.interactive/.test(BRIEFING_CARD_SRC) &&
+      /semantic\.warning : semantic\.textPrimary/.test(BRIEFING_CARD_SRC) &&
+      /color: semantic\.textSecondary/.test(BRIEFING_CARD_SRC) &&
+      /color: semantic\.textTertiary/.test(BRIEFING_CARD_SRC) &&
+      !/heroForeground/.test(BRIEFING_CARD_SRC) &&
+      !/#[0-9a-fA-F]{3,8}\b/.test(BRIEFING_CARD_SRC) &&
+      !/opacity:/.test(BRIEFING_CARD_SRC)
   );
   assert(
-    "TodayBriefingCard.tsx's tile dispatch (handlePressTile) still routes to the exact same authoritative destinations as the old rows — onPressAup for the AUP tile, onPressReminderTile for the reminder tile (which itself opens ReminderDetailSheet, the same SmartReminderCard, unchanged), onPressEventRow for an event tile",
-    /if \(tile\.kind === 'aup'\) \{\s*onPressAup\(\);/.test(BRIEFING_CARD_SRC) &&
-      /if \(tile\.kind === 'reminder'\) \{\s*onPressReminderTile\(\);/.test(BRIEFING_CARD_SRC) &&
-      /onPressEventRow\(row\)/.test(BRIEFING_CARD_SRC)
+    // Wave 5 — the dispatch moved from handlePressTile to handlePressRow
+    // because the tiles became rows. Every destination is identical: the
+    // AUP is now the hero's own headline and its explanation is reached by
+    // the same onPressAup handler, a reminder row opens the same
+    // ReminderDetailSheet, and an event row opens the same Money timeline.
+    "TodayBriefingCard.tsx's row dispatch still routes to the exact same authoritative destinations — onPressAup for the AUP, onPressReminderTile for the reminder, onPressEventRow for an event",
+    /if \(row\.kind === 'reminder'\) \{\s*onPressReminderTile\(\);/.test(BRIEFING_CARD_SRC) &&
+      /onPressEventRow\(eventRow\)/.test(BRIEFING_CARD_SRC) &&
+      /onPress=\{onPressAup\}/.test(BRIEFING_CARD_SRC) &&
+      /onPress=\{onPressHowThisWorks\}/.test(BRIEFING_CARD_SRC)
   );
   assert(
     'TodayBriefingCard.tsx never introduces a fourth financial row or otherwise changes eventRows/topReminder inputs — same props signature as before this pass',
@@ -357,7 +404,21 @@ console.log('\n=== Section 5: Pass 2A AUP, reminder, and event behaviour remain 
       /presentation\.amountVisible/.test(BRIEFING_TILES_SRC) &&
       /presentation\.tone/.test(BRIEFING_TILES_SRC)
   );
-  assert('TodayBriefingCard.tsx no longer reads presentation.supportingCopy — that longer confirmation-style copy stays out of the compact tile by design, still shown verbatim by SafeToSpendHero', !/presentation\.supportingCopy/.test(BRIEFING_CARD_SRC) && !/presentation\.supportingCopy/.test(BRIEFING_TILES_SRC));
+  // Wave 5 visual pass — the rule this encodes was "a compact tile has no
+  // room for the long explanatory sentence, so never render it there". That
+  // is still true of the financial slots, and briefingTiles.ts still never
+  // reads it. What changed is that the SETUP state is now a full-width hero
+  // block whose entire job is to state exactly what is missing (invariant
+  // 10, "names the exact missing input"), and supportingCopy is precisely
+  // that second explanatory sentence. So it may appear ONLY there — never
+  // in the amount-visible path, and never inside a priority row.
+  assert('presentation.supportingCopy never reaches a financial slot — briefingTiles.ts still never reads it', !/presentation\.supportingCopy/.test(BRIEFING_TILES_SRC) && !/supportingCopy/.test(readFileSync('src/components/today/BriefingPriorityRow.tsx', 'utf8')));
+  assert('and in the Briefing it appears only inside the setup/unavailable state, never alongside a visible amount', (() => {
+    const setupStart = BRIEFING_CARD_SRC.indexOf('testID="today-briefing-setup"');
+    const setupEnd = BRIEFING_CARD_SRC.indexOf('today-briefing-priority-rows');
+    const uses = [...BRIEFING_CARD_SRC.matchAll(/presentation\.supportingCopy/g)].map((m) => m.index ?? -1);
+    return setupStart !== -1 && uses.length > 0 && uses.every((i) => i > setupStart && i < setupEnd);
+  })());
   // Device-test correction round — onNavigateAway={onClose} added to this
   // mount (see ReminderDetailSheet.tsx's own doc comment); still reached
   // only via ReminderDetailSheet, never embedded back into the hero. Final

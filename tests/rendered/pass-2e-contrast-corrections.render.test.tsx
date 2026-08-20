@@ -7,7 +7,7 @@ import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { MoneyOpportunitiesHero } from '../../src/components/discover/MoneyOpportunitiesHero';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { AppData } from '../../src/types/models';
-import { HERO_SCRIM_OPACITY } from '../../src/theme/contrastOverrides';
+import { HERO_SCRIM_OPACITY } from '../../src/theme/semanticTokens';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')

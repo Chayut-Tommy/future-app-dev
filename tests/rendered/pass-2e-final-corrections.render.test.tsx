@@ -21,9 +21,23 @@ import { computeSafeToSpend } from '../../src/lib/calculations/safeToSpend';
 import { computeMoneyHeroCopy } from '../../src/lib/calculations/moneyPersona';
 import { selectSafeToSpendPresentation } from '../../src/lib/calculations/safeToSpendPresentation';
 import { computeLuluScore } from '../../src/lib/calculations/luluScore';
-import { selectScoreChipPresentation } from '../../src/lib/calculations/scoreChipPresentation';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { AppData } from '../../src/types/models';
+
+/**
+ * Wave 5 visual pass — the Briefing's reminder control is now a full-width
+ * priority row named by the REMINDER'S OWN TITLE ("Rent is due, Fri 22 Aug,
+ * $1,800") rather than by the tile's category word ("Reminder, Bill due,
+ * Action needed"). That is the improvement this pass exists to deliver: the
+ * control says what it is about instead of what kind of thing it is.
+ *
+ * These suites are about the reminder LIFECYCLE, not its label, so they
+ * find the control by the stable identity the row carries — its testID,
+ * which encodes the reminder's own id. One assertion below still checks the
+ * accessible NAME directly, so the "queryable by real semantics" property
+ * this file protects is preserved rather than dropped.
+ */
+const REMINDER_ROW = /^briefing-priority-row-reminder-/;
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
@@ -186,19 +200,18 @@ function TodayBriefingHarness({ today }: { today: Date }) {
   const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
   const safeToSpendPresentation = useMemo(() => selectSafeToSpendPresentation(safeToSpend, heroCopy), [safeToSpend, heroCopy]);
   const luluScore = useMemo(() => computeLuluScore(data), [data]);
-  const scoreChipPresentation = useMemo(() => selectScoreChipPresentation(luluScore), [luluScore]);
   const reminderOpenRequestIdRef = useRef(0);
   const [reminderOpenRequest, setReminderOpenRequest] = useState<ReminderOpenRequest | null>(null);
 
   return (
     <>
       <TodayBriefingCard
-        today={today}
-        scoreChip={scoreChipPresentation}
         presentation={safeToSpendPresentation}
         eventRows={briefingEventRows}
+        timelineEvents={timelineEvents}
+        timeframeLine={null}
         topReminder={topReminder}
-        onPressScoreChip={() => {}}
+        onPressHowThisWorks={() => {}}
         onPressAup={() => {}}
         onPressEventRow={() => {}}
         onPressReminderTile={() => {
@@ -278,7 +291,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
 
-    const tile = await screen.findByRole('button', { name: /^Reminder,/ });
+    const tile = await screen.findByTestId(REMINDER_ROW);
     await user.press(tile);
 
     // Genuine, customer-visible content — the real card_due_soon heading
@@ -294,7 +307,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const user = userEvent.setup();
     const view = await render(<ReminderHarness today={today} />);
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
     await screen.findByText('Your Everyday Visa payment is due today');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
@@ -328,7 +341,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
     await screen.findByText('Did you pay your Rent?');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
@@ -345,13 +358,13 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
     await screen.findByText('Your Everyday Visa payment is due today');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
     await user.press(screen.getByText('Close'));
     // Reopen — a fresh session, same underlying occurrence still eligible.
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
     await screen.findByText('Your Everyday Visa payment is due today');
     expect(entranceTimingCallCount(timingSpy)).toBe(6);
 
@@ -366,7 +379,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
 
     expect(await screen.findByText('Your Everyday Visa payment is due today')).toBeOnTheScreen();
     expect(entranceTimingCallCount(timingSpy)).toBe(0);
@@ -377,7 +390,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
-    await user.press(await screen.findByRole('button', { name: /^Reminder,/ }));
+    await user.press(await screen.findByTestId(REMINDER_ROW));
     await user.press(screen.getByRole('button', { name: 'Record payment' }));
     await screen.findByText('How much did you pay?');
 

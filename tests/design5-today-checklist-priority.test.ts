@@ -42,8 +42,12 @@ console.log('=== 1. Fresh / incomplete setup: the checklist is FIRST and rendere
   assert('1a. checklist is rendered exactly once — no duplicate', occurrences === 1);
 
   const checklist = at('<MoneyPictureChecklistCard />');
-  const greeting = at('<Text style={styles.greeting}>{greeting}</Text>');
+  const GREETING_ANCHOR = '<Text style={styles.greeting} testID="today-greeting">{greeting}</Text>';
+  const greeting = at(GREETING_ANCHOR);
   assert('1b. checklist appears after the greeting/header', greeting !== -1 && checklist > greeting);
+  // Wave 5 — the local date eyebrow precedes the greeting inside the same
+  // header block; the checklist still follows the whole block.
+  assert('1b-ii. and after the local date eyebrow that now precedes the greeting', at('today-date-eyebrow') !== -1 && at('today-date-eyebrow') < greeting);
 
   for (const [label, marker] of [
     ['Today Briefing', '<TodayBriefingCard'],
@@ -59,8 +63,10 @@ console.log('=== 1. Fresh / incomplete setup: the checklist is FIRST and rendere
 
   // Nothing scrollable may sit between the greeting and the checklist.
   // Slice AFTER the greeting element itself, otherwise the anchor matches.
-  const greetingEnd = greeting + '<Text style={styles.greeting}>{greeting}</Text>'.length;
-  const between = TODAY.slice(greetingEnd, checklist).replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const greetingEnd = greeting + GREETING_ANCHOR.length;
+  // The header block's own closing tag is not scrollable content; strip
+  // comments and closing tags before looking for any real element.
+  const between = TODAY.slice(greetingEnd, checklist).replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/<\/[A-Za-z]+>/g, '');
   assert('1d. only a comment separates the greeting from the checklist (visible without scrolling)', !/<[A-Z][A-Za-z]*/.test(between));
 }
 
@@ -118,10 +124,10 @@ console.log('\n=== 7. No fabricated financial zero introduced ===');
 console.log('\n=== 8. Screen-reader order follows visual order ===');
 {
   // RN traversal follows JSX order, so the source order IS the spoken order.
-  const greeting = at('<Text style={styles.greeting}>{greeting}</Text>');
+  const greeting = at('<Text style={styles.greeting} testID="today-greeting">{greeting}</Text>');
   const checklist = at('<MoneyPictureChecklistCard />');
   const briefing = at('<TodayBriefingCard');
-  assert('8a. spoken order is greeting -> checklist -> briefing', greeting < checklist && checklist < briefing);
+  assert('8a. spoken order is date eyebrow -> greeting -> checklist -> briefing', at('today-date-eyebrow') < greeting && greeting > 0 && greeting < checklist && checklist < briefing);
   assert('8b. the settings control remains the last header element', at('settings-outline') < greeting);
   assert('8c. checklist progress still exposes an accessibility label', /accessibilityLabel=\{`\$\{completedCount\} of \$\{steps\.length\} steps completed`\}/.test(CARD));
   assert('8d. checklist rows still expose their own labels', /accessibilityLabel=\{`\$\{s\.label\}/.test(CARD));

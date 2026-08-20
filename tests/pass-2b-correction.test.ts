@@ -376,11 +376,26 @@ console.log('\n=== Section 5: Score-outside-budget and reminder-ownership proper
   // same unmodified SmartReminderCard, now reached via ReminderDetailSheet.
   const TODAY_BRIEFING_CARD_SRC = readFileSync('src/components/today/TodayBriefingCard.tsx', 'utf8');
   const REMINDER_SHEET_SRC = readFileSync('src/components/today/ReminderDetailSheet.tsx', 'utf8');
-  assert('TodayBriefingCard.tsx: the Score chip is authored outside BriefingTileRow, and selectBriefingTiles never receives the score chip presentation as an argument — Score cannot occupy one of the three financial tile slots', (() => {
-    const chipIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<ScoreChip');
-    const tileRowIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<BriefingTileRow');
+  // SUPERSEDED by Design 5.1 Wave 5 Score containment, and now STRONGER:
+  // the Score is not merely outside the tile row, it is no longer Briefing
+  // content at all. It was demoted to a quiet footnote row after the Goal
+  // section. The property this assertion protects — Score can never occupy
+  // one of the three financial tile slots — holds by construction, because
+  // the Briefing no longer receives the score presentation in any form.
+  assert('TodayBriefingCard.tsx: Score cannot occupy one of the three financial tile slots — the Briefing no longer receives it at all', (() => {
+    // Wave 5's visual pass replaced the three-column tile row with up to
+    // two full-width priority rows (Design 5.1 p.7). The financial-item
+    // slots are still selected by the SAME selectBriefingTiles call — the
+    // rows are derived from its output — so the property this assertion
+    // protects is unchanged, only the element that renders it.
+    const financialSlotsIdx = TODAY_BRIEFING_CARD_SRC.indexOf('<BriefingPriorityRow');
     const selectTilesCall = TODAY_BRIEFING_CARD_SRC.match(/selectBriefingTiles\(([^)]*)\)/);
-    return chipIdx !== -1 && tileRowIdx !== -1 && chipIdx < tileRowIdx && !!selectTilesCall && !/scoreChip/.test(selectTilesCall[1]);
+    const briefingHasNoScore = !/ScoreChip|scoreChip/.test(TODAY_BRIEFING_CARD_SRC);
+    const footnoteAfterGoal = (() => {
+      const today = require('fs').readFileSync(require('path').resolve(__dirname, '../src/screens/today/TodayScreen.tsx'), 'utf8');
+      return today.indexOf('testID="today-score-footnote"') > today.indexOf('View all goals ({activeGoalCount})');
+    })();
+    return financialSlotsIdx !== -1 && !!selectTilesCall && !/scoreChip/.test(selectTilesCall[1]) && briefingHasNoScore && footnoteAfterGoal;
   })());
   // Device-test correction round — SmartReminderCard now also receives
   // onNavigateAway={onClose} (the fix for the blank-sheet-after-"Review

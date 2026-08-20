@@ -54,11 +54,16 @@ export interface ScoreChipPresentation {
 }
 
 export function selectScoreChipPresentation(luluScore: LuluScoreResult): ScoreChipPresentation {
+  // Design 5.1 Wave 5 — Score containment. An incomplete or invalid result
+  // is stated as such and NEVER clamped into a visible number or a
+  // fabricated zero (invariant 16). The wording is deliberately identical
+  // for both non-valid states: from the customer's point of view "locked"
+  // and "unavailable" are the same fact — Nolie does not have enough yet.
   if (luluScore.locked) {
     return {
       state: 'locked',
       label: brand.scoreName,
-      supportingText: 'Add income to unlock',
+      supportingText: 'Not enough recorded yet',
       scoreValue: null,
       tone: 'muted',
     };
@@ -67,15 +72,19 @@ export function selectScoreChipPresentation(luluScore: LuluScoreResult): ScoreCh
     return {
       state: 'unavailable',
       label: brand.scoreName,
-      supportingText: 'Score unavailable',
+      supportingText: 'Not enough recorded yet',
       scoreValue: null,
       tone: 'muted',
     };
   }
+  // A valid result carries the full containment: interim, sourced from what
+  // the customer recorded, and explicitly not a credit score. It is never
+  // described as factual, predictive, an eligibility signal, a wellbeing
+  // measure, a recommendation or advice.
   return {
     state: 'available',
     label: `${brand.scoreName} ${luluScore.score}`,
-    supportingText: 'Based on what you’ve recorded',
+    supportingText: 'Interim · Based on what you’ve recorded · Not a credit score',
     scoreValue: luluScore.score,
     tone: 'normal',
   };

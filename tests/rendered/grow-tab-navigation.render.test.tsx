@@ -76,11 +76,18 @@ async function seedEmptyData() {
  * renders the Journey header"). */
 async function expectCanonicalGrowContent() {
   // 'Grow' itself is ambiguous (it also matches the bottom-tab label), so
-  // assert the Screen title renders via getAllByText, then assert the
-  // "Your Journey" section header — always rendered, per DiscoverScreen's
-  // own doc comment, and unique on screen.
+  // assert the Screen title renders via getAllByText, then assert Grow's
+  // own "Your Journey" section header — always rendered, per
+  // DiscoverScreen's own doc comment.
+  //
+  // Wave 5 correction: this previously asserted the plain TEXT "Your
+  // Journey", which TODAY's own section header also rendered — so on any
+  // path where Grow was never actually reached, this helper matched
+  // Today's header and reported success. Asserting the HEADER ROLE pins it
+  // to Grow's section heading specifically; Today's Journey is now a named
+  // row, not a header, so the two can no longer be confused.
   expect((await screen.findAllByText('Grow')).length).toBeGreaterThan(0);
-  expect(await screen.findByText('Your Journey')).toBeOnTheScreen();
+  expect(await screen.findByRole('header', { name: 'Your Journey' })).toBeOnTheScreen();
 }
 
 describe('Grow tab navigation — rendered regression coverage (Pass 2E correction)', () => {
@@ -101,11 +108,17 @@ describe('Grow tab navigation — rendered regression coverage (Pass 2E correcti
     const user = userEvent.setup();
     await render(<Harness />);
 
-    // Today's own Score chip navigates to Grow WITH scrollTo/scrollToRequestId params.
+    // Today's Score footnote PUSHES GrowDetail — a root-stack route this
+    // tab-only harness deliberately does not register (the pushed
+    // destinations have their own full-RootNavigator coverage in
+    // pass-2e-pushed-destinations.render.test.tsx). So the press is made
+    // here only to exercise the focus-request side effect it leaves behind;
+    // the navigation itself does not and should not resolve in this tree.
+    // The regression this test actually guards is the SECOND half: a later
+    // plain tab tap must still render canonical Grow content.
     await user.press(await screen.findByRole('button', { name: /^Nolie Score/ }));
-    await expectCanonicalGrowContent();
 
-    // Leave Grow, then return via a DIRECT tab press (no params this time) —
+    // Now return via a DIRECT tab press (no params this time) —
     // the exact confirmed repro shape (Score request first, then a later
     // plain tab tap).
     await user.press(await screen.findByRole('button', { name: /^Wealth,/ }));
@@ -117,8 +130,10 @@ describe('Grow tab navigation — rendered regression coverage (Pass 2E correcti
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /milestones completed|not available yet/ }));
-    await expectCanonicalGrowContent();
+    // As above: this pushes GrowDetail, which this tab-only harness does
+    // not register. The press exercises the focus-request side effect; the
+    // guarded regression is the direct tab tap that follows.
+    await user.press(await screen.findByRole('button', { name: /^Your Journey\.|not available yet/ }));
 
     await user.press(await screen.findByRole('button', { name: /^Wealth,/ }));
     await user.press(await screen.findByRole('button', { name: /^Grow,/ }));

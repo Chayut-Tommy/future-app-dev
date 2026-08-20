@@ -1,128 +1,129 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { SectionCard } from '../shared/SectionCard';
 import { ProgressBar } from '../shared/ProgressBar';
 import { JourneySnapshot } from '../../lib/calculations/journeySnapshot';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import { ROW_ICON_TILE_SIZE, isAccessibilityText } from '../../lib/calculations/todayComposition';
+import i18n from '../../i18n';
 
 /**
- * Pass 2B, visual correction — the compact Journey snapshot, placed
- * immediately after Your Today Briefing, replacing the long Today Journey
- * timeline. Renders exactly what `snapshot` (computeJourneySnapshot,
- * wrapping the existing, unmodified computeAchievements()) already decided
- * — never recomputes or fabricates a milestone, target, percentage, or
- * recommendation of its own. The full timeline itself (JourneyTimeline.tsx)
- * remains reachable via onPress, mounted (and, arriving from here, fully
- * expanded — see DiscoverScreen.tsx) in Grow.
+ * Design 5.1 p.7 — the Journey snapshot as ONE compact supporting row.
  *
- * Colour correction — sits on a plain SectionCard (not the hero gradient),
- * so it reads from `aiAccentColor`/`aiAccentSoft` (ThemeContext) — the same
- * general-purpose, 3-way Navilo-colour-style tokens every other ordinary
- * surface uses (WelcomeFlow, MoneyOpportunitiesHero, FloatingLuluButton,
- * etc.) — rather than the hero-specific `naviloPalette` (whose translucent
- * tile tokens are tuned for sitting on the gradient and would be invisible
- * here). Selecting Purple/Sunrise in Settings now recolours this card too,
- * coherently with the rest of the app, instead of staying hard-coded
- * Ocean Blue. Still a compass icon (route-appropriate, distinct from
- * Score's gauge and from Journey's own full-timeline trophy nodes) — only
- * the colour source changed, not the identity.
+ * Previously this was a small card in its own right: a section header, a
+ * completed count, a NEXT eyebrow, a milestone title, a progress block and
+ * its own bordered "View full journey" footer — five stacked pieces
+ * competing with the hero directly beneath which they sat. Design 5.1
+ * gives the Journey one row: icon, title and stage, a slim bar, and its
+ * metadata. The whole row is the tap target, so the separate footer action
+ * is gone rather than duplicated.
  *
- * Spacing refinement — a touch more room between the completed-count line,
- * the NEXT eyebrow/milestone, the progress block, and the "View full
- * journey" action, so the four pieces read as a clearer sequence rather
- * than a tight stack. No data, calculation, or navigation change.
+ * Every number still comes from `snapshot` (computeJourneySnapshot, itself
+ * wrapping the unmodified computeAchievements) — no milestone, target,
+ * percentage or recommendation is computed here. Navigation is unchanged:
+ * the row opens the same full Journey the footer link opened.
+ *
+ * It is a supporting surface — flat, bordered, on bgSurface — never a
+ * second hero and never a tinted highlight tier. Today's visual budget
+ * allows exactly one hero and at most two tinted cards, and the Journey is
+ * neither.
  */
 export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: JourneySnapshot; onPress: () => void }) {
-  const { colors, radius, spacing, typography, aiAccentColor, aiAccentSoft } = useTheme();
+  const { semantic } = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+  // At accessibility sizes the stage metadata moves beneath the title
+  // rather than truncating beside it.
+  const stackMeta = isAccessibilityText(fontScale);
+
+  const progress =
+    snapshot.nextProgress && snapshot.nextProgress.target > 0
+      ? Math.min(1, Math.max(0, snapshot.nextProgress.current / snapshot.nextProgress.target))
+      : snapshot.totalCount > 0
+        ? Math.min(1, Math.max(0, snapshot.completedCount / snapshot.totalCount))
+        : 0;
+
+  const stageLine = snapshot.allCompleted
+    ? 'All milestones completed'
+    : snapshot.next
+      ? snapshot.next.title
+      : `${snapshot.completedCount} of ${snapshot.totalCount} milestones completed`;
+
+  const metaLine = snapshot.nextProgress
+    ? snapshot.nextProgress.formatted
+    : `${snapshot.completedCount}/${snapshot.totalCount}`;
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm, marginTop: spacing.sm },
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        row: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-        iconBadge: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: aiAccentSoft },
-        textBlock: { flex: 1 },
-        countText: { ...typography.body, fontSize: 16, color: colors.textPrimary, fontWeight: '800' },
-        nextEyebrow: { ...typography.micro, fontSize: 10, color: aiAccentColor, fontWeight: '700', letterSpacing: 0.6, marginTop: spacing.md },
-        nextText: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginTop: 3 },
-        allCompletedText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: spacing.md },
-        progressWrap: { marginTop: spacing.md },
-        progressText: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginTop: 5 },
-        viewFullRow: {
-          flexDirection: 'row',
+        card: {
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          paddingVertical: designSpacing.md,
+          paddingHorizontal: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
+          minHeight: designLayout.touchTargetMin,
+        },
+        row: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.md },
+        iconTile: {
+          width: ROW_ICON_TILE_SIZE,
+          height: ROW_ICON_TILE_SIZE,
+          borderRadius: designRadius.tile,
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 4,
-          paddingTop: spacing.md,
-          marginTop: spacing.md,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
+          backgroundColor: semantic.interactiveTint,
         },
-        viewFullText: { ...typography.caption, fontSize: 13, color: aiAccentColor, fontWeight: '700' },
-        emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        body: { flex: 1 },
+        title: { ...typeStyle('meta', locale), color: semantic.textSecondary },
+        stage: { ...typeStyle('body', locale), color: semantic.textPrimary, fontWeight: '600' },
+        barWrap: { marginTop: designSpacing.sm },
+        meta: { ...typeStyle('meta', locale), color: semantic.textSecondary },
+        metaBelow: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
+        emptyText: { ...typeStyle('support', locale), color: semantic.textSecondary },
       }),
-    [colors, radius, spacing, typography, aiAccentColor, aiAccentSoft]
+    [semantic, locale]
   );
 
-  return (
-    <>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle} accessibilityRole="header">Your Journey</Text>
+  if (snapshot.unavailable) {
+    return (
+      <View style={styles.card} testID="today-journey-row">
+        <Text style={styles.emptyText}>Your Journey isn't available yet.</Text>
       </View>
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={
-          snapshot.unavailable
-            ? 'Your Journey is not available yet'
-            : `${snapshot.completedCount} of ${snapshot.totalCount} milestones completed${
-                snapshot.next
-                  ? `, next: ${snapshot.next.title}${snapshot.nextProgress ? `, ${snapshot.nextProgress.formatted}` : ''}`
-                  : ''
-              }`
-        }
-        accessibilityHint="Opens the full Journey in Grow"
-      >
-        <SectionCard>
-          {snapshot.unavailable ? (
-            <Text style={styles.emptyText}>Your Journey isn't available yet.</Text>
-          ) : (
-            <View style={styles.row}>
-              <View style={styles.iconBadge}>
-                <Ionicons name="compass-outline" size={17} color={aiAccentColor} />
-              </View>
-              <View style={styles.textBlock}>
-                <Text style={styles.countText}>
-                  {snapshot.completedCount} of {snapshot.totalCount} milestones completed
-                </Text>
-                {snapshot.allCompleted ? (
-                  <Text style={styles.allCompletedText}>All milestones completed</Text>
-                ) : snapshot.next ? (
-                  <>
-                    <Text style={styles.nextEyebrow}>NEXT</Text>
-                    <Text style={styles.nextText} numberOfLines={1}>
-                      {snapshot.next.title}
-                    </Text>
-                    {snapshot.nextProgress ? (
-                      <View style={styles.progressWrap}>
-                        <ProgressBar progress={snapshot.nextProgress.current / snapshot.nextProgress.target} color={aiAccentColor} height={4} />
-                        <Text style={styles.progressText}>{snapshot.nextProgress.formatted}</Text>
-                      </View>
-                    ) : null}
-                  </>
-                ) : null}
-              </View>
-            </View>
-          )}
-          <View style={styles.viewFullRow}>
-            <Text style={styles.viewFullText}>View full journey</Text>
-            <Ionicons name="chevron-forward" size={14} color={aiAccentColor} />
-          </View>
-        </SectionCard>
-      </TouchableOpacity>
-    </>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.7}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Your Journey. ${stageLine}. ${metaLine}`}
+      accessibilityHint="Opens the full Journey in Grow"
+      testID="today-journey-row"
+    >
+      <View style={styles.row} importantForAccessibility="no-hide-descendants">
+        <View style={styles.iconTile}>
+          <Ionicons name="compass-outline" size={15} color={semantic.interactive} />
+        </View>
+        <View style={styles.body}>
+          <Text style={styles.title}>Your Journey</Text>
+          <Text style={styles.stage} numberOfLines={stackMeta ? 3 : 1}>
+            {stageLine}
+          </Text>
+          {stackMeta ? <Text style={styles.metaBelow}>{metaLine}</Text> : null}
+        </View>
+        {!stackMeta ? <Text style={styles.meta}>{metaLine}</Text> : null}
+        <Ionicons name="chevron-forward" size={16} color={semantic.textTertiary} />
+      </View>
+      <View style={styles.barWrap} importantForAccessibility="no-hide-descendants">
+        <ProgressBar progress={progress} color={semantic.interactive} height={4} />
+      </View>
+    </TouchableOpacity>
   );
 }

@@ -1,129 +1,349 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import type { RefObject } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { SafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
-import { TodayBriefingEventRow, formatBriefingDateContext } from '../../lib/calculations/todayBriefing';
+import { TodayBriefingEventRow } from '../../lib/calculations/todayBriefing';
 import { SmartReminder } from '../../lib/calculations/reminders';
-import { ScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
-import { ScoreChip } from './ScoreChip';
-import { BriefingTile, selectBriefingTiles } from '../../lib/calculations/briefingTiles';
-import { BriefingTileRow } from './BriefingTileRow';
+import { selectBriefingTiles } from '../../lib/calculations/briefingTiles';
+import { BriefingPriorityRow as PriorityRowModel, selectBriefingPriorityRows } from '../../lib/calculations/briefingPriorityRows';
+import { TimelineEvent } from '../../lib/calculations/moneyTimeline';
+import { BriefingPriorityRow } from './BriefingPriorityRow';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { textStyle, typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import { isAccessibilityText, resolveHeroEmphasis } from '../../lib/calculations/todayComposition';
+import i18n from '../../i18n';
 
 /**
- * "Your Today Briefing" — canonical composition (Pass 2B, layout
- * correction):
- *   1. title + date/context header
- *   2. the compact Navilo Score chip — separate from, and never counted
- *      toward, the three-item financial budget below; visually subordinate
- *      to the primary money status beneath it.
- *   3. up to three compact summary tiles (BriefingTileRow) — AUP always
- *      first, the top Smart Reminder next when eligible, then independent
- *      upcoming-event tiles. Total tile count is bounded by the exact same
- *      upstream budget the previous row-based layout used
- *      (selectTodayBriefingEventRows sizes eventRows down to 1 whenever a
- *      reminder is present) — selectBriefingTiles (briefingTiles.ts) adds
- *      no capping of its own, so this correction cannot change Briefing
- *      eligibility, priority, or the three-item cap. The Score chip sits
- *      outside this tile row entirely, so it can never occupy one of the
- *      three slots.
+ * "Your Today Briefing" — Design 5.1 p.7, the single expressive hero on
+ * Today.
  *
- * Layout correction — the previous large white inner card (a SectionCard
- * holding stacked AUP/reminder/event rows, with the reminder's full
- * detailed question and account-choice controls embedded directly inside
- * it) is gone. The reminder's full detail — including every account-choice
- * control — now lives exclusively in ReminderDetailSheet, reached by
- * tapping the compact Reminder tile; this is both the fix for the
- * confirmed overflow (an unbounded row of account-choice pills has no
- * reason to exist inside a one-third-width tile) and the "ambient hero →
- * Score summary → up to three lightweight tiles" simplified construction
- * this correction asks for. Every tile's destination — AUP, the reminder
- * sheet, or an event's Money-timeline focus — is exactly the same
- * authoritative destination the old rows already used; only the visual
- * presentation changed.
+ * WHAT CHANGED IN WAVE 5's VISUAL PASS, AND WHY
  *
- * Colour correction — the hero gradient, tile surface/border, and tile
- * accent colours all now read from `naviloPalette` (ThemeContext), which
- * resolves the user's selected Navilo colour style (Ocean Blue / Purple /
- * Sunrise) — never a hard-coded gradient. See theme/palettes.ts.
+ * The previous construction was a saturated purple gradient block holding
+ * a three-column tile grid. It had two problems the owner's device review
+ * confirmed. First, the AUP figure — the one number the whole screen
+ * exists to deliver — was rendered at tile scale, the same size as the
+ * words "Bill due" beside it, so nothing on the page was visually
+ * dominant. Second, a third of a phone's width cannot hold a customer's
+ * own bill name, an exact date and an amount, so each tile could only
+ * carry a category word; the customer had to tap to learn anything.
+ *
+ * The anatomy is now:
+ * The date/context line the old header carried is gone from here: Design
+ * 5.1 p.7 states the local date ONCE, as the page's own eyebrow above the
+ * greeting (TodayScreen's `today-date-eyebrow`, derived from the same live
+ * useCurrentLocalDate value). Repeating it inside the hero was exactly the
+ * duplicated heading the density rules bar.
+ *
+ *   2. measure label — the presentation's own heading
+ *   3. the canonical financial figure, at figureHero
+ *   4. the timeframe line — days to payday and the daily division
+ *   5. divider
+ *   6. zero to two full-width priority rows
+ *   7. provenance footer, left
+ *   8. How this works, right
+ *
+ * Every value still comes from the same engines, selected by the same
+ * selectors, in the same order, under the same budget. selectBriefingTiles
+ * still decides composition; selectBriefingPriorityRows only enriches what
+ * it produced with the date and amount a tile had no room for. This
+ * component cannot change eligibility, priority, or the cap.
+ *
+ * The surface is `heroSurface` — the one Premium Expressive surface the
+ * style is permitted to retint — not the old saturated gradient. Text
+ * therefore reads from the ordinary shared ink roles, which is what makes
+ * the figure legible in all six themes without a per-theme override.
  */
+/** Design 5.1 — the Briefing's identity tile. Matches the 36pt tile size
+ * the shared Add icon system already uses, so Today's tiles share one
+ * rhythm rather than each picking a size. */
+const BRIEFING_IDENTITY_TILE_SIZE = 36;
+const BRIEFING_IDENTITY_GLYPH_SIZE = 20;
+
 export function TodayBriefingCard({
-  today,
-  scoreChip,
   presentation,
   eventRows,
+  timelineEvents,
   topReminder,
-  onPressScoreChip,
+  timeframeLine,
   onPressAup,
   onPressEventRow,
   onPressReminderTile,
+  onPressHowThisWorks,
   headingRef,
   reminderTileRef,
 }: {
-  /** The same local-calendar Date every other Briefing calculation already
-   * derives from (TodayScreen's useCurrentLocalDate-sourced `currentDate`)
-   * — never a separately-captured `new Date()`, so the header always agrees
-   * with what the rest of the Briefing is actually showing. */
-  today: Date;
-  scoreChip: ScoreChipPresentation;
   presentation: SafeToSpendPresentation;
   eventRows: TodayBriefingEventRow[];
+  /** The same timeline the Briefing's own event rows were selected from —
+   * passed so a row can show the exact date and amount its own selection
+   * already knew about. Never re-filtered or re-sorted here. */
+  timelineEvents: TimelineEvent[];
   topReminder: SmartReminder | null;
-  onPressScoreChip: () => void;
+  /** Already formatted by formatHeroTimeframe from the Safe-to-Spend
+   * result; null when no payday is genuinely known. */
+  timeframeLine: string | null;
   onPressAup: () => void;
   onPressEventRow: (row: TodayBriefingEventRow) => void;
-  /** Opens ReminderDetailSheet — the compact Reminder tile's tap-through
-   * destination. This component never renders reminder confirmation/
-   * account-choice UI itself. */
   onPressReminderTile: () => void;
-  /** Reminder focus/announcements task — forwarded to this card's own
-   * "Your Today Briefing" heading. TodayScreen uses this as the safe
-   * fallback focus target when the Reminder sheet fully closes and the
-   * originating Reminder tile no longer exists (every reminder resolved). */
+  /** Opens the existing Available Until Payday explanation — the same
+   * destination the hero figure itself opens. */
+  onPressHowThisWorks: () => void;
   headingRef?: RefObject<any>;
-  /** Reminder focus/announcements task — forwarded to BriefingTileRow,
-   * attached only to the 'reminder' tile when one is present. TodayScreen
-   * uses this to restore accessibility focus there when the Reminder sheet
-   * closes and that exact tile still exists. */
   reminderTileRef?: RefObject<any>;
 }) {
-  const { spacing, radius, typography, glow, naviloPalette } = useTheme();
+  const { semantic } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+  const compact = width <= designLayout.breakpoints.compactMax;
+  const stackFooter = isAccessibilityText(fontScale);
 
   const tiles = useMemo(() => selectBriefingTiles(presentation, topReminder, eventRows), [presentation, topReminder, eventRows]);
+  const priorityRows = useMemo(
+    () => selectBriefingPriorityRows(tiles, eventRows, timelineEvents, topReminder),
+    [tiles, eventRows, timelineEvents, topReminder]
+  );
 
-  function handlePressTile(tile: BriefingTile) {
-    if (tile.kind === 'aup') {
-      onPressAup();
-      return;
-    }
-    if (tile.kind === 'reminder') {
+  const figureType = textStyle('figureHero', locale);
+  const titleType = textStyle('titleSection', locale);
+
+  // Wave 5 closure — restrained semantic colour. The hero carries ONE
+  // Ocean Blue anchor (the figure, plus the eyebrow and its two links) and,
+  // where it genuinely applies, ONE status colour. Everything else — the
+  // measure label, the timeframe line, the explanatory sentences, dates and
+  // provenance — stays neutral ink, so the colour that is present means
+  // something rather than decorating every line.
+  //
+  // A shortfall is never signalled by colour alone: the warning ink is
+  // paired with an alert glyph and with the presentation's own wording,
+  // which states the shortfall in full.
+  const emphasis = resolveHeroEmphasis(presentation.heroState, presentation.amountVisible && !!presentation.displayAmount);
+
+  function handlePressRow(row: PriorityRowModel) {
+    if (row.kind === 'reminder') {
       onPressReminderTile();
       return;
     }
-    const row = eventRows.find((r) => `event-${r.key}` === tile.key);
-    if (row) onPressEventRow(row);
+    const key = row.key.replace(/^event-/, '');
+    const eventRow = eventRows.find((r) => r.key === key);
+    if (eventRow) onPressEventRow(eventRow);
   }
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        hero: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, ...glow(naviloPalette.heroGradientStart) },
-        sectionHeader: { marginBottom: spacing.md },
-        sectionTitle: { ...typography.title, fontSize: 19, fontWeight: '800', color: naviloPalette.heroForeground },
-        sectionDateContext: { ...typography.caption, fontSize: 13, color: naviloPalette.heroForeground, opacity: 0.82, marginTop: 2 },
+        hero: {
+          borderRadius: designRadius.hero,
+          padding: compact ? designLayout.cardPadding : designLayout.heroPadding,
+          marginBottom: designLayout.sectionGap,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.heroBorder,
+        },
+        // Wave 5 polish — the Briefing's identity row. This was a 12.5pt
+        // all-caps label with nothing beside it, which read as a caption
+        // rather than as the name of the page's primary surface. It is now
+        // a 36pt semantic tint tile and a title-case title, so the hero is
+        // recognisable at a glance without becoming heavier: the row costs
+        // one spacing token of height over the label it replaces, and the
+        // measure label beneath it gives back a step to compensate.
+        identityRow: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.md },
+        identityTile: {
+          width: BRIEFING_IDENTITY_TILE_SIZE,
+          height: BRIEFING_IDENTITY_TILE_SIZE,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: semantic.interactiveTint,
+        },
+        // Title case, not all caps — and the Ocean Blue interactive ink
+        // that distinguishes the hero's own title from Today's neutral
+        // section headings. Clears 4.5:1 on every heroSurface stop in all
+        // six themes (design5-wave5-today-hierarchy §18v).
+        identityTitle: { ...typeStyle('titleSection', locale), color: semantic.interactive, flexShrink: 1 },
+        measureLabel: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.sm },
+        figure: { ...figureType.style, color: semantic.interactive, marginTop: designSpacing.xs },
+        // The setup/unavailable states keep the hero's geometry but must
+        // never render an empty figure slot or a fabricated $0 — they show
+        // the presentation's own exact guidance sentence instead.
+        // Warning ink ONLY for a genuine shortfall. A missing input is a
+        // gap, not a money problem, and stays neutral.
+        guidance: {
+          ...typeStyle('titleSection', locale),
+          color: emphasis === 'shortfall' ? semantic.warning : semantic.textPrimary,
+          marginTop: designSpacing.xs,
+          flexShrink: 1,
+        },
+        guidanceRow: { flexDirection: 'row', alignItems: 'flex-start', gap: designSpacing.sm },
+        guidanceIcon: { marginTop: 4 },
+        guidanceSupport: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.sm },
+        timeframe: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.sm },
+        setupAction: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          minHeight: designLayout.touchTargetMin,
+          marginTop: designSpacing.sm,
+        },
+        setupActionText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        divider: {
+          height: StyleSheet.hairlineWidth,
+          backgroundColor: semantic.border,
+          marginTop: designSpacing.lg,
+        },
+        rows: { marginTop: designSpacing.xs },
+        footer: {
+          flexDirection: stackFooter ? 'column' : 'row',
+          alignItems: stackFooter ? 'flex-start' : 'center',
+          justifyContent: 'space-between',
+          gap: designSpacing.sm,
+          marginTop: designSpacing.lg,
+          paddingTop: designSpacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: semantic.border,
+        },
+        provenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, flexShrink: 1 },
+        howRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          minHeight: designLayout.touchTargetMin,
+        },
+        howText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
       }),
-    [radius, spacing, typography, glow, naviloPalette]
+    [semantic, locale, compact, stackFooter, figureType.style, emphasis]
   );
 
+  const amountVisible = presentation.amountVisible && !!presentation.displayAmount;
+
   return (
-    <LinearGradient colors={[naviloPalette.heroGradientStart, naviloPalette.heroGradientEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
-      <View style={styles.sectionHeader}>
-        <Text ref={headingRef} style={styles.sectionTitle} accessibilityRole="header">Your Today Briefing</Text>
-        <Text style={styles.sectionDateContext}>{formatBriefingDateContext(today)}</Text>
+    <LinearGradient
+      colors={semantic.heroSurface as unknown as readonly [string, string, ...string[]]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.hero}
+      testID="today-briefing-hero"
+    >
+      {/* The tile is decorative — the title supplies the accessible name,
+          so there is exactly ONE announcement here, not two. */}
+      <View style={styles.identityRow}>
+        <View
+          style={styles.identityTile}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          testID="today-briefing-identity-tile"
+        >
+          <Ionicons name="sunny-outline" size={BRIEFING_IDENTITY_GLYPH_SIZE} color={semantic.interactive} />
+        </View>
+        <Text
+          ref={headingRef}
+          style={styles.identityTitle}
+          accessibilityRole="header"
+          maxFontSizeMultiplier={titleType.maxFontSizeMultiplier}
+        >
+          Your Today Briefing
+        </Text>
       </View>
-      <ScoreChip presentation={scoreChip} onPress={onPressScoreChip} />
-      <BriefingTileRow tiles={tiles} onPressTile={handlePressTile} reminderTileRef={reminderTileRef} />
+
+      {amountVisible ? (
+        // The measure block is one tap target opening the SAME authoritative
+        // AUP destination the old tile opened — the figure is the primary
+        // affordance, not decoration. "How this works" in the footer reaches
+        // the same explanation, which is the anatomy p.7 specifies; there is
+        // no third AUP explanation anywhere on Today.
+        <TouchableOpacity
+          onPress={onPressAup}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`${presentation.heading}, ${presentation.displayAmount}${timeframeLine ? `. ${timeframeLine}` : ''}`}
+          accessibilityHint="Opens details"
+          testID="today-briefing-measure"
+        >
+          <Text style={styles.measureLabel} importantForAccessibility="no">{presentation.heading}</Text>
+          <Text
+            style={styles.figure}
+            importantForAccessibility="no"
+            maxFontSizeMultiplier={figureType.maxFontSizeMultiplier}
+            adjustsFontSizeToFit
+            numberOfLines={1}
+            minimumFontScale={0.7}
+            testID="today-briefing-figure"
+          >
+            {presentation.displayAmount}
+          </Text>
+          {timeframeLine ? <Text style={styles.timeframe} importantForAccessibility="no">{timeframeLine}</Text> : null}
+        </TouchableOpacity>
+      ) : (
+        // Setup / unavailable: same hero geometry, no figure slot at all,
+        // and the presentation's own exact missing-input sentence. Never
+        // "$0" — invariant 10.
+        <View testID="today-briefing-setup">
+          <Text style={styles.measureLabel}>{presentation.heading}</Text>
+          <View style={styles.guidanceRow}>
+            {/* A second, non-colour signal for the shortfall — so the state
+                never depends on the ink alone. The presentation's own
+                wording states the shortfall in full alongside it. */}
+            {emphasis === 'shortfall' ? (
+              <Ionicons name="alert-circle-outline" size={19} color={semantic.warning} importantForAccessibility="no" style={styles.guidanceIcon} />
+            ) : null}
+            <Text style={styles.guidance} maxFontSizeMultiplier={titleType.maxFontSizeMultiplier}>
+              {presentation.primaryCopy}
+            </Text>
+          </View>
+          {presentation.supportingCopy ? <Text style={styles.guidanceSupport}>{presentation.supportingCopy}</Text> : null}
+          <TouchableOpacity
+            style={styles.setupAction}
+            onPress={onPressAup}
+            accessibilityRole="button"
+            // Named with the same AVAILABLE… heading the measure block
+            // uses, so the AUP affordance carries one consistent accessible
+            // name in every state rather than changing identity when the
+            // amount cannot be shown.
+            accessibilityLabel={`${presentation.heading}, ${presentation.compactSummary}`}
+            testID="today-briefing-setup-action"
+          >
+            <Text style={styles.setupActionText}>What's missing</Text>
+            <Ionicons name="chevron-forward" size={16} color={semantic.interactive} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {priorityRows.length > 0 ? (
+        <>
+          <View style={styles.divider} />
+          <View style={styles.rows} testID="today-briefing-priority-rows">
+            {priorityRows.map((row, index) => (
+              <BriefingPriorityRow
+                key={row.key}
+                row={row}
+                onPress={() => handlePressRow(row)}
+                focusRef={row.kind === 'reminder' ? reminderTileRef : undefined}
+                isLast={index === priorityRows.length - 1}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
+
+      <View style={styles.footer}>
+        <Text style={styles.provenance} testID="today-briefing-provenance">
+          Based on what you’ve recorded · updated today
+        </Text>
+        <TouchableOpacity
+          style={styles.howRow}
+          onPress={onPressHowThisWorks}
+          accessibilityRole="button"
+          accessibilityLabel="How this works"
+          accessibilityHint="Opens how your available amount is worked out"
+          testID="today-briefing-how-this-works"
+        >
+          <Text style={styles.howText}>How this works</Text>
+          <Ionicons name="information-circle-outline" size={16} color={semantic.interactive} />
+        </TouchableOpacity>
+      </View>
     </LinearGradient>
   );
 }

@@ -616,10 +616,17 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
   // again the first card. Presentation order only — no behavioural or
   // financial expectation changed. New order protected by
   // tests/design5-today-checklist-priority.test.ts.
-  assert('TodayBriefingCard is rendered after the greeting Text and receives today={currentDate}', (() => {
-    const greetingIdx = TODAY_SCREEN_SRC.indexOf('<Text style={styles.greeting}>{greeting}</Text>');
+  // Wave 5 visual pass — the greeting element gained a testID (the local
+  // date eyebrow now precedes it inside a shared header block), and the
+  // Briefing no longer takes a `today` prop because Design 5.1 p.7 states
+  // the date ONCE, as the page eyebrow, rather than repeating it in the
+  // hero. The claim protected here is unchanged: the Briefing follows the
+  // greeting, and every date on Today comes from the same live local
+  // `currentDate` value, never a separately-captured new Date().
+  assert('TodayBriefingCard is rendered after the greeting Text, and every Today date comes from currentDate', (() => {
+    const greetingIdx = TODAY_SCREEN_SRC.indexOf('<Text style={styles.greeting} testID="today-greeting">{greeting}</Text>');
     const briefingIdx = TODAY_SCREEN_SRC.indexOf('<TodayBriefingCard');
-    return greetingIdx !== -1 && briefingIdx !== -1 && greetingIdx < briefingIdx && /today=\{currentDate\}/.test(TODAY_SCREEN_SRC);
+    return greetingIdx !== -1 && briefingIdx !== -1 && greetingIdx < briefingIdx && /today=\{currentDate\}/.test(TODAY_SCREEN_SRC) && !/new Date\(\)/.test(TODAY_SCREEN_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''));
   })());
   // Pass 2B layout correction — the reminder's full detailed presentation
   // (question, disclosure copy, account-choice controls) is no longer
@@ -695,9 +702,17 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     /selectBriefingTiles\(presentation, topReminder, eventRows\)/.test(TODAY_BRIEFING_CARD_SRC)
   );
   assert(
-    'the Briefing header renders a date/context line via formatBriefingDateContext(today) (correction §4)',
-    /import \{ TodayBriefingEventRow, formatBriefingDateContext \} from '\.\.\/\.\.\/lib\/calculations\/todayBriefing'/.test(TODAY_BRIEFING_CARD_SRC) &&
-      /\{formatBriefingDateContext\(today\)\}/.test(TODAY_BRIEFING_CARD_SRC)
+    // Wave 5 visual pass — the date/context line moved OUT of the hero and
+    // became the page's own local date eyebrow above the greeting (Design
+    // 5.1 p.7 states it once). The claim this protects — Today renders a
+    // real, live, locale-aware date derived from the customer's own local
+    // calendar, never hard-coded and never a second captured clock — is
+    // unchanged, and now asserted where the date actually renders.
+    'Today renders its date/context line as the page eyebrow, derived from the live local currentDate (correction §4, superseded by Design 5.1 p.7)',
+    /\{formatTodayDateEyebrow\(currentDate\)\}/.test(TODAY_SCREEN_SRC) &&
+      /testID="today-date-eyebrow"/.test(TODAY_SCREEN_SRC) &&
+      !/formatBriefingDateContext/.test(TODAY_BRIEFING_CARD_SRC) &&
+      !/August|July|September/.test(TODAY_SCREEN_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
   );
   assert(
     // Pass 2E final correction — both destinations now push the root

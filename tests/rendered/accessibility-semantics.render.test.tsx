@@ -102,9 +102,15 @@ describe('Accessibility semantics — rendered coverage (Pass 2E)', () => {
   test('Today renders its section headings with header role', async () => {
     await render(<Harness />);
 
+    // Wave 5's visual pass — the Briefing's header role moved onto its
+    // Design 5.1 eyebrow, and the Journey became a single named row rather
+    // than a section header plus a card (p.7's own anatomy, and the density
+    // rule against a heading that only repeats the card's own title). The
+    // Journey is still an accessible named control — asserted in the next
+    // test — so nothing became unreachable.
     expect(await screen.findByRole('header', { name: 'Your Today Briefing' })).toBeOnTheScreen();
-    expect(await screen.findByRole('header', { name: 'Your Journey' })).toBeOnTheScreen();
     expect(await screen.findByRole('header', { name: 'Your goal' })).toBeOnTheScreen();
+    expect(await screen.findByRole('button', { name: /^Your Journey\./ })).toBeOnTheScreen();
   });
 
   test('Today floating Settings control is an accessible, named button', async () => {
@@ -116,7 +122,9 @@ describe('Accessibility semantics — rendered coverage (Pass 2E)', () => {
   test('Today Journey snapshot row exposes its numeric next-milestone progress in one collapsed label', async () => {
     await render(<Harness />);
 
-    const journeyRow = await screen.findByRole('button', { name: /milestones completed/ });
+    // The row now leads with its own name; the numeric progress this test
+    // exists to protect is still carried in the SAME single collapsed label.
+    const journeyRow = await screen.findByRole('button', { name: /^Your Journey\./ });
     expect(journeyRow).toBeOnTheScreen();
     expect(journeyRow.props.accessibilityLabel).toMatch(/\$250.*\$1,000/);
   });
@@ -124,7 +132,9 @@ describe('Accessibility semantics — rendered coverage (Pass 2E)', () => {
   test('Today goal row exposes name, percent, and target in one accessible label', async () => {
     await render(<Harness />);
 
-    const goalRow = await screen.findByRole('button', { name: /Emergency Fund.*30 percent.*\$5,000/ });
+    // Wave 5 — the compact goal row now speaks the amounts as well as the
+    // percentage, in one label: "Emergency Fund, $1,500 of $5,000, 30%".
+    const goalRow = await screen.findByRole('button', { name: /Emergency Fund.*\$1,500 of \$5,000.*30%/ });
     expect(goalRow).toBeOnTheScreen();
   });
 

@@ -390,8 +390,18 @@ console.log('\n=== 6. Structural — Today navigation and Money drill-down wirin
   const MONEY_PLAN_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/MoneyPlanCard.tsx', 'utf-8');
 
   assert('6a. MonthSnapshotCard navigates to the real Transactions route (not the Money tab) when populated', /navigation\.navigate\('Transactions'\)/.test(MONTH_SNAPSHOT_SRC));
-  assert('6b. MonthSnapshotCard\'s empty state calls the caller-supplied onAddTransaction, never Transaction History', /onPress=\{onAddTransaction\}/.test(MONTH_SNAPSHOT_SRC));
-  assert('6c. TodayScreen wires onAddTransaction to the pre-existing transactionModalVisible state, not a new component', /onAddTransaction=\{\(\) => setTransactionModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC));
+  // Wave 5 closure — MonthSnapshotCard no longer HAS an empty state. Today
+  // rendered the money-picture checklist and then this card's own "add your
+  // income and spending" prompt, which asked for the same thing twice in two
+  // registers; the section is now absent entirely when nothing is recorded.
+  // Its Add-transaction entry point went with it, and nothing was lost: Add
+  // transaction is owned by the global "+" (AddAnythingSheet mounts its own
+  // QuickAddModal), so Today's second, now-unreachable instance was removed
+  // rather than left dead in the tree. Money's own ThisMonthCard — a
+  // different component — keeps both its empty state and its own action.
+  assert('6b. MonthSnapshotCard has no empty state to wire — the whole section is gated instead', !/onAddTransaction/.test(MONTH_SNAPSHOT_SRC) && /activity: MonthToDateActivity/.test(MONTH_SNAPSHOT_SRC));
+  assert('6c. TodayScreen gates the month section on the shared eligibility rule, and mounts no second transaction modal', /const monthSectionVisible = isMonthSectionEligible\(monthActivity\);/.test(TODAY_SCREEN_SRC) && !/QuickAddModal/.test(TODAY_SCREEN_SRC));
+  assert('6c-ii. and Add transaction remains reachable from the global "+"', /QuickAddModal/.test(readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8')));
   assert('6d. TodayScreen no longer renders a separate "Upcoming payments" block (the duplicated lower credit-card due reminder)', !/Upcoming payments/.test(TODAY_SCREEN_SRC));
 
   assert('6e. MoneyScreen mounts the shared MoneyFlowCategoryDetailSheet', /<MoneyFlowCategoryDetailSheet/.test(MONEY_SCREEN_SRC));

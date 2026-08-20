@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
@@ -9,7 +9,6 @@ import { useAppState } from '../../state/AppStateContext';
 import { useCelebration } from '../../state/CelebrationContext';
 import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
 import { Screen } from '../../components/shared/Screen';
-import { SectionCard } from '../../components/shared/SectionCard';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
@@ -22,7 +21,6 @@ import { AddIncomeModal } from '../../components/income/AddIncomeModal';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
-import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { computeLuluScore } from '../../lib/calculations/luluScore';
 import { computeAchievements } from '../../lib/calculations/achievements';
 import { pickWorthKnowingInsight } from '../../lib/calculations/worthKnowing';
@@ -33,6 +31,7 @@ import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
 import { computeMoneyTimeline } from '../../lib/calculations/moneyTimeline';
+import { computeMonthToDateActivity } from '../../lib/calculations/monthlySummary';
 import { computeTopReminder } from '../../lib/calculations/reminders';
 import { ReminderOpenRequest, createReminderOpenRequest } from '../../lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
@@ -42,19 +41,38 @@ import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileComp
 import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
-import { brand } from '../../lib/brand';
 import { sendFocusEvent } from '../../lib/accessibilityFocus';
+import { TodayAmbientField } from '../../components/today/TodayAmbientField';
+import { formatHeroTimeframe } from '../../lib/calculations/briefingPriorityRows';
+import { formatTodayDateEyebrow, goalPercentageIsTrailing, isAccessibilityText, isMonthSectionEligible, ROW_ICON_TILE_SIZE } from '../../lib/calculations/todayComposition';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import { resolveGoalProgressState } from '../../lib/goalFormState';
+import i18n from '../../i18n';
 
 // Confetti + trophy tier reserved for the genuinely big moments (PRD ask) —
 // everything else newly-unlocked still gets the existing Journey sheet.
 const BIG_TIER_ACHIEVEMENT_IDS = new Set(['first_investment', 'emergency_fund', 'started_super']);
+
+/** The circular Settings control in the header. 44pt so it meets the
+ * minimum touch target on its own, without relying on hitSlop. */
+const SETTINGS_CONTROL_SIZE = 44;
+
+/** Design 5.1 — the no-goal invitation is a taller row than an ordinary
+ * one because it carries a title and a full sentence of supporting copy.
+ * Comfortably above the 44pt activation minimum. */
+const PLAN_GOAL_ROW_MIN_HEIGHT = 56;
 
 export function TodayScreen() {
   const { data, updateGoal, updateUser, markAchievementsSeen } = useAppState();
   const navigation = useNavigation<any>();
   const { t } = useTranslation();
   const { celebrate } = useCelebration();
-  const { colors, spacing, typography, radius, glow, cardShadow, minTouchTarget } = useTheme();
+  const { colors, spacing, typography, radius, glow, cardShadow, minTouchTarget, semantic } = useTheme();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+  const screenMargin = windowWidth <= designLayout.breakpoints.compactMax ? designLayout.screenMarginCompact : designLayout.screenMargin;
   const insets = useSafeAreaInsets();
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
@@ -62,7 +80,6 @@ export function TodayScreen() {
   const [wealthModalEditAsset, setWealthModalEditAsset] = useState<Asset | null>(null);
   const [wealthModalPresetType, setWealthModalPresetType] = useState<AssetType | undefined>(undefined);
   const [contributeGoalId, setContributeGoalId] = useState<string | null>(null);
-  const [transactionModalVisible, setTransactionModalVisible] = useState(false);
   // Pass 2B correction §1/§2 — opened by the Briefing's compact Reminder
   // tile; hosts the exact existing SmartReminderCard (its full question,
   // disclosure copy, and account-choice controls) in ReminderDetailSheet,
@@ -117,6 +134,23 @@ export function TodayScreen() {
   const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
   const safeToSpendPresentation = useMemo(() => selectSafeToSpendPresentation(safeToSpend, heroCopy), [safeToSpend, heroCopy]);
   const timelineEvents = useMemo(() => computeMoneyTimeline(data, currentDate), [data, currentDate]);
+  // The canonical month-to-date selector, called ONCE. Both the section
+  // heading's visibility and the card's figures read this same value, so
+  // the two can never disagree about whether there is anything to show.
+  // `currentDate` is the live local-date value (useCurrentLocalDate), so a
+  // month rollover with zero new transactions still recomputes it.
+  const monthActivity = useMemo(() => computeMonthToDateActivity(data, currentDate), [data, currentDate]);
+  const monthSectionVisible = isMonthSectionEligible(monthActivity);
+  // Same accessibility threshold the rest of Today reflows on.
+  const stackGoalAction = isAccessibilityText(fontScale);
+  // Design 5.1 p.7 — the hero's supporting timeframe line. Every number in
+  // it is read straight off the Safe-to-Spend result the hero is already
+  // showing; formatHeroTimeframe recomputes nothing and returns null rather
+  // than guessing when no payday is genuinely known.
+  const heroTimeframeLine = useMemo(
+    () => formatHeroTimeframe(safeToSpend.daysRemaining, safeToSpend.cycleEnd, safeToSpend.dailyAllowance, !!data.user.nextPayday),
+    [safeToSpend.daysRemaining, safeToSpend.cycleEnd, safeToSpend.dailyAllowance, data.user.nextPayday]
+  );
   const topReminder = useMemo(() => computeTopReminder(data, currentDate), [data, currentDate]);
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
 
@@ -419,8 +453,14 @@ export function TodayScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-        brand: { ...typography.title, fontSize: 20, fontWeight: '800', letterSpacing: 1, color: colors.accent, marginBottom: spacing.xs },
+        // Design 5.1 p.7 header anatomy: uppercase local date eyebrow, then
+        // the greeting at titleScreen. The brand lockup that used to sit
+        // here is gone — the customer knows which app they opened, and the
+        // date is the piece of context that actually changes.
+        dateEyebrow: { ...typeStyle('eyebrow', locale), color: semantic.textTertiary },
+        // Reserves the Settings control's own width so a long greeting
+        // reflows beside it instead of running underneath it.
+        headerBlock: { paddingRight: SETTINGS_CONTROL_SIZE + designSpacing.md },
         // Fixed, not part of the scroll content (PRD bug report: on a long
         // Today page, an in-content settings button scrolls out of reach).
         floatingSettings: {
@@ -430,20 +470,85 @@ export function TodayScreen() {
           // border box, not its padding box — so this needs its own
           // insets.top or it lands under the status bar / Dynamic Island.
           top: insets.top + spacing.sm,
-          right: spacing.lg,
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          backgroundColor: colors.surface,
+          right: screenMargin,
+          width: SETTINGS_CONTROL_SIZE,
+          height: SETTINGS_CONTROL_SIZE,
+          borderRadius: SETTINGS_CONTROL_SIZE / 2,
+          backgroundColor: semantic.bgSurface,
           alignItems: 'center',
           justifyContent: 'center',
           ...cardShadow,
         },
-        greeting: { ...typography.title, fontSize: 26, fontWeight: '800', color: colors.textPrimary, marginBottom: spacing.lg },
-        sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm, marginTop: spacing.sm },
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        sectionLink: { ...typography.micro, color: colors.accent, fontWeight: '700' },
-        goalName: { ...typography.body, fontSize: 15, color: colors.textPrimary, fontWeight: '700', marginBottom: 6 },
+        greeting: { ...typeStyle('titleScreen', locale), color: semantic.textTitle, marginTop: designSpacing.xs, marginBottom: designLayout.sectionGap },
+        sectionHeader: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: designSpacing.sm,
+          marginTop: designSpacing.sm,
+          minHeight: minTouchTarget,
+        },
+        sectionTitle: { ...typeStyle('titleSection', locale), color: semantic.textTitle },
+        sectionLink: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        // Design 5.1 p.7 — the focus goal is ONE compact financial row, not
+        // a card with a stacked name/bar/amount block inside it.
+        goalRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.md,
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          paddingVertical: designSpacing.md,
+          paddingHorizontal: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
+          minHeight: minTouchTarget,
+        },
+        goalIconTile: {
+          width: ROW_ICON_TILE_SIZE,
+          height: ROW_ICON_TILE_SIZE,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: semantic.interactiveTint,
+        },
+        goalBody: { flex: 1 },
+        goalName: { ...typeStyle('body', locale), color: semantic.textPrimary, fontWeight: '600' },
+        goalBarWrap: { marginTop: designSpacing.sm },
+        goalPercent: { ...typeStyle('figureRow', locale), color: semantic.textSecondary },
+        goalPercentBelow: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
+        // The no-goal invitation. Same flat supporting surface as the
+        // active-goal row, so the two states read as one slot rather than
+        // two different components. 56pt minimum height per Design 5.1.
+        planGoalRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.md,
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          paddingVertical: designSpacing.md,
+          paddingHorizontal: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
+          minHeight: PLAN_GOAL_ROW_MIN_HEIGHT,
+        },
+        planGoalIconTile: {
+          width: ROW_ICON_TILE_SIZE,
+          height: ROW_ICON_TILE_SIZE,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: semantic.interactiveTint,
+        },
+        planGoalBody: { flex: 1 },
+        planGoalTitle: { ...typeStyle('body', locale), color: semantic.textPrimary, fontWeight: '600' },
+        planGoalBodyText: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: 2 },
+        // Interactive, never success — creating a goal is a neutral
+        // invitation, not a confirmation of something achieved.
+        planGoalAction: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        planGoalActionBelow: { ...typeStyle('labelButton', locale), color: semantic.interactive, marginTop: designSpacing.sm },
         // Wave 4 closure — the multi-goal route. 44pt minimum target.
         viewAllGoalsRow: {
           minHeight: minTouchTarget,
@@ -453,10 +558,28 @@ export function TodayScreen() {
           paddingHorizontal: spacing.md,
           marginBottom: spacing.md,
         },
-        viewAllGoalsText: { ...typography.body, fontWeight: '600', color: colors.accentStrong },
-        goalAmount: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 6 },
+        viewAllGoalsText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        // A quiet supporting row — never a second hero, never a highlighted
+        // card. Flat, bordered, and visually subordinate to everything above.
+        scoreFootnoteRow: {
+          minHeight: minTouchTarget,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
+          marginBottom: spacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: semantic.border,
+        },
+        scoreFootnoteBody: { flex: 1 },
+        // Tertiary/meta throughout — quieter than every card above it, and
+        // deliberately NOT a SectionCard, surface or tint of any kind.
+        scoreFootnoteLabel: { ...typeStyle('meta', locale), color: semantic.textSecondary },
+        scoreFootnoteSupport: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: 2 },
+        goalAmount: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: 2 },
       }),
-    [colors, spacing, typography, radius, glow, cardShadow, insets.top, minTouchTarget]
+    [colors, spacing, typography, radius, glow, cardShadow, insets.top, minTouchTarget, semantic, locale, screenMargin]
   );
 
   return (
@@ -464,6 +587,7 @@ export function TodayScreen() {
       scroll
       contentPadding
       scrollRef={tabScrollRefs.Today}
+      ambient={<TodayAmbientField />}
       overlay={
         <TouchableOpacity
           style={styles.floatingSettings}
@@ -472,13 +596,10 @@ export function TodayScreen() {
           accessibilityRole="button"
           accessibilityLabel="Settings"
         >
-          <Ionicons name="settings-outline" size={20} color={colors.textSecondary} importantForAccessibility="no" />
+          <Ionicons name="settings-outline" size={20} color={semantic.textSecondary} importantForAccessibility="no" />
         </TouchableOpacity>
       }
     >
-      <View style={styles.topRow}>
-        <Text style={styles.brand}>{brand.name.toUpperCase()}</Text>
-      </View>
 
       {/* 1. Greeting and settings — the emotional handshake, kept outside
           the card so it doesn't read like dashboard content (PRD ask).
@@ -488,7 +609,17 @@ export function TodayScreen() {
           level, not owned by this screen. No financial-health claim is
           ever added here — greeting wording is unchanged from the accepted
           Pass 2A-2C copy (timeAwareGreeting). */}
-      <Text style={styles.greeting}>{greeting}</Text>
+      <View style={styles.headerBlock}>
+        {/* Design 5.1 p.7 — the local date eyebrow PRECEDES the greeting.
+            Generated from the customer's own live local calendar value
+            (useCurrentLocalDate), never hard-coded, and uppercased by the
+            eyebrow type role itself — which suppresses the transform for
+            Thai, so a Thai greeting is never force-uppercased. */}
+        <Text style={styles.dateEyebrow} maxFontSizeMultiplier={1.4} testID="today-date-eyebrow">
+          {formatTodayDateEyebrow(currentDate)}
+        </Text>
+        <Text style={styles.greeting} testID="today-greeting">{greeting}</Text>
+      </View>
 
       {/* Setup-state priority correction (owner fresh-device finding,
           authorised ahead of Wave 3). While the money picture is fresh or
@@ -514,12 +645,12 @@ export function TodayScreen() {
           reminder actions, AUP/event destinations, palette behaviour, and
           every calculation are all exactly as Pass 2A-2C shipped them. */}
       <TodayBriefingCard
-        today={currentDate}
-        scoreChip={scoreChipPresentation}
         presentation={safeToSpendPresentation}
         eventRows={briefingEventRows}
+        timelineEvents={timelineEvents}
         topReminder={topReminder}
-        onPressScoreChip={handleScoreChipPress}
+        timeframeLine={heroTimeframeLine}
+        onPressHowThisWorks={handleBriefingAupPress}
         onPressAup={handleBriefingAupPress}
         onPressEventRow={() => pushMoneyDetail('timeline')}
         onPressReminderTile={() => {
@@ -550,14 +681,24 @@ export function TodayScreen() {
           interleave this Journey -> This Month -> Goal snapshot sequence. */}
       <TodayJourneySnapshotCard snapshot={journeySnapshot} onPress={handleJourneyPress} />
 
-      {/* 4. This Month — unchanged: transaction inclusion/exclusion,
-          month-to-date boundaries, exact cents, income/spending/net
-          totals, payment-source breakdown, flip behaviour, and the
-          Transaction History route are all exactly as before this pass. */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle} accessibilityRole="header">{monthLabel} so far</Text>
-      </View>
-      <MonthSnapshotCard today={currentDate} onAddTransaction={() => setTransactionModalVisible(true)} />
+      {/* 4. This Month — transaction inclusion/exclusion, month-to-date
+          boundaries, exact cents, income/spending/net totals and the
+          Transaction History route are all exactly as before.
+
+          Wave 5 closure — the heading and the card are now gated TOGETHER
+          on the same eligibility value. With nothing recorded, the entire
+          section is absent: the money-picture checklist above is the single
+          setup ask, and this slot no longer repeats it in different words
+          or leaves an empty card, an orphaned month-name heading, or
+          a spacer behind. */}
+      {monthSectionVisible ? (
+        <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">{monthLabel} so far</Text>
+          </View>
+          <MonthSnapshotCard activity={monthActivity} />
+        </>
+      ) : null}
 
       {/* 5. Contextual insight slot — Worth Knowing, and nothing else.
           `worthKnowingInsight` (pickWorthKnowingInsight, worthKnowing.ts's
@@ -598,40 +739,94 @@ export function TodayScreen() {
       {primaryActiveGoal ? (
         (() => {
           const g = primaryActiveGoal;
-          const pct = g.targetAmount ? Math.min(1, g.currentAmount / g.targetAmount) : 0;
+          // The shared Wave 4 progress rule — a goal with no target is
+          // "no-target", never 0%.
+          const progress = resolveGoalProgressState(g.targetAmount, g.currentAmount);
+          const measured = progress.kind === 'measured';
+          const fraction = measured ? Math.min(1, Math.max(0, progress.fraction)) : 0;
+          const percentLabel = measured ? `${Math.round(fraction * 100)}%` : null;
+          const amountLine = measured
+            ? `$${Math.round(g.currentAmount).toLocaleString()} of $${Math.round(g.targetAmount as number).toLocaleString()}`
+            : 'No target set yet';
+          const trailingPercent = goalPercentageIsTrailing(fontScale);
           return (
             <TouchableOpacity
+              style={styles.goalRow}
+              activeOpacity={0.7}
               onPress={() => setContributeGoalId(g.id)}
               accessibilityRole="button"
-              accessibilityLabel={`${g.name}${
-                g.targetAmount ? `, ${Math.round(pct * 100)} percent of $${Math.round(g.targetAmount).toLocaleString()}` : ', no target set yet'
-              }`}
+              accessibilityLabel={`${g.name}, ${amountLine}${percentLabel ? `, ${percentLabel}` : ''}`}
               accessibilityHint="Opens goal details"
+              testID="today-goal-row"
             >
-              <SectionCard>
-                <Text style={styles.goalName}>{g.name}</Text>
-                {g.targetAmount ? (
-                  <>
-                    <ProgressBar progress={pct} />
-                    <Text style={styles.goalAmount}>
-                      {Math.round(pct * 100)}% • ${Math.round(g.currentAmount).toLocaleString()} of ${Math.round(g.targetAmount).toLocaleString()}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.goalAmount}>No target set yet</Text>
-                )}
-              </SectionCard>
+              <View style={styles.goalIconTile} importantForAccessibility="no-hide-descendants">
+                <Ionicons name="flag-outline" size={15} color={semantic.interactive} />
+              </View>
+              <View style={styles.goalBody} importantForAccessibility="no-hide-descendants">
+                <Text style={styles.goalName} numberOfLines={2}>{g.name}</Text>
+                <Text style={styles.goalAmount}>{amountLine}</Text>
+                {measured ? (
+                  <View style={styles.goalBarWrap}>
+                    <ProgressBar progress={fraction} color={semantic.interactive} height={4} />
+                  </View>
+                ) : null}
+                {/* At accessibility sizes the percentage moves below the
+                    amounts rather than colliding with them. */}
+                {percentLabel && !trailingPercent ? <Text style={styles.goalPercentBelow}>{percentLabel}</Text> : null}
+              </View>
+              {percentLabel && trailingPercent ? (
+                <Text style={styles.goalPercent} importantForAccessibility="no">{percentLabel}</Text>
+              ) : null}
+              <Ionicons name="chevron-forward" size={16} color={semantic.textTertiary} importantForAccessibility="no" />
             </TouchableOpacity>
           );
         })()
       ) : (
-        <UnlockPromptCard
-          icon={UNLOCK_COPY.goal_tracking.icon}
-          title={UNLOCK_COPY.goal_tracking.title}
-          body={UNLOCK_COPY.goal_tracking.body}
-          actionLabel={UNLOCK_COPY.goal_tracking.actionLabel}
-          onAction={() => setGoalModalVisible(true)}
-        />
+        // Wave 5 closure — the no-goal entry.
+        //
+        // This was a shared UnlockPromptCard: a pale accent-tinted panel
+        // whose only tap target was a small filled pill nested inside an
+        // otherwise non-actionable card. Three problems. The pill read as a
+        // success/confirm action for what is a neutral invitation; the
+        // card itself did nothing when pressed, so most of a full-width
+        // surface was dead; and the tinted panel competed with the two
+        // tiers above it that are genuinely meant to stand out.
+        //
+        // It is now one calm interactive row on the same flat supporting
+        // surface every other Today row uses — whole row pressable, one
+        // accessible announcement, Ocean Blue interactive treatment, and
+        // no success green anywhere. UnlockPromptCard itself is untouched
+        // and still used by the Score unlock below and by other screens.
+        //
+        // It opens the SAME canonical AddGoalModal every other Goal entry
+        // point opens; only the presentation changed.
+        <TouchableOpacity
+          style={styles.planGoalRow}
+          activeOpacity={0.7}
+          onPress={() => setGoalModalVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Plan a goal. Choose what you’re working towards and track progress over time."
+          accessibilityHint="Opens the goal form"
+          testID="today-plan-goal-row"
+        >
+          <View style={styles.planGoalIconTile} importantForAccessibility="no-hide-descendants">
+            <Ionicons name="flag-outline" size={15} color={semantic.interactive} />
+          </View>
+          <View style={styles.planGoalBody} importantForAccessibility="no-hide-descendants">
+            <Text style={styles.planGoalTitle}>Plan a goal</Text>
+            {/* Wraps rather than truncates at large text sizes. */}
+            <Text style={styles.planGoalBodyText}>
+              Choose what you’re working towards and track progress over time.
+            </Text>
+            {/* At accessibility sizes the action stacks beneath the copy
+                instead of competing with it for the same line. */}
+            {stackGoalAction ? <Text style={styles.planGoalActionBelow}>Create goal</Text> : null}
+          </View>
+          {!stackGoalAction ? (
+            <Text style={styles.planGoalAction} importantForAccessibility="no">Create goal</Text>
+          ) : null}
+          <Ionicons name="chevron-forward" size={16} color={semantic.textTertiary} importantForAccessibility="no" />
+        </TouchableOpacity>
       )}
 
       {/* Wave 4 closure — with more than one active goal, a visible route to
@@ -648,9 +843,29 @@ export function TodayScreen() {
           testID="today-view-all-goals"
         >
           <Text style={styles.viewAllGoalsText}>View all goals ({activeGoalCount})</Text>
-          <Ionicons name="chevron-forward" size={16} color={colors.accentStrong} />
+          <Ionicons name="chevron-forward" size={16} color={semantic.interactive} />
         </TouchableOpacity>
       ) : null}
+
+      {/* 7. Interim Nolie Score — Design 5.1 Wave 5 containment. Demoted
+          from prominent Briefing content to a quiet supporting row here,
+          after the Goal section. It reads from the existing score result and
+          its existing gates; no factor, category, recommendation or history
+          changed. One accessible sentence conveys the whole state. */}
+      <TouchableOpacity
+        style={styles.scoreFootnoteRow}
+        onPress={handleScoreChipPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${scoreChipPresentation.label}. ${scoreChipPresentation.supportingText}`}
+        accessibilityHint="Opens how your score is calculated"
+        testID="today-score-footnote"
+      >
+        <View style={styles.scoreFootnoteBody}>
+          <Text style={styles.scoreFootnoteLabel}>{scoreChipPresentation.label}</Text>
+          <Text style={styles.scoreFootnoteSupport}>{scoreChipPresentation.supportingText}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={semantic.textTertiary} />
+      </TouchableOpacity>
 
       {/* Correction pass — recovery/first-run affordances (locked Score,
           incomplete first-run money picture) are genuinely necessary
@@ -696,7 +911,6 @@ export function TodayScreen() {
         }}
       />
       <GoalDetailSheet goal={contributeGoal} onClose={() => setContributeGoalId(null)} onCreateAnother={() => setGoalModalVisible(true)} />
-      <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
     </Screen>
   );
 }

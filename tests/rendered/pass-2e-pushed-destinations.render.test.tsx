@@ -132,7 +132,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /^Next,/ }));
+    await user.press(await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ }));
 
     // Arrived on the pushed Money content with a real accessible Back
     // control — the tab-hosted Money instance never renders one.
@@ -167,7 +167,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /milestones completed|not available yet/ }));
+    await user.press(await screen.findByRole('button', { name: /^Your Journey\.|not available yet/ }));
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();
     expect((await screen.findAllByText('Grow')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Your Journey')).toBeOnTheScreen();
@@ -179,7 +179,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     await render(<Harness />);
 
     expect(await screen.findByText(/Jamie/)).toBeOnTheScreen();
-    await user.press(await screen.findByRole('button', { name: /^Next,/ }));
+    await user.press(await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ }));
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();
 
     await user.press(screen.getByRole('button', { name: 'Back' }));
@@ -189,7 +189,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     // heading) is present and correct — not a blank/reset/re-fetched shell.
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
     expect(await screen.findByText(/Jamie/)).toBeOnTheScreen();
-    expect(await screen.findByRole('button', { name: /^Next,/ })).toBeOnTheScreen();
+    expect(await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ })).toBeOnTheScreen();
   });
 
   test('6. direct Money and Grow tab taps do not push a detail route and render with no Back header', async () => {
@@ -211,7 +211,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /^Next,/ }));
+    await user.press(await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ }));
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();
 
     await user.press(screen.getByRole('button', { name: 'Back' }));
@@ -227,7 +227,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    const eventRow = await screen.findByRole('button', { name: /^Next,/ });
+    const eventRow = await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ });
     // Two presses fired back-to-back, before either navigation settles —
     // the exact rapid-press shape TodayScreen's navigatingToDetailRef guard
     // exists for. Plain fireEvent.press (not the full userEvent gesture
@@ -276,7 +276,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     const user = userEvent.setup();
     await render(<Harness />);
 
-    await user.press(await screen.findByRole('button', { name: /^Next,/ }));
+    await user.press(await screen.findByRole('button', { name: /due in \d+ days?|due today|due tomorrow/ }));
     await screen.findByRole('button', { name: 'Back' });
 
     // Exactly one "Money" Screen title and one Back control — the reused

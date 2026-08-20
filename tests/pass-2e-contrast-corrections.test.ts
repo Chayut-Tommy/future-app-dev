@@ -18,7 +18,12 @@
  * already established. This proves the shipped numbers are mathematically
  * correct; it does not replace physical-device visual confirmation.
  */
-import { WARNING_TEXT_LIGHT_OVERRIDE, HERO_SCRIM_OPACITY } from '../src/theme/contrastOverrides';
+// Wave 5 retired src/theme/contrastOverrides.ts. The two gradient-contrast
+// roles moved into the semantic token system unchanged; the colour override
+// was replaced outright by the Design 5.1 `semantic.warning` role, which is
+// darker than the legacy token it corrected and therefore needs no override.
+import { HERO_SCRIM_OPACITY, SHARED_COLORS } from '../src/theme/semanticTokens';
+const WARNING_TEXT_LIGHT_OVERRIDE = SHARED_COLORS.light.warning;
 import { lightColors, darkColors } from '../src/theme/tokens';
 import { NaviloColorStyle } from '../src/theme/palettes';
 

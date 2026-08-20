@@ -7,8 +7,10 @@
 // LOCALLY here and asserted against the doc A p.14 floors by
 // tests/design5-contrast.test.ts.
 //
-// This module does NOT modify or replace src/theme/contrastOverrides.ts,
-// which stays exactly as it is until Wave 1B.
+// Wave 5 retired src/theme/contrastOverrides.ts. Its two gradient-contrast
+// roles now live in semanticTokens.ts and its colour override was replaced
+// outright by the Design 5.1 `semantic.warning` role. This module is
+// unrelated to either and is unchanged by that retirement.
 //
 // Pure and RN-free so the legacy tsx harness can import it for real.
 

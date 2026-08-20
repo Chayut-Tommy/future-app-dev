@@ -24,7 +24,7 @@ import { SmartReminder } from '../src/lib/calculations/reminders';
 import { computeMonthToDateActivity, computeRecordedMonthlyCashflow, computeThisMonthRecordedSummary } from '../src/lib/calculations/monthlySummary';
 import { computeFinancialState } from '../src/lib/calculations/financialState';
 import { computeTimelineFocusFulfillment, TimelineFocusTarget, TimelineGroupOffsets } from '../src/lib/calculations/timelineFocus';
-import { INSIGHT_PROVENANCE_OPACITY } from '../src/theme/contrastOverrides';
+import { INSIGHT_PROVENANCE_OPACITY } from '../src/theme/semanticTokens';
 import { selectNaviloPalette, NaviloColorStyle } from '../src/theme/palettes';
 import { lightColors, darkColors } from '../src/theme/tokens';
 import type { AppData } from '../src/types/models';

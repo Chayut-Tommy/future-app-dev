@@ -1288,3 +1288,21 @@ Feedback only; nothing waits on it (`MOTION_HARD_RULES` rule 5).
 ## Deferral, restated
 
 The **per-goal opt-in to include a contribution in Available Until Payday remains deferred**. The current automatic goal-allocation rule is unchanged in Wave 4. It requires a new persisted per-goal field and changes the AUP figure for existing customers with surplus — a financial-rule decision for Wave 5 or a dedicated Money-planning pass. It is not complete and must not be recorded as such.
+
+---
+
+# Change control — Wave 5 closure (20 August 2026)
+
+Factual record appended at checkpoint. Earlier entries are unchanged.
+
+**Wave 5 — Today: COMPLETE.** Owner iOS device checklist completed and approved. Checkpointed as `checkpoint: design 5.1 wave 5 today briefing hierarchy` (design tag `design5-w5-today`).
+
+**Delivered across four passes** — the composition (hierarchy, caps, excluded cards, Worth Knowing containment, Score footnote, `contrastOverrides.ts` retirement); the visual pass (ambient field, date eyebrow, the one expressive hero, full-width priority rows, compact Journey/goal rows, three-measure month card, flat highlighted insight tier); the closure corrections (duplicate monthly unlock prompt removed, `Plan a goal` row, restrained hero semantic colour); and the final polish (Briefing identity row, signed currency repaired as one unbreakable string).
+
+**Verification at checkpoint.** TypeScript 0. Legacy 72 files / 4,945 assertions. Rendered 25 suites / 176 tests, green twice. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Expo Doctor 17/18 (pre-existing "2 packages out of date"). iOS and Android exports exit 0. Dependency diff empty. `git diff --check` clean.
+
+**All 18 protected financial engines byte-identical to `d61c453`.** The only file added under `src/lib/calculations` is presentation-only (`todayComposition.ts`, `briefingPriorityRows.ts`) — formatting, spoken text, text-width estimation and layout choice; no financial arithmetic.
+
+**Android.** Physical Android testing was not performed and remains deferred to Wave 11 per owner decision 6. Automated Android gates (TypeScript, legacy, rendered, Doctor, `expo export --platform android`) all passed. **Android has not been device-tested.**
+
+**Carried into Wave 6 unchanged.** The deferred per-goal "include in Available Until Payday" opt-in remains deferred — it requires a persisted field and a financial-behaviour decision, and is explicitly out of Wave 6 scope.

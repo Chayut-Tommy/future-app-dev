@@ -55,7 +55,10 @@ const UNMEASURED: SectionFocusMeasurements = { 'financial-learning': null, score
 
 console.log('=== TODAY HIERARCHY (Structural) ===');
 {
-  const greetingIdx = TODAY_SCREEN_SRC.indexOf('<Text style={styles.greeting}>');
+  // Wave 5's visual pass added the local date eyebrow above the greeting
+  // inside a shared header block, so the greeting element now carries a
+  // testID. Same element, same position in the hierarchy.
+  const greetingIdx = TODAY_SCREEN_SRC.indexOf('<Text style={styles.greeting} testID="today-greeting">');
   const briefingIdx = TODAY_SCREEN_SRC.indexOf('<TodayBriefingCard');
   const journeyIdx = TODAY_SCREEN_SRC.indexOf('<TodayJourneySnapshotCard');
   const monthIdx = TODAY_SCREEN_SRC.indexOf('<MonthSnapshotCard');
@@ -163,14 +166,26 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
     'LuluRecommendationCard (the retired "second competing contextual insight") is no longer imported/mounted',
     !/^import.*LuluRecommendationCard/m.test(TODAY_SCREEN_SRC) && !/<LuluRecommendationCard/.test(TODAY_SCREEN_SRC)
   );
-  assert('Briefing, Score chip and Journey snapshot props/behaviour are byte-unchanged — same TodayBriefingCard prop set and TodayJourneySnapshotCard prop set as Pass 2A-2C shipped', /scoreChip=\{scoreChipPresentation\}/.test(TODAY_SCREEN_SRC) && /<TodayJourneySnapshotCard snapshot=\{journeySnapshot\} onPress=\{handleJourneyPress\} \/>/.test(TODAY_SCREEN_SRC));
+  // Wave 5 Score containment removed the Score from the Briefing's prop set
+  // — that is the authorised change. The Journey snapshot's props, and the
+  // fact that the Score presentation is still computed exactly once from the
+  // existing result, are both unchanged and still asserted.
+  assert('Journey snapshot props are unchanged, and the Score presentation is still derived once from the existing score result', /<TodayJourneySnapshotCard snapshot=\{journeySnapshot\} onPress=\{handleJourneyPress\} \/>/.test(TODAY_SCREEN_SRC) && /const scoreChipPresentation = useMemo\(\(\) => selectScoreChipPresentation\(luluScore\), \[luluScore\]\);/.test(TODAY_SCREEN_SRC));
+  assert('and the Score now renders as a footnote row after the Goal section, never inside the Briefing', /testID="today-score-footnote"/.test(TODAY_SCREEN_SRC) && !/scoreChip=\{scoreChipPresentation\}/.test(TODAY_SCREEN_SRC));
 }
 
 console.log('\n=== GOALS (Structural + real import) ===');
 {
   assert('Today\'s primary-goal selection reuses the exact existing data.goals source/order — no new sort, no priority-based re-ranking introduced for display purposes', !/primaryActiveGoal.*sort|primaryActiveGoal.*priority/.test(TODAY_SCREEN_SRC));
   assert('goal allocation (computeGoalAllocation, the ONE place priority ordering legitimately drives money allocation) is untouched by this pass — still reads goal.priority for funding order, never for Today\'s display order', /PRIORITY_ORDER\[a\.goal\.priority/.test(readFileSync('src/lib/calculations/goalAllocation.ts', 'utf8')));
-  assert('no-goal state exposes the existing safe creation route — UnlockPromptCard with the established goal_tracking UNLOCK_COPY, routing to setGoalModalVisible(true)', /UNLOCK_COPY\.goal_tracking/.test(TODAY_SCREEN_SRC) && /onAction=\{\(\) => setGoalModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC));
+  // Wave 5 closure B — the no-goal slot is now Today's own calm "Plan a
+  // goal" action row rather than the shared UnlockPromptCard panel (whose
+  // only target was a small filled pill nested inside a non-actionable
+  // card, reading as a success action for a neutral invitation). The claim
+  // protected here is unchanged and still asserted: the no-goal state
+  // exposes the EXISTING safe creation route — the same
+  // setGoalModalVisible state, opening the same canonical AddGoalModal.
+  assert('no-goal state exposes the existing safe creation route — one accessible row routing to setGoalModalVisible(true) and the same AddGoalModal', /testID="today-plan-goal-row"/.test(TODAY_SCREEN_SRC) && /onPress=\{\(\) => setGoalModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC) && /<AddGoalModal visible=\{goalModalVisible\}/.test(TODAY_SCREEN_SRC));
   assert('achieved and archived goals are never presented as active — primaryActiveGoal filters status === \'active\' only, the exact same filter Grow\'s own "Your goals" list already used', /g\.status === 'active'/.test(TODAY_SCREEN_SRC));
   assert('Today\'s goal snapshot reaches the existing GoalDetailSheet — onPress sets contributeGoalId, the same state variable the existing GoalDetailSheet mount already reads', /onPress=\{\(\) => setContributeGoalId\(g\.id\)\}/.test(TODAY_SCREEN_SRC) && /<GoalDetailSheet goal=\{contributeGoal\}/.test(TODAY_SCREEN_SRC));
   assert('all established update/management actions remain reachable — GoalDetailSheet (richer contribution/progress controls) and AddGoalModal are still mounted, unmodified', /<GoalDetailSheet goal=\{contributeGoal\} onClose=\{\(\) => setContributeGoalId\(null\)\} onCreateAnother=\{\(\) => setGoalModalVisible\(true\)\}\/>/.test(TODAY_SCREEN_SRC.replace(/\s+/g, ' ')) || /<GoalDetailSheet/.test(TODAY_SCREEN_SRC));

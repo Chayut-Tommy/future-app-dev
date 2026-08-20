@@ -232,7 +232,14 @@ console.log('\n=== 6. Icon tones — complete, stable and safe (Class A) ===');
     }
     return true;
   })());
-  assert('6r. no tone uses a gradient', !/gradient/i.test(read('src/theme/semanticTokens.ts').split('Add-icon decorative tones')[1] ?? ''));
+  // Scoped to the tone table itself: Wave 5 appended the retired
+  // contrastOverrides roles further down the same file, and one of those is
+  // explicitly a scrim FOR a gradient — which is not a tone using one.
+  assert('6r. no tone uses a gradient', (() => {
+    const file = read('src/theme/semanticTokens.ts');
+    const table = file.split('Add-icon decorative tones')[1]?.split('Gradient-backed contrast roles')[0] ?? '';
+    return !!table && !/gradient/i.test(table);
+  })());
 }
 
 console.log('\n=== 7. Colour lives in the theme, never in a component (Class C) ===');

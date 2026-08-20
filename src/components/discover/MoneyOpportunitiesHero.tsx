@@ -5,8 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { MoneyOpportunity } from '../../lib/calculations/moneyOpportunities';
 import { brand } from '../../lib/brand';
-import { HERO_SCRIM_OPACITY } from '../../theme/contrastOverrides';
-import { ON_FEATURED, featuredScrimAt, onFeaturedAlpha } from '../../theme/semanticTokens';
+import { HERO_SCRIM_OPACITY, ON_FEATURED, featuredScrimAt, onFeaturedAlpha } from '../../theme/semanticTokens';
 
 const COLLAPSED_COUNT = 3;
 
