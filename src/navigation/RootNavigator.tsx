@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAppState } from '../state/AppStateContext';
@@ -18,6 +18,12 @@ import { CompoundCalculatorScreen } from '../screens/discover/CompoundCalculator
 import { EmergencyFundScreen } from '../screens/discover/EmergencyFundScreen';
 import { HomeLoanCalculatorScreen } from '../screens/discover/HomeLoanCalculatorScreen';
 import { FloatingAddButton } from '../components/navigation/FloatingAddButton';
+import { GlobalNavDock } from '../components/navigation/GlobalNavDock';
+import { resolveRootNavAssembly, resolveTabPress } from './rootNavAssembly';
+import { TabName } from './tabDefinitions';
+import { tabScrollRefs } from './tabScrollRefs';
+import { useKeyboardVisible } from '../hooks/useKeyboardVisible';
+import { getActiveTab, subscribeActiveTab } from './activeTabStore';
 import { WelcomeFlow } from '../screens/welcome/WelcomeFlow';
 import { isDockVisibleForRouteName } from './dockVisibility';
 
@@ -40,8 +46,48 @@ export function RootNavigator() {
   // useNavigationState: this component renders the root navigator, so it has
   // no parent navigator state to read and the hook would throw.
   const [activeRootRoute, setActiveRootRoute] = useState<string | undefined>(undefined);
-  const fabRouteHidden =
-    activeRootRoute !== undefined && activeRootRoute !== 'Main' && !isDockVisibleForRouteName(activeRootRoute, false, 'none');
+  // Wave 6 correction A — the tab selected INSIDE `Main`. Read from the
+  // same state event, because the dock now lives out here and can no longer
+  // learn it from React Navigation's tab-bar props.
+  const [activeTabRoute, setActiveTabRoute] = useState<string | undefined>(() => getActiveTab());
+  // Published by MainTabNavigator from React Navigation's own tab state
+  // event — the root stack does not re-emit for a change confined to the
+  // nested navigator, which would otherwise leave the pill stale after a
+  // cross-tab move made from a pushed route.
+  useEffect(() => subscribeActiveTab(setActiveTabRoute), []);
+  // Captured from React Navigation itself the first time it reports state.
+  // This component renders the root navigator, so it has no parent
+  // navigator context and no hook can supply one; a screen's own navigation
+  // object is the smallest thing that can dispatch here, and is strictly
+  // less than a global container ref.
+  const rootNavigationRef = useRef<any>(null);
+  const keyboardVisible = useKeyboardVisible();
+
+  // ONE projection for the whole assembly. The dock and the "+" both read
+  // it, so a route classified visible can never render one without the
+  // other — which is exactly the defect this correction fixes.
+  const assembly = resolveRootNavAssembly({
+    rootRoute: activeRootRoute,
+    nestedTab: activeTabRoute,
+    keyboardVisible,
+    overlay: 'none',
+  });
+  const fabRouteHidden = !assembly.visible;
+
+  function handleTabPress(tab: TabName) {
+    const outcome = resolveTabPress(tab, activeRootRoute, activeTabRoute);
+    if (outcome.kind === 'scrollToTop') {
+      // The same pure behaviour MainTabNavigator's per-tab listener used —
+      // the dock no longer emits `tabPress`, so it calls the behaviour
+      // directly rather than duplicating it.
+      tabScrollRefs[tab].current?.scrollTo({ y: 0, animated: true });
+      return;
+    }
+    // Both `returnToRoot` and `navigate` are the same dispatch: reveal that
+    // tab's root inside Main. From a detail route this also pops it, so the
+    // detail never stays layered above the revealed root.
+    rootNavigationRef.current?.navigate('Main', { screen: tab });
+  }
 
   if (isLoading) {
     return (
@@ -58,12 +104,22 @@ export function RootNavigator() {
   return (
     <View style={{ flex: 1 }}>
       <RootStack.Navigator
-        screenListeners={{
+        screenListeners={({ navigation }) => ({
           state: (e) => {
-            const st = e.data?.state as { index: number; routes: { name: string }[] } | undefined;
-            if (st) setActiveRootRoute(st.routes[st.index]?.name);
+            rootNavigationRef.current = navigation;
+            const st = e.data?.state as
+              | { index: number; routes: { name: string; state?: { index?: number; routes?: { name: string }[] } }[] }
+              | undefined;
+            if (!st) return;
+            // ONLY the root route is read here. The selected tab comes
+            // from activeTabStore, published by the tab navigator's own
+            // state event — reading the nested snapshot here as well gave
+            // two writers for one value, and this event can fire AFTER the
+            // tab event carrying a stale snapshot, clobbering the correct
+            // one. One writer, one value.
+            setActiveRootRoute(st.routes[st.index]?.name);
           },
-        }} screenOptions={{ headerShown: false }}>
+        })} screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="Main" component={MainTabNavigator} />
         <RootStack.Screen name="Settings" component={SettingsScreen} options={{ presentation: 'modal' }} />
         <RootStack.Screen name="Language" component={LanguageScreen} />
@@ -116,6 +172,12 @@ export function RootNavigator() {
           "Add anything" while Ask Nolie itself remains unbuilt — see
           src/lib/askNolie.ts), and the two buttons would otherwise overlap
           in the same bottom-right corner this FAB now occupies. */}
+      {/* Wave 6 correction A — the dock and the "+" are ONE root-level
+          assembly. Both are siblings of the navigator, so an eligible
+          root-stack push changes the scene beneath them without either
+          unmounting, and both are driven by the same `assembly`
+          projection so the "+" can never appear orphaned. */}
+      <GlobalNavDock assembly={assembly} onTabPress={handleTabPress} />
       <FloatingAddButton routeHidden={fabRouteHidden} />
     </View>
   );

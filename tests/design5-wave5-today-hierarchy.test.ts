@@ -288,7 +288,7 @@ console.log('\n=== 9. The visible page 7 anatomy (Class C) ===');
   // Measured across the RENDERED tree only — the props block above it
   // legitimately names the same identifiers in a different order.
   const HERO_JSX = BRIEFING.slice(BRIEFING.indexOf('<LinearGradient'));
-  const HERO_ORDER = ['Your Today Briefing', '{presentation.heading}', 'today-briefing-figure', 'styles.timeframe', 'styles.divider', 'today-briefing-priority-rows', 'today-briefing-provenance', 'How this works'];
+  const HERO_ORDER = ['Your Today Briefing', '{presentation.heading}', 'today-briefing-figure', 'styles.timeframe', 'styles.divider', 'today-briefing-priority-rows', 'today-briefing-provenance'];
   let prev = -1, ordered = true;
   const missingHero: string[] = [];
   for (const marker of HERO_ORDER) {
@@ -298,7 +298,7 @@ console.log('\n=== 9. The visible page 7 anatomy (Class C) ===');
     else prev = i;
   }
   ordered = ordered && missingHero.length === 0;
-  assert('9a. the hero renders eyebrow → measure label → figure → timeframe → divider → rows → provenance → How this works', ordered);
+  assert('9a. the hero renders identity → measure label → figure → timeframe → divider → rows → provenance', ordered);
   assert('9b. the figure uses the figureHero role, not a tile-sized one', /textStyle\('figureHero'/.test(BRIEFING));
   assert('9c. the hero sits on heroSurface, not the old saturated gradient', /semantic\.heroSurface/.test(BRIEFING) && !/naviloPalette/.test(BRIEFING));
   assert('9d. at the approved 20pt hero radius', /borderRadius: designRadius\.hero/.test(BRIEFING) && designRadius.hero === 20);
@@ -379,7 +379,7 @@ console.log('\n=== 11. The three month measures (Class A) ===');
 {
   const m = selectMonthMeasures(2400, 860);
   assert('11a. exactly three measures', m.length === 3);
-  assert('11b. labelled Money in, Spending recorded, Net recorded', m.map((x) => x.label).join(' | ') === 'Money in | Spending recorded | Net recorded');
+  assert('11b. labelled Money in, Spending recorded, Net recorded', m.map((x) => x.label).join(' | ') === 'Money in | Spent | Net recorded');
   assert('11c. money in keeps its established explicit positive sign', m[0].value === '+$2,400');
   assert('11d. spending is a magnitude under its own label, never a negative', m[1].value === '$860');
   assert('11e. and the net is the exact figure the card already displayed', m[2].value === '+$1,540');
@@ -655,7 +655,7 @@ console.log('\n=== 18. Wave 5 closure C — restrained hero colour (Class A + Cl
   // Wave 5 polish A — the all-caps eyebrow became the identity row's
   // title. Same role in the hierarchy, same Ocean Blue ink.
   assert('18h. the hero title does too', /identityTitle: \{[^}]*color: semantic\.interactive/.test(BRIEFING));
-  assert('18i. and both hero links', (BRIEFING.match(/color: semantic\.interactive/g) || []).length >= 4);
+  assert('18i. and the remaining hero links', (BRIEFING.match(/color: semantic\.interactive/g) || []).length >= 2);
   assert('18j. warning ink appears ONLY for a genuine shortfall', /emphasis === 'shortfall' \? semantic\.warning : semantic\.textPrimary/.test(BRIEFING));
   assert('18k. the measure label stays neutral', /measureLabel: \{[^}]*color: semantic\.textSecondary/.test(BRIEFING));
   assert('18l. the timeframe line stays neutral', /timeframe: \{[^}]*color: semantic\.textSecondary/.test(BRIEFING));
@@ -728,7 +728,11 @@ console.log('\n=== 19. Wave 5 polish A — the Briefing identity row (Class A + 
   assert('19t. the AUP figure is unchanged', /today-briefing-figure/.test(CODE) && /textStyle\('figureHero'/.test(CODE));
   assert('19u. the shortfall presentation is unchanged', /emphasis === 'shortfall' \? semantic\.warning : semantic\.textPrimary/.test(CODE));
   assert('19v. the missing-input state is unchanged', /today-briefing-setup/.test(CODE) && /What's missing/.test(CODE));
-  assert('19w. How this works is unchanged', /today-briefing-how-this-works/.test(CODE));
+  // Wave 6 closure — retired. The claim it protected was that the AUP
+  // explanation stays reachable; it does, from Money's own hero, which is
+  // where the explanation genuinely lives. Today keeps its provenance.
+  assert('19w. the redundant How this works control is gone, and provenance remains', !/today-briefing-how-this-works/.test(CODE) && /today-briefing-provenance/.test(CODE));
+  assert('19w-ii. and the AUP explanation is still reachable from Money\'s hero', /money-aup-hero-info/.test(read('src/components/money/SafeToSpendHero.tsx')));
   assert('19x. provenance is unchanged', /today-briefing-provenance/.test(CODE));
   assert('19y. and the two-row cap is unchanged', /rows\.slice\(0, MAX_PRIORITY_ROWS\)/.test(read('src/lib/calculations/briefingPriorityRows.ts')));
 
@@ -760,14 +764,18 @@ console.log('\n=== 20. Wave 5 polish B — signed currency is ONE unbreakable st
   assert('20l. and numberOfLines={1} makes a split impossible at any width', (MCODE.match(/numberOfLines=\{1\}/g) || []).length === 2);
   assert('20m. the value never shrinks in the flex row', /value: \{[^}]*flexShrink: 0/.test(MCODE) && /stackedValue: \{[^}]*flexShrink: 0/.test(MCODE));
   assert('20n. labels may shrink instead', /label: \{[^}]*flexShrink: 1/.test(MCODE));
-  assert('20o. metric columns set minWidth 0 so flex can size them honestly', /minWidth: layout === 'stacked' \? undefined : 0/.test(MCODE));
+  // Wave 6 closure — every column now sets minWidth 0 unconditionally,
+  // with flexShrink 0 and an equal basis, so the three cells measure
+  // identically regardless of the characters inside them. The claim —
+  // flex sizes them honestly rather than by content — is strengthened.
+  assert('20o. metric columns set minWidth 0 and an equal basis, so no column gains width from its own text', /minWidth: 0,/.test(MCODE) && /flexShrink: 0,/.test(MCODE) && /flexGrow: 1,/.test(MCODE));
   assert('20p. tabular numerals are inherited from the figure role', /typeStyle\('figureLarge', locale\)/.test(MCODE) && TYPE_ROLES.figureLarge.figure === true);
   assert('20q. no adjustsFontSizeToFit — overflow is solved by layout, not by silent shrinking', !/adjustsFontSizeToFit/.test(MCODE));
 
   // Accessibility: one statement per metric, sign spoken as a word.
   assert('20r. each metric is one accessible statement', m.every((x) => x.spoken.startsWith(`${x.label}, `)));
   assert('20s. a positive sign is spoken as a word, never as "plus"', m[0].spoken === 'Money in, positive 15,000 dollars' && !/plus/i.test(m[0].spoken));
-  assert('20t. an unsigned amount is spoken plainly', m[1].spoken === 'Spending recorded, 500 dollars');
+  assert('20t. an unsigned amount is spoken plainly', m[1].spoken === 'Spent, 500 dollars');
   assert('20u. a negative amount says "negative"', spokenMonthMeasure(-500) === 'negative 500 dollars');
   assert('20v. zero is spoken without a direction', spokenMonthMeasure(0, true) === '0 dollars');
   assert('20w. and the card composes them into one label with no isolated sign stop', /measures\.map\(\(m\) => m\.spoken\)\.join\(', '\)/.test(MCODE));
@@ -776,13 +784,21 @@ console.log('\n=== 20. Wave 5 polish B — signed currency is ONE unbreakable st
 
 console.log('\n=== 21. Wave 5 polish B — the value fits, at every width and scale (Class A) ===');
 {
+  // Section-local read — MCODE above is scoped to section 20's block.
+  const MCODE21 = read('src/components/today/MonthSnapshotCard.tsx').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const CANONICAL = selectMonthMeasures(15000, 500).map((x) => x.value);
   const MILLIONS = selectMonthMeasures(1500000, 500).map((x) => x.value);
   const BIG_NEG = selectMonthMeasures(1, 1000000).map((x) => x.value);
   const ZERO = selectMonthMeasures(0, 0).map((x) => x.value);
 
   assert('21a. the ladder is ordered largest-first', MONTH_MEASURE_FIGURE_SIZES.every((v, i) => i === 0 || v < MONTH_MEASURE_FIGURE_SIZES[i - 1]));
-  assert('21b. its top rung is the figureLarge role', MONTH_MEASURE_FIGURE_SIZE === TYPE_ROLES.figureLarge.size);
+  // Wave 6 closure — the top rung stepped down from figureLarge's own
+  // 28pt to 22pt. A device review found 28 beside a 14pt label read as the
+  // figure shouting over its own name, and competing with the page hero.
+  // The ROLE is unchanged — family, weight and tabular numerals still come
+  // from figureLarge; only the point size steps.
+  assert('21b. its top rung is one restrained step below the figureLarge role, which still supplies family and tabular numerals', MONTH_MEASURE_FIGURE_SIZE === 22 && MONTH_MEASURE_FIGURE_SIZE < TYPE_ROLES.figureLarge.size && /typeStyle\('figureLarge', locale\)/.test(MCODE21));
+  assert('21b-ii. and the figure still clearly dominates its own label', MONTH_MEASURE_FIGURE_SIZE > TYPE_ROLES.support.size);
   assert('21c. its floor is the figureRow role — a value is never smaller than that', MONTH_MEASURE_FIGURE_MIN_SIZE === TYPE_ROLES.figureRow.size);
   assert('21d. and the comfortable rung sits between them', MONTH_MEASURE_COMFORTABLE_SIZE > MONTH_MEASURE_FIGURE_MIN_SIZE && MONTH_MEASURE_COMFORTABLE_SIZE < MONTH_MEASURE_FIGURE_SIZE);
   assert('21e. every rung is well below the hero figure, so the metrics never compete with it', MONTH_MEASURE_FIGURE_SIZES.every((v) => v < TYPE_ROLES.figureHero.size));

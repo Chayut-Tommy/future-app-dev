@@ -330,7 +330,14 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
     /if \(row\.kind === 'reminder'\) \{\s*onPressReminderTile\(\);/.test(BRIEFING_CARD_SRC) &&
       /onPressEventRow\(eventRow\)/.test(BRIEFING_CARD_SRC) &&
       /onPress=\{onPressAup\}/.test(BRIEFING_CARD_SRC) &&
-      /onPress=\{onPressHowThisWorks\}/.test(BRIEFING_CARD_SRC)
+      // Wave 6 closure — the "How this works" control was retired from the
+      // Briefing. It routed to Money, which the AUP measure and the
+      // priority rows already reach, so it cost a full row of height for
+      // no unique destination; Money's own hero keeps the "How this was
+      // calculated" journey. Every destination this assertion protects is
+      // unchanged, and the provenance line stays.
+      !/onPressHowThisWorks/.test(BRIEFING_CARD_SRC) &&
+      /today-briefing-provenance/.test(BRIEFING_CARD_SRC)
   );
   assert(
     'TodayBriefingCard.tsx never introduces a fourth financial row or otherwise changes eventRows/topReminder inputs — same props signature as before this pass',

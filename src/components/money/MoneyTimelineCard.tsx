@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useEffect } from 'react';
-import { NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { TimelineEvent, TimelineEventKind } from '../../lib/calculations/moneyTimeline';
@@ -15,7 +15,13 @@ import { TimelineFocusTarget, TimelineGroupInfo, computeTimelineFocusFulfillment
 // enough events to actually need it, so short lists still render exactly
 // as before.
 const VISIBLE_ROW_ESTIMATE = 6;
-const SCROLL_BOX_HEIGHT = 440;
+/** Design 5.1 Wave 6 final pass — the preview is now THREE ordered events.
+ * Five still pushed Typical money flow and Money plan below the fold on a
+ * 390pt device, which is the page-length complaint this pass exists to
+ * fix. Everything else is one inline tap away, and the collapse control is
+ * reachable from the header while expanded rather than only from the
+ * bottom of a long list. */
+const COLLAPSED_EVENT_LIMIT = 3;
 // How close to the bottom (px) before asking the parent for more events —
 // the parent responds by widening the planning horizon and passing back a
 // longer `events` array (PRD ask, §2: "as the user scrolls, continue
@@ -108,8 +114,10 @@ export function MoneyTimelineCard({
   onNearEnd?: () => void;
   /** Correction round — Worth Knowing's own WK-01/WK-02 destination (see
    * timelineFocus.ts). When present, this card scrolls its own inner
-   * ScrollView (once one exists — see SCROLL_BOX_HEIGHT below) to the
-   * matching, occurrence-validated date group. Omit for every other caller
+   * timeline open to the matching, occurrence-validated date group. Wave 6
+   * removed the inner ScrollView; the request now expands the timeline so
+   * the target group is mounted, and the page's own scrolling brings it
+   * into view. Omit for every other caller
    * (Briefing's AUP/event-row destinations, or a plain in-tab visit) —
    * behaviour is then identical to before this round. Correction round §1 —
    * this is a one-time destination, not a persistent visual state: once
@@ -130,42 +138,41 @@ export function MoneyTimelineCard({
    * real value never risks one unwanted animated frame. */
   reduceMotion?: boolean;
 }) {
-  const { colors, radius, spacing, typography, cardShadow } = useTheme();
+  const { colors, radius, spacing, typography, cardShadow, semantic } = useTheme();
 
-  function handleScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    if (!onNearEnd) return;
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    if (contentSize.height - (contentOffset.y + layoutMeasurement.height) <= NEAR_END_THRESHOLD) {
-      onNearEnd();
-    }
-  }
+  // Wave 6 correction D — inline expansion state. Collapsed by default so
+  // the sections beneath the timeline stay reachable.
+  const [expanded, setExpanded] = useState(false);
 
   // Correction round — the inner-timeline destination-focus mechanism.
-  // scrollBoxRef is only ever attached to the ScrollView branch below (the
-  // short-list plain-View branch has no independent scroll of its own, so
-  // scrollTo calls against a null ref are simply, safely no-ops — the whole
-  // card is already on screen together in that case). groupInfoRef
-  // accumulates every group's own measured y AND occurrence identities as
-  // it reports layout; lastHandledRequestIdRef stops a resolved request
-  // from re-firing on every unrelated re-render (an edit sheet opening/
-  // closing, ordinary scrolling), while still allowing a genuinely NEW
-  // requestId (a fresh tap on the same or a different insight) to resolve
-  // again — see timelineFocus.ts's own doc comment for the full contract.
-  // Correction round §1 — no highlight state is kept here any more: a
-  // device test found a persistent green background on the target date
-  // group visually implied every event sharing that date belonged to the
-  // insight (it did not — an unrelated salary shared 11 September with the
-  // actual target repayment). The scroll itself is sufficient orientation;
-  // this component now renders with its normal styling once resolved.
-  const scrollBoxRef = useRef<ScrollView>(null);
   const groupInfoRef = useRef<Map<string, TimelineGroupInfo>>(new Map());
   const lastHandledRequestIdRef = useRef<number | null>(null);
+
+  // A destination that targets a specific date group must be able to reach
+  // it, so an incoming focus request expands the timeline first. Without
+  // this, a target beyond the fifth event would simply not be mounted.
+  useEffect(() => {
+    if (focusTarget) setExpanded(true);
+  }, [focusTarget]);
 
   // Computed unconditionally, ahead of every hook below that reads it
   // (attemptTimelineFocus/useEffect) and ahead of the empty-state early
   // return — groupByDay([]) is simply [], so this is safe to compute even
   // when there is nothing to show.
-  const groups = groupByDay(events);
+  // Wave 6 correction D — the card previously became its own fixed-height
+  // ScrollView once there were more than a screenful of events, so a
+  // customer scrolled a nested region for a long time before reaching
+  // Spending Tracker, Money Flow and Money Plan below it. That inner scroll
+  // is gone: the page owns all scrolling, and the timeline shows the next
+  // five events by default with one inline expand.
+  //
+  // The SLICE is on the already-ordered engine array and nothing else — no
+  // event is filtered, regrouped, recalculated or dropped, and grouping
+  // still runs on whatever slice is displayed, so day headers stay correct
+  // in both states.
+  const visibleEvents = expanded ? events : events.slice(0, COLLAPSED_EVENT_LIMIT);
+  const hiddenCount = Math.max(0, events.length - visibleEvents.length);
+  const groups = groupByDay(visibleEvents);
 
   function attemptTimelineFocus(totalGroups: number) {
     const result = computeTimelineFocusFulfillment(focusTarget, lastHandledRequestIdRef.current, {
@@ -174,9 +181,10 @@ export function MoneyTimelineCard({
     });
     if (!result.handled) return; // still pending — retried by the next group's own onLayout, or gives up once every group has reported
     lastHandledRequestIdRef.current = focusTarget!.requestId;
-    if (result.scrollY !== null) {
-      scrollBoxRef.current?.scrollTo({ y: Math.max(0, result.scrollY - GROUP_TOP_OFFSET), animated: !reduceMotion });
-    }
+    // Wave 6 correction D — the inner ScrollView this used to drive is
+    // gone; the page owns all scrolling now, and Screen's own section-focus
+    // mechanism brings the timeline into view. The fulfillment lifecycle
+    // (requestId de-duplication, onFocusHandled) is unchanged.
     onFocusHandled?.();
   }
 
@@ -188,7 +196,17 @@ export function MoneyTimelineCard({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        scrollBox: { maxHeight: SCROLL_BOX_HEIGHT },
+        expandRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          minHeight: 44,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: semantic.border,
+          marginTop: spacing.sm,
+        },
+        expandText: { ...typography.body, fontSize: 14, fontWeight: '600', color: semantic.interactive },
         group: { marginBottom: spacing.md },
         groupHeader: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: spacing.sm },
         groupRelative: { ...typography.heading, fontSize: 13, color: colors.textPrimary },
@@ -213,7 +231,7 @@ export function MoneyTimelineCard({
         amount: { ...typography.heading, fontSize: 14, marginRight: 4 },
         empty: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, paddingVertical: spacing.md },
       }),
-    [colors, radius, spacing, typography, cardShadow]
+    [colors, radius, spacing, typography, cardShadow, semantic]
   );
 
   if (groups.length === 0) {
@@ -294,23 +312,31 @@ export function MoneyTimelineCard({
     );
   });
 
-  // Short lists render exactly as before (plain, page-scrolled); only once
-  // there are enough events to actually crowd the page does the timeline
-  // become its own fixed-height, independently-scrollable box.
-  if (events.length <= VISIBLE_ROW_ESTIMATE) {
-    return <View>{groupViews}</View>;
-  }
-
   return (
-    <ScrollView
-      ref={scrollBoxRef}
-      style={styles.scrollBox}
-      nestedScrollEnabled
-      showsVerticalScrollIndicator
-      onScroll={handleScroll}
-      scrollEventThrottle={100}
-    >
+    <View>
       {groupViews}
-    </ScrollView>
+      {/* One full-width secondary action, expanding INLINE in the parent
+          screen — no second modal, no navigation route, no inner scroll. */}
+      {hiddenCount > 0 || expanded ? (
+        <TouchableOpacity
+          style={styles.expandRow}
+          onPress={() => {
+            const next = !expanded;
+            setExpanded(next);
+            // Expanding is also the moment to ask the parent for a wider
+            // planning horizon — the same request the retired inner scroll
+            // used to make when it neared its end.
+            if (next) onNearEnd?.();
+          }}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityLabel={expanded ? 'Show less' : `View all upcoming, ${hiddenCount} more ${hiddenCount === 1 ? 'event' : 'events'}`}
+          testID="money-timeline-expand"
+        >
+          <Text style={styles.expandText}>{expanded ? 'Show less' : 'View all upcoming'}</Text>
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={semantic.interactive} importantForAccessibility="no" />
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 }

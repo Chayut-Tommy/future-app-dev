@@ -377,8 +377,14 @@ function assertKindOpensWithContent(kind: SmartReminderKind, reminder: SmartRemi
   // never fall through to a null/default/contentless branch.
   const KIND_BRANCH_PATTERNS: Record<SmartReminderKind, RegExp> = {
     salary_check: /reminder\.kind === 'salary_check' && !awaitingIncomeDestination \? \(/,
-    bill_overdue: /\(reminder\.kind === 'bill_overdue' \|\| reminder\.kind === 'bnpl_repayment_due'\) && !awaitingSource \? \(/,
-    bill_due_soon: /reminder\.kind === 'bill_due_soon' \? \(/,
+    // RECONCILED (Design 5.1 Wave 6 final): a due-soon bill now shares the
+    // overdue bill's branch, because it now shares its journey — the same
+    // "Mark as paid" control leading to the same source picker and the same
+    // atomic transition. The property under test is unchanged and in fact
+    // strengthened: bill_due_soon went from a contentless acknowledgement to
+    // a real financial branch.
+    bill_overdue: /\(reminder\.kind === 'bill_overdue' \|\| reminder\.kind === 'bill_due_soon' \|\| reminder\.kind === 'bnpl_repayment_due'\) && !awaitingSource \? \(/,
+    bill_due_soon: /\(reminder\.kind === 'bill_overdue' \|\| reminder\.kind === 'bill_due_soon'\) && awaitingSource \? \(/,
     card_due_soon: /reminder\.kind === 'card_due_soon' \? \(/,
     bnpl_repayment_due: /reminder\.kind === 'bnpl_repayment_due' && awaitingSource && !awaitingEverydayAccount \? \(/,
     loan_repayment_due: /reminder\.kind === 'loan_repayment_due' \? \(/,

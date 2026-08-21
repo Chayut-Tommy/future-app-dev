@@ -114,10 +114,14 @@ export const MIN_MEASURE_COLUMN_WIDTH = 88;
  * Every rung uses figureLarge's family, weight and tabular numerals; only
  * the point size steps.
  */
-export const MONTH_MEASURE_FIGURE_SIZES: readonly number[] = [28, 26, 24, 22, 20, 17];
+export const MONTH_MEASURE_FIGURE_SIZES: readonly number[] = [22, 20, 17];
 
-/** The top of the ladder — `figureLarge`. Asserted against the real type
- * role by the Wave 5 suite so the two cannot drift. */
+/** Wave 6 closure — the top rung is now 22pt, not `figureLarge`'s own 28.
+ * A device review found 28pt beside a 14pt label read as the figure
+ * shouting over its own name, and it competed with the page's hero. One
+ * restrained step down keeps the figure clearly dominant without that.
+ * The ROLE is unchanged — family, weight and tabular numerals still come
+ * from figureLarge; only the point size steps. */
 export const MONTH_MEASURE_FIGURE_SIZE = MONTH_MEASURE_FIGURE_SIZES[0];
 
 /** The bottom of the ladder — `figureRow`. A value is never set smaller
@@ -127,7 +131,7 @@ export const MONTH_MEASURE_FIGURE_MIN_SIZE = MONTH_MEASURE_FIGURE_SIZES[MONTH_ME
 /** The smallest rung a layout may be CHOSEN for. A column count that would
  * force the figure below this is not offered at all — the layout drops a
  * column instead, which reads far better than three cramped numbers. */
-export const MONTH_MEASURE_COMFORTABLE_SIZE = 22;
+export const MONTH_MEASURE_COMFORTABLE_SIZE = 20;
 
 /**
  * The largest ladder rung at which every one of `values` fits `columnWidth`
@@ -329,7 +333,10 @@ export function selectMonthMeasures(income: number, spend: number): MonthMeasure
     // a correction rather than as an amount spent, and a minus sign under
     // the words "Spending recorded" adds nothing.
     measure('moneyIn', 'Money in', income, income > 0 ? 'positive' : 'neutral', true),
-    measure('spendingRecorded', 'Spending recorded', spend, 'neutral', false),
+    // Wave 6 final refinement — "Spent" rather than "Spending recorded".
+    // Shorter, and the card's own definition already says these are
+    // recorded figures, so the word was doing no work in a narrow column.
+    measure('spendingRecorded', 'Spent', spend, 'neutral', false),
     measure('netRecorded', 'Net recorded', net, net > 0 ? 'positive' : net < 0 ? 'caution' : 'neutral', true),
   ];
 }

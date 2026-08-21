@@ -21,6 +21,12 @@ import { computeLuluScore } from '../lib/calculations/luluScore';
 import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
+import {
+  snoozedOccurrences,
+  dismissedOccurrences,
+  pruneSnoozes,
+  pruneDismissals,
+} from '../lib/calculations/reminderSuppression';
 import { moneyAmountToCents } from '../lib/calculations/money';
 import { resolveBnplLinkedItems, toBalanceCentsAllowingZero } from '../lib/calculations/bnpl';
 import { resolveIncomeDestinationAsset } from '../lib/calculations/incomeDestinations';
@@ -2764,6 +2770,20 @@ interface AppStateContextValue {
   updateSavingsComparison: (id: string, patch: Partial<Omit<SavingsComparisonEntry, 'id'>>) => void;
   deleteSavingsComparison: (id: string) => void;
   markAchievementsSeen: (ids: string[]) => void;
+  /**
+   * Design 5.1 Wave 6 — hide ONE reminder occurrence until a local calendar
+   * day. Records nothing financial: no transaction, no balance change, no
+   * occurrence resolution. The underlying bill stays an upcoming commitment
+   * everywhere it already was, and every future recurrence is untouched
+   * (a later occurrence has a different key).
+   */
+  snoozeReminderOccurrence: (occurrenceKey: string, returnOn: string, today?: Date) => void;
+  /**
+   * Design 5.1 Wave 6 — permanently hide ONE reminder occurrence. Same
+   * non-financial contract as snooze: it does not mark anything paid,
+   * delete a bill, delete a transaction, or stop future reminders.
+   */
+  dismissReminderOccurrence: (occurrenceKey: string, today?: Date) => void;
   markLearningCardCompleted: (id: string) => void;
   /** Wipes all local data back to a fresh install (Settings → Reset Lulu). */
   resetAllData: () => void;
@@ -3350,6 +3370,51 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [data, persist]
   );
 
+  // Design 5.1 Wave 6 — the two reminder-suppression writes. Both follow
+  // markAchievementsSeen's own established shape exactly (read the current
+  // data, build the next value, hand it to `persist`), so they inherit the
+  // same write bookkeeping, the same failure surface and the same
+  // dataRef discipline as every other additive action here.
+  //
+  // Retention is folded into the write path because nothing in this app
+  // runs on a schedule: each suppression prunes entries whose day is long
+  // past. An elapsed snooze is already eligible again, so pruning it can
+  // change no behaviour — it only stops the map growing without bound.
+  const snoozeReminderOccurrence = useCallback(
+    (occurrenceKey: string, returnOn: string, today: Date = new Date()) => {
+      if (!occurrenceKey || !returnOn) return;
+      const current = snoozedOccurrences(data);
+      const next = { ...pruneSnoozes(current, today), [occurrenceKey]: returnOn };
+      persist({
+        ...data,
+        snoozedReminderOccurrences: next,
+        // A snoozed occurrence is no longer dismissed — the two are
+        // mutually exclusive answers to the same question, and leaving a
+        // stale dismissal behind would silently outrank the snooze.
+        dismissedReminderOccurrences: pruneDismissals(dismissedOccurrences(data), today).filter((k) => k !== occurrenceKey),
+      });
+    },
+    [data, persist]
+  );
+
+  const dismissReminderOccurrence = useCallback(
+    (occurrenceKey: string, today: Date = new Date()) => {
+      if (!occurrenceKey) return;
+      const kept = pruneDismissals(dismissedOccurrences(data), today);
+      if (kept.includes(occurrenceKey)) return; // already dismissed — never a duplicate write
+      const remainingSnoozes = { ...pruneSnoozes(snoozedOccurrences(data), today) };
+      // A dismissal supersedes any snooze on the same occurrence, so the
+      // now-meaningless snooze entry is cleared rather than left to rot.
+      delete remainingSnoozes[occurrenceKey];
+      persist({
+        ...data,
+        dismissedReminderOccurrences: [...kept, occurrenceKey],
+        snoozedReminderOccurrences: remainingSnoozes,
+      });
+    },
+    [data, persist]
+  );
+
   // Real, derived-from-actual-usage progress for Discover's Learning Paths
   // ("2/8 lessons completed") — never a fabricated percentage.
   const markLearningCardCompleted = useCallback(
@@ -3446,6 +3511,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       updateSavingsComparison,
       deleteSavingsComparison,
       markAchievementsSeen,
+      snoozeReminderOccurrence,
+      dismissReminderOccurrence,
       markLearningCardCompleted,
       resetAllData,
     }),
@@ -3494,6 +3561,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       updateSavingsComparison,
       deleteSavingsComparison,
       markAchievementsSeen,
+      snoozeReminderOccurrence,
+      dismissReminderOccurrence,
       markLearningCardCompleted,
     ]
   );

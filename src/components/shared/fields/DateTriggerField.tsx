@@ -14,13 +14,20 @@
  * calendar-day comparison and the wording. Keyboard sequencing, focus,
  * Done/Cancel and the surface itself are shared.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { useTheme } from '../../../theme/ThemeContext';
 import { AddIcon } from '../AddIcon';
 import { iconSpec } from '../../../lib/addIcons';
 import { FocusedPickerTrigger } from './FocusedPickerTrigger';
-import { describeDate, quickDateChoices, upcomingDateChoices } from '../../../lib/dateFieldPresentation';
+import { InlineCalendar } from './InlineCalendar';
+import {
+  CHOOSE_ANOTHER_DATE_KEY,
+  CHOOSE_ANOTHER_DATE_LABEL,
+  describeDate,
+  quickDateChoices,
+  upcomingDateChoices,
+} from '../../../lib/dateFieldPresentation';
 
 export function DateTriggerField({
   label,
@@ -91,6 +98,66 @@ export function DateTriggerField({
       containerStyle={containerStyle}
       testID={testID}
       renderPicker={(draft, setDraft) => (
+        <DatePickerBody
+          choices={choices}
+          draft={draft}
+          setDraft={setDraft}
+          today={today}
+          direction={direction}
+          styles={styles}
+          testID={testID}
+        />
+      )}
+    />
+  );
+}
+
+/**
+ * Wave 6 correction A — the picker's body.
+ *
+ * Split out of the `renderPicker` closure so it can hold its own view
+ * state: the shortcuts and the calendar are two views of ONE picker and one
+ * committed value, not two pickers. Cancel/Done still belong entirely to
+ * FocusedPickerTrigger, so a cancelled calendar selection restores the
+ * previously committed date exactly as a cancelled shortcut always did.
+ */
+function DatePickerBody({
+  choices,
+  draft,
+  setDraft,
+  today,
+  direction,
+  styles,
+  testID,
+}: {
+  choices: { key: string; label: string; date: Date }[];
+  draft: Date | null;
+  setDraft: (next: Date) => void;
+  today: Date;
+  direction: 'past' | 'future';
+  styles: { [key: string]: any };
+  testID?: string;
+}) {
+  const [showCalendar, setShowCalendar] = useState(false);
+
+  // A recorded transaction cannot be dated in the future, so a past-facing
+  // field caps at today. A future-facing field (a bill's next due date) has
+  // no upper bound and keeps its existing forward run of days.
+  const maximumDate = direction === 'past' ? today : null;
+
+  if (showCalendar) {
+    return (
+      <InlineCalendar
+        value={draft}
+        today={today}
+        maximumDate={maximumDate}
+        onSelect={setDraft}
+        testID={testID ? `${testID}-calendar` : undefined}
+      />
+    );
+  }
+
+  return (
         <View>
           {choices.map((c) => {
             const selected = !!draft && describeDate(c.date, today).secondary === describeDate(draft, today).secondary;
@@ -111,8 +178,23 @@ export function DateTriggerField({
               </TouchableOpacity>
             );
           })}
+          {/* Wave 6 — the shortcuts cover the common cases in one tap; this
+              opens a real calendar for anything else. Same field, same
+              committed value, no second date system. */}
+          {direction === 'past' ? (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => setShowCalendar(true)}
+              activeOpacity={0.75}
+              testID={testID ? `${testID}-choice-${CHOOSE_ANOTHER_DATE_KEY}` : undefined}
+              accessibilityRole="button"
+              accessibilityLabel={CHOOSE_ANOTHER_DATE_LABEL}
+              accessibilityHint="Opens a calendar to pick any past date"
+            >
+              <Text style={styles.label}>{CHOOSE_ANOTHER_DATE_LABEL}</Text>
+              <AddIcon icon={iconSpec('calendar-outline')} />
+            </TouchableOpacity>
+          ) : null}
         </View>
-      )}
-    />
   );
 }

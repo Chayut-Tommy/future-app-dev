@@ -46,7 +46,7 @@ export function SelectBalancesSheet({
   onAddBalance: () => void;
 }) {
   const { data, updateAssetsIncludeInMoney } = useAppState();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
 
   const balances = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings' || a.type === 'everyday');
 
@@ -162,14 +162,19 @@ export function SelectBalancesSheet({
           alignItems: 'center',
           justifyContent: 'center',
         },
-        toggleActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+        // Wave 6 Correction C — selection is an interactive state, not a
+        // positive financial outcome, so it takes the Ocean Blue
+        // interactive role. Green stays reserved for money genuinely
+        // received. The checkmark below is the non-colour cue.
+        toggleActive: { backgroundColor: semantic.interactiveTint, borderColor: semantic.interactive },
         toggleText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
-        toggleTextActive: { color: colors.accentStrong },
+        toggleTextActive: { color: semantic.interactive },
         emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, marginBottom: spacing.md },
         addButton: { alignSelf: 'flex-start', paddingVertical: spacing.sm, paddingHorizontal: 2, minHeight: 44, justifyContent: 'center' },
         footerButton: { flex: 1 },
+        savePrimary: { flex: 1, backgroundColor: semantic.interactive },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic]
   );
 
   return (
@@ -181,7 +186,14 @@ export function SelectBalancesSheet({
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={handleCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} style={styles.footerButton} />
+          {/* Wave 6 closure — choosing which balances feed an estimate is
+              a neutral configuration action, not a positive financial
+              outcome, so Save takes the theme's interactive primary rather
+              than the legacy accent green. Scoped to THIS
+              control: Button's own `primary` variant is untouched, so no
+              other primary action in the app changes. Green stays reserved
+              for money genuinely received. */}
+          <Button label="Save" onPress={handleSave} style={styles.savePrimary} />
         </>
       }
     >
@@ -215,7 +227,7 @@ export function SelectBalancesSheet({
         })
       )}
       <TouchableOpacity style={styles.addButton} onPress={handleAddBalance} accessibilityRole="button" accessibilityLabel="Add a money balance">
-        <Text style={[styles.toggleText, { color: colors.accent, fontSize: 13 }]}>+ Add a money balance</Text>
+        <Text style={[styles.toggleText, { color: semantic.interactive, fontSize: 13 }]}>+ Add a money balance</Text>
       </TouchableOpacity>
     </KeyboardSheet>
   );

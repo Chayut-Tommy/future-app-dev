@@ -259,11 +259,47 @@ console.log('\n=== SECTION 7: SmartReminderCard.tsx no longer has a local dismis
     'onOutcome replaces onSettled as the reported prop — the only remaining "onSettled" text is explanatory doc-comment prose, not a live prop/callsite',
     /onOutcome\?: \(outcome: ReminderReviewOutcome\) => void;/.test(SMART_REMINDER_SRC) && !/onSettled\?:/.test(SMART_REMINDER_SRC) && !/onSettled=\{/.test(SMART_REMINDER_SRC)
   );
+  // RECONCILED (Design 5.1 Wave 6 final). This clause protected the
+  // property that a "Not yet" control is a SESSION DEFER and never a
+  // mutation. That property is intact — but two of the three call sites are
+  // gone, superseded by Snooze, which does everything the session defer did
+  // AND records the day the customer chose, so it survives a restart. The
+  // income reminder keeps its "Not yet" (this pass was told to preserve the
+  // income journey), and the loan branch keeps deferReminder as the
+  // fallback for an unresolvable liability. Both are still asserted to be
+  // non-mutating, here and in the intents suite.
+  // RECONCILED AGAIN (Design 5.1 Wave 6 polish). The visible "Not yet" is
+  // now retired on EVERY kind, income included: Snooze covers "remind me
+  // later" with a real date the customer chose, Dismiss covers "not this
+  // one", and Close leaves without acting. Three controls that each say
+  // something specific replaced a fourth that said the least.
+  //
+  // The behaviour this clause protects is the SESSION DEFER — an outcome
+  // that advances the queue while mutating nothing — and it is intact:
+  // deferReminder still exists, still reports only `{kind:'deferred'}`, and
+  // is still what the loan branch falls back to when its liability cannot
+  // be resolved. Section 1 of design5-wave6-reminder-actions.test.ts proves
+  // it performs no mutation; that proof is unchanged.
   assert(
-    'every "Not yet" button calls deferReminder (salary_check, bill_overdue/bnpl shared, loan_repayment_due) — 3 distinct call sites',
-    (SMART_REMINDER_SRC.match(/onPress=\{deferReminder\}/g) || []).length === 3
+    'deferReminder survives as the non-mutating fallback, reachable from the loan branch',
+    /function deferReminder\(\)/.test(SMART_REMINDER_SRC) && /: deferReminder\(\)\)/.test(SMART_REMINDER_SRC)
   );
-  assert('the "Got it" button (bill_due_soon) calls acknowledgeReminder, never deferReminder', /onPress=\{acknowledgeReminder\}/.test(SMART_REMINDER_SRC));
+  assert(
+    'and no visible control is labelled with the retired, uninformative "Not yet"',
+    !/accessibilityLabel="Not yet"/.test(SMART_REMINDER_SRC)
+  );
+  assert(
+    'the loan branch still falls back to deferReminder when its liability cannot be resolved',
+    /reminderLoanLiability && reminderLoanRecurringItem \? onRequestLoanRepayment\?\.\(\) : deferReminder\(\)/.test(SMART_REMINDER_SRC)
+  );
+  // The bill_due_soon acknowledgement control was retired with the
+  // three-intent model (see design5-wave6-reminder-actions.test.ts §2 for
+  // the full reconciliation). The shared non-mutating reporter it used is
+  // still the single path every non-mutating outcome takes.
+  assert(
+    'acknowledgeReminder remains the ONE non-mutating queue-advance reporter, now shared by Snooze and Dismiss',
+    /function acknowledgeReminder\(\)/.test(SMART_REMINDER_SRC) && (SMART_REMINDER_SRC.match(/\n\s*acknowledgeReminder\(\);/g) || []).length === 2
+  );
   assert(
     'the mutation-success paths report a completed outcome with the real transactionId and the mutation\'s own fresh data',
     /reportCompleted\(transactionId, transition\.data\);/.test(SMART_REMINDER_SRC)
@@ -277,7 +313,12 @@ console.log('\n=== SECTION 7: SmartReminderCard.tsx no longer has a local dismis
 console.log('\n=== SECTION 8: ReminderDetailSheet.tsx session-deferred queue + blank-shell prevention (Defects A & B, real source) ===');
 {
   assert('sessionDeferredKeysRef is a real Set-backed ref', /const sessionDeferredKeysRef = useRef<Set<string>>\(new Set\(\)\);/.test(REMINDER_SHEET_SRC));
-  assert('sessionDeferredKeysRef is cleared at the start of the opening effect — every fresh open starts a clean session', /sessionDeferredKeysRef\.current = new Set\(\);\s*\n\s*const liveTop = computeTopReminder/.test(REMINDER_SHEET_SRC));
+  assert('sessionDeferredKeysRef is cleared at the start of the opening effect — every fresh open starts a clean session', // RECONCILED: the opening effect now re-reads through the suppression
+    // predicate as well, so the selector call it precedes is
+    // computeRankedReminder rather than its no-exclusion wrapper. The
+    // property under test — a fresh open starts a clean SESSION — is
+    // unchanged.
+    /sessionDeferredKeysRef\.current = new Set\(\);[\s\S]{0,400}const liveTop = computeRankedReminder\(data, today, createSuppressionPredicate/.test(REMINDER_SHEET_SRC));
   assert(
     'advanceToNextEligible re-ranks via the canonical computeRankedReminder with the session-exclusion predicate, never a second hand-assembled queue',
     /function advanceToNextEligible\(latestData: AppData\) \{\s*const next = computeRankedReminder\(latestData, today, isSessionExcluded\);/.test(REMINDER_SHEET_SRC)

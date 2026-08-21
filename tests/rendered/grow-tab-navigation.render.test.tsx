@@ -9,8 +9,23 @@ import { AppStateProvider } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { SavingsAllocationPromptProvider } from '../../src/state/SavingsAllocationPromptContext';
-import { MainTabNavigator } from '../../src/navigation/MainTabNavigator';
+import { RootNavigator } from '../../src/navigation/RootNavigator';
 import { createEmptyAppData } from '../../src/lib/storage';
+
+/**
+ * Wave 6 correction A — this harness now mounts the REAL RootNavigator.
+ *
+ * It previously mounted MainTabNavigator alone, which was sufficient while
+ * the dock was that navigator's own tabBar. The dock is now a root-level
+ * sibling of the detached "+" (a tabBar-mounted dock structurally could not
+ * exist on MoneyDetail, GrowDetail, Transactions, Goals, Cards or
+ * EmergencyFund, which are all root-stack routes), so the tab controls this
+ * file presses live at root. Mounting half the production tree can no
+ * longer drive navigation.
+ *
+ * Nothing this file asserts about tab CONTENT or state retention changed —
+ * only the amount of the real tree it has to mount to exercise it.
+ */
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
@@ -53,7 +68,7 @@ function Harness() {
           <CelebrationProvider>
             <SavingsAllocationPromptProvider>
               <NavigationContainer>
-                <MainTabNavigator />
+                <RootNavigator />
               </NavigationContainer>
             </SavingsAllocationPromptProvider>
           </CelebrationProvider>
@@ -66,6 +81,8 @@ function Harness() {
 async function seedEmptyData() {
   const data = createEmptyAppData();
   data.user.name = 'Jamie';
+  // RootNavigator gates the main experience behind this flag.
+  data.user.hasSeenIntro = true;
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 

@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { InputAccessoryView, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import type { RefObject } from 'react';
+import { AccountChoiceList } from '../shared/AccountChoiceList';
+import { billPaymentSourceRows } from '../../lib/calculations/accountChoice';
 import { useTheme } from '../../theme/ThemeContext';
 import { CreditCard } from '../../types/models';
 import { CreditCardRepaymentFormBundle } from '../../hooks/useCreditCardRepaymentForm';
@@ -64,11 +66,6 @@ export function CreditCardRepaymentFormFields({
           color: colors.textPrimary,
           marginBottom: spacing.md,
         },
-        sourceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-        sourceChip: { paddingVertical: 8, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        sourceChipActive: { backgroundColor: colors.accent },
-        sourceChipText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
-        sourceChipTextActive: { color: colors.onAccent },
         disclosure: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.md },
         errorText: { ...typography.caption, fontSize: 12, color: colors.warning, marginBottom: spacing.md },
         accessoryBar: {
@@ -145,20 +142,24 @@ export function CreditCardRepaymentFormFields({
       {form.eligibleSources.length === 0 ? (
         <Text style={styles.disclosure}>Add a Cash or Everyday balance in Nolie first to record a payment.</Text>
       ) : (
-        <View style={styles.sourceRow}>
-          {form.eligibleSources.map((s) => (
-            <TouchableOpacity
-              key={s.id}
-              style={[styles.sourceChip, form.source?.id === s.id ? styles.sourceChipActive : null]}
-              onPress={() => form.setSource(s)}
-              disabled={form.isSubmitting}
-              accessibilityRole="button"
-              accessibilityState={{ selected: form.source?.id === s.id }}
-            >
-              <Text style={[styles.sourceChipText, form.source?.id === s.id ? styles.sourceChipTextActive : null]}>{s.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        /* Wave 6 final — the shared account chooser. This form already
+           separated selection from confirmation correctly (setSource, then
+           the sheet's own Confirm), so only the PRESENTATION changed: the
+           wrapping chips, which crammed a name and a bracketed figure onto
+           one line, become full rows carrying the account's type in words
+           and its balance in its own column. Eligibility is untouched —
+           this form still offers exactly the Cash/Everyday assets its own
+           hook resolved, and never a credit card. */
+        <AccountChoiceList
+          rows={billPaymentSourceRows(form.eligibleSources)}
+          selectedId={form.source?.id ?? null}
+          onSelect={(id) => {
+            const chosen = form.eligibleSources.find((o) => o.id === id);
+            if (chosen) form.setSource(chosen);
+          }}
+          disabled={form.isSubmitting}
+          testID="repayment-source-list"
+        />
       )}
 
       {form.validatedAmount.valid && form.source && !form.exceedsBalance ? (

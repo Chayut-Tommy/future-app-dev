@@ -145,7 +145,13 @@ console.log('\n=== 3. One amount source — the card and its breakdown cannot di
 {
   assert('3a. goals_underfunded resolves the SAME canonical amount the normal state does', /case 'goals_underfunded':[\s\S]*?\.\.\.resolveAmount\(Math\.max\(0, safeToSpend\.cycleRemainingPool\)\),/.test(PRESENTATION));
   assert('3b. the hero has no separate goals_underfunded card to hide it in', !/heroState === 'goals_underfunded'/.test(HERO));
-  assert('3c. the hero renders the presentation amount, never a locally derived one', /\{presentation\.amountVisible \? <Text style=\{styles\.value\}>\{presentation\.displayAmount\}<\/Text> : null\}/.test(HERO));
+  // Wave 6 Correction C — the hero's states were converged into one shell,
+  // so the amount now renders through `styles.heroFigure` gated on a named
+  // `amountVisible` derived from the SAME two presentation fields. The
+  // claim protected here is unchanged and asserted more strictly: the
+  // amount is the presentation's own `displayAmount`, gated on the
+  // presentation's own `amountVisible`, and is never derived locally.
+  assert('3c. the hero renders the presentation amount, never a locally derived one', /const amountVisible = presentation\.amountVisible && !!presentation\.displayAmount;/.test(HERO) && /\{presentation\.displayAmount\}/.test(HERO) && !/formatMoney\(safeToSpend\.cycleRemainingPool\)/.test(HERO));
   assert('3d. and no screen-level financial formula was introduced', !/monthlyIncome -|cycleRemainingPool -/.test(HERO));
   assert('3e. the monthly figure remains available only as goal-allocation input', /availableForGoals/.test(read('src/lib/calculations/safeToSpend.ts')));
 }

@@ -798,11 +798,27 @@ console.log('\n=== 11. Zero-state/CTA architecture audit ===');
   assert('11d. MoneyScreen.tsx mounts exactly one AddRecurringItemModal', (MONEY_SCREEN_SRC.match(/<AddRecurringItemModal/g) || []).length === 1);
   assert('11d. MoneyScreen.tsx mounts exactly one AddGoalModal', (MONEY_SCREEN_SRC.match(/<AddGoalModal/g) || []).length === 1);
   assert('11d. MoneyScreen.tsx mounts exactly one EditSavingsAllocationModal', (MONEY_SCREEN_SRC.match(/<EditSavingsAllocationModal/g) || []).length === 1);
+  // Wave 6 final pass — MoneyPlanCard ("Typical Monthly Allocation") is
+  // unwired from the default composition because it drew the same five
+  // measures the combined Typical money flow card already shows. Its four
+  // empty-state CTAs were themselves duplicates: every one of those
+  // destinations has its own independent entry point on Money, and each is
+  // still wired to MoneyScreen's own single modal instance. The claim this
+  // assertion protects — all four Add/manage destinations reachable from
+  // Money, through one modal instance each, never a parallel surface — is
+  // unchanged and asserted directly below.
   assert(
-    '11e. MoneyScreen.tsx passes all four callback props into <MoneyPlanCard>, wired to its own existing setEditIncome/setIncomeModalVisible, openAddBill, setGoalModalVisible, and setEditSavingsAllocationVisible',
-    /<MoneyPlanCard\s*\n\s*onAddIncome=\{\(\) => \{\s*\n\s*setEditIncome\(null\);\s*\n\s*setIncomeModalVisible\(true\);\s*\n\s*\}\}\s*\n\s*onAddBill=\{openAddBill\}\s*\n\s*onAddGoal=\{\(\) => setGoalModalVisible\(true\)\}\s*\n\s*onManageSavingsAllocation=\{\(\) => setEditSavingsAllocationVisible\(true\)\}/.test(
-      MONEY_SCREEN_SRC
-    )
+    '11e. all four Add/manage destinations remain reachable from MoneyScreen, wired to its own single modal instances',
+    /setEditIncome\(null\);\s*\n\s*setIncomeModalVisible\(true\);/.test(MONEY_SCREEN_SRC) &&
+      /onPress: openAddBill/.test(MONEY_SCREEN_SRC) &&
+      /setGoalModalVisible\(true\)/.test(MONEY_SCREEN_SRC) &&
+      /setEditSavingsAllocationVisible\(true\)/.test(MONEY_SCREEN_SRC)
+  );
+  assert(
+    '11e-ii. and the retired allocation card is unwired, not deleted — its file and its detail sheet remain',
+    !/<MoneyPlanCard/.test(MONEY_SCREEN_SRC) &&
+      require('fs').existsSync('/Users/tommy/Claude/Lulu/app/src/components/money/MoneyPlanCard.tsx') &&
+      /<SavingsAllocationDetailSheet/.test(MONEY_SCREEN_SRC)
   );
 }
 

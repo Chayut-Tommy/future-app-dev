@@ -6,6 +6,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { BriefingPriorityRow as PriorityRowModel, PriorityRowMarker } from '../../lib/calculations/briefingPriorityRows';
 import { PRIORITY_ROW_MIN_HEIGHT, ROW_ICON_TILE_SIZE, priorityRowAmountFitsInline } from '../../lib/calculations/todayComposition';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { HERO_DIVIDER_WIDTH } from './TodayBriefingCard';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
@@ -65,7 +66,10 @@ export function BriefingPriorityRow({
           gap: designSpacing.md,
           minHeight: Math.max(PRIORITY_ROW_MIN_HEIGHT, designLayout.touchTargetMin),
           paddingVertical: designSpacing.sm,
-          borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+          // Wave 6 final refinement — 1pt, matching the hero's own
+          // dividers, so consecutive reminder/bill/income rows are
+          // genuinely separated rather than running together.
+          borderBottomWidth: isLast ? 0 : HERO_DIVIDER_WIDTH,
           borderBottomColor: semantic.border,
         },
         iconTile: {

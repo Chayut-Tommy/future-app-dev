@@ -223,14 +223,15 @@ describe('Design 5.1 Wave 5 — Today looks like page 7 (established customer)',
     expect(view.getAllByTestId(/^briefing-priority-row-/).length).toBeLessThanOrEqual(2);
   });
 
-  test('8. the hero footer separates provenance from inspection', () => {
+  test('8. the hero footer carries provenance alone — the redundant How this works control is gone', () => {
+    // Wave 6 closure — the control routed to Money, which the AUP measure
+    // and the priority rows already reach, so it cost a full row of height
+    // for no unique destination. Money's own hero keeps "How this was
+    // calculated". Provenance stays, as one calm full-width line.
     const provenance = view.getByTestId('today-briefing-provenance');
-    expect(String(provenance.props.children)).toMatch(/Based on what you’ve recorded/);
-    const how = view.getByTestId('today-briefing-how-this-works');
-    expect(how.props.accessibilityRole).toBe('button');
-    expect(how.props.accessibilityLabel).toBe('How this works');
-    // Exactly one AUP explanation on the page — no duplicate elsewhere.
-    expect(view.getAllByTestId('today-briefing-how-this-works')).toHaveLength(1);
+    expect(String(provenance.props.children)).toBe('Based on what you’ve recorded · Updated today');
+    expect(view.queryByTestId('today-briefing-how-this-works')).toBeNull();
+    expect(visibleTexts(view)).not.toContain('How this works');
   });
 
   test('9. the Journey is one compact row with a progress treatment, not a card stack', () => {
@@ -251,7 +252,7 @@ describe('Design 5.1 Wave 5 — Today looks like page 7 (established customer)',
     }
     expect(view.queryAllByTestId(/^month-measure-/, { includeHiddenElements: true })).toHaveLength(3);
     const texts = visibleTexts(view);
-    expect(texts).toEqual(expect.arrayContaining(['Money in', 'Spending recorded', 'Net recorded']));
+    expect(texts).toEqual(expect.arrayContaining(['Money in', 'Spent', 'Net recorded']));
     // One composed spoken label for the whole card, and every figure in it
     // reconciles exactly with the seeded transactions: $2,400 in, $860
     // spent, $1,540 net. Money in keeps its established explicit positive
@@ -261,7 +262,7 @@ describe('Design 5.1 Wave 5 — Today looks like page 7 (established customer)',
     // as a WORD, so a screen reader never stops on a bare "plus". The
     // figures themselves are unchanged and still reconcile exactly.
     expect(String(card.props.accessibilityLabel)).toBe(
-      'Money in, positive 2,400 dollars, Spending recorded, 860 dollars, Net recorded, positive 1,540 dollars. View transaction history'
+      'Money in, positive 2,400 dollars, Spent, 860 dollars, Net recorded, positive 1,540 dollars. View transaction history'
     );
   });
 
@@ -347,7 +348,7 @@ describe('Design 5.1 Wave 5 — Today looks like page 7 (established customer)',
     // One accessible statement per metric, sign spoken as a word.
     const label = String(view.getByTestId('today-month-card').props.accessibilityLabel);
     expect(label).toBe(
-      'Money in, positive 2,400 dollars, Spending recorded, 860 dollars, Net recorded, positive 1,540 dollars. View transaction history'
+      'Money in, positive 2,400 dollars, Spent, 860 dollars, Net recorded, positive 1,540 dollars. View transaction history'
     );
     expect(label).not.toMatch(/\bplus\b/i);
   });
@@ -444,9 +445,9 @@ describe('Design 5.1 Wave 5 — Today in the fresh-setup state', () => {
     expect(journeyIdx).toBeGreaterThan(heroIdx);
     expect(texts.slice(heroIdx, journeyIdx).some((t) => /so far/.test(t))).toBe(false);
 
-    // The Briefing keeps its own contextual missing-input affordances.
+    // The Briefing keeps its own contextual missing-input affordance.
     expect(view.getByTestId('today-briefing-setup-action')).toBeTruthy();
-    expect(view.getByTestId('today-briefing-how-this-works')).toBeTruthy();
+    expect(view.getByTestId('today-briefing-provenance')).toBeTruthy();
   });
 
   test('17. Wave 5 closure B — the no-goal row is one accessible action opening the canonical goal form', async () => {

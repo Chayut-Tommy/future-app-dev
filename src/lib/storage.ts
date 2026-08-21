@@ -30,6 +30,11 @@ export function createEmptyAppData(): AppData {
     savingsComparisons: [],
     seenAchievementIds: [],
     completedLearningCardIds: [],
+    // Wave 6 — empty by default; see AppData's own doc comments. Present
+    // here so a brand-new customer and a hydrated older customer reach the
+    // identical shape, with no migration step in between.
+    snoozedReminderOccurrences: {},
+    dismissedReminderOccurrences: [],
   };
 }
 

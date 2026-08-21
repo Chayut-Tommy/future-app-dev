@@ -24,6 +24,7 @@ import { BriefingTile } from './briefingTiles';
 import { TodayBriefingEventRow } from './todayBriefing';
 import { eventOccurrenceIdentity, reminderOccurrenceIdentity, sameOccurrence } from './todayBriefing';
 import { TimelineEvent } from './moneyTimeline';
+import { AppData } from '../../types/models';
 import { SmartReminder } from './reminders';
 
 /**
@@ -130,11 +131,32 @@ function composeAccessibilityLabel(label: string, dateLabel: string | null, amou
  * guard on Design 5.1's own two-row rule, not a second cap: the upstream
  * budget already guarantees it.
  */
+/**
+ * The reminder's display name: the linked item's own label where one
+ * exists, otherwise the engine's title. Never re-cased, never templated,
+ * and never carrying the engine's question sentence or its emoji.
+ */
+export function reminderRowLabel(reminder: SmartReminder, data: AppData | null): string {
+  if (!data) return reminder.title;
+  if (reminder.kind === 'card_due_soon' && reminder.creditCardId) {
+    return data.creditCards.find((c) => c.id === reminder.creditCardId)?.label ?? reminder.title;
+  }
+  if (reminder.recurringItemId) {
+    return data.recurringItems.find((r) => r.id === reminder.recurringItemId)?.label ?? reminder.title;
+  }
+  return reminder.title;
+}
+
 export function selectBriefingPriorityRows(
   tiles: BriefingTile[],
   eventRows: TodayBriefingEventRow[],
   timelineEvents: TimelineEvent[],
-  topReminder: SmartReminder | null
+  topReminder: SmartReminder | null,
+  /** Wave 6 final — optional, so every existing caller (including tests
+   * that pass a null reminder) keeps its exact previous behaviour. Supplied
+   * only to resolve a reminder's linked item NAME; nothing else is read
+   * from it, and no calculation depends on it. */
+  data?: AppData
 ): BriefingPriorityRow[] {
   const rows: BriefingPriorityRow[] = [];
 
@@ -149,15 +171,33 @@ export function selectBriefingPriorityRows(
       const isIncome = topReminder.kind === 'salary_check';
       const amountLabel = amount === null ? null : formatPriorityRowAmount(amount, isIncome);
       const dateLabel = event ? formatPriorityRowDate(event.date) : null;
+      /**
+       * Wave 6 final — the row is named by the ITEM, not by the engine's
+       * question sentence.
+       *
+       * reminders.ts composes "Did you pay your Rent?" and "Did your
+       * dividends arrive? 🎉". Both were owner-reported defects: the first
+       * prepends "your" to an already-named item, the second lower-cases a
+       * name the customer typed and carries a party emoji into a financial
+       * row. The row already shows the date and amount beside the label, so
+       * the question's timing words were a third restatement too.
+       *
+       * reminders.ts itself is untouched — it is a financial-adjacent
+       * engine, and its `title` remains the reminder's stable identity.
+       * `reminderRowLabel` reads the linked item's own name where one
+       * exists and falls back to the engine's title where it does not, so
+       * no reminder can ever end up nameless.
+       */
+      const label = reminderRowLabel(topReminder, data ?? null);
       rows.push({
         key: tile.key,
         kind: 'reminder',
         icon: tile.icon,
-        label: topReminder.title,
+        label,
         dateLabel,
         amountLabel,
         marker: resolvePriorityRowMarker(isIncome ? 'income' : 'bill', daysUntil),
-        accessibilityLabel: composeAccessibilityLabel(topReminder.title, dateLabel, amountLabel),
+        accessibilityLabel: composeAccessibilityLabel(label, dateLabel, amountLabel),
       });
       continue;
     }

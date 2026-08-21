@@ -9,7 +9,8 @@ import { AppStateProvider, useAppState } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { TodayBriefingCard } from '../../src/components/today/TodayBriefingCard';
 import { ReminderDetailSheet } from '../../src/components/today/ReminderDetailSheet';
-import { computeTopReminder } from '../../src/lib/calculations/reminders';
+import { computeRankedReminder } from '../../src/lib/calculations/reminders';
+import { createSuppressionPredicate } from '../../src/lib/calculations/reminderSuppression';
 import { ReminderOpenRequest, createReminderOpenRequest } from '../../src/lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../src/lib/calculations/todayBriefing';
 import { computeMoneyTimeline } from '../../src/lib/calculations/moneyTimeline';
@@ -87,7 +88,14 @@ const STORAGE_KEY = 'moneycoach.appdata.v1';
 let latestOnFullyClosed: (() => void) | null = null;
 function TodayBriefingHarness({ today }: { today: Date }) {
   const { data } = useAppState();
-  const topReminder = useMemo(() => computeTopReminder(data, today), [data, today]);
+  // Wave 6 polish — mirrors TodayScreen's OWN wiring, including the
+  // persisted suppression predicate. Without it this harness would keep
+  // advertising a reminder the real app has already suppressed, and the
+  // suite would be testing a screen that does not exist.
+  const topReminder = useMemo(
+    () => computeRankedReminder(data, today, createSuppressionPredicate(data, today)),
+    [data, today]
+  );
   const timelineEvents = useMemo(() => computeMoneyTimeline(data, today), [data, today]);
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
   const safeToSpend = useMemo(() => computeSafeToSpend(data, today), [data, today]);
@@ -123,7 +131,6 @@ function TodayBriefingHarness({ today }: { today: Date }) {
         timelineEvents={timelineEvents}
         timeframeLine={null}
         topReminder={topReminder}
-        onPressHowThisWorks={() => {}}
         onPressAup={() => {}}
         onPressEventRow={() => {}}
         onPressReminderTile={() => {
@@ -226,7 +233,7 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     const user = userEvent.setup();
     await render(<Harness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Did you pay your Rent?');
+    await screen.findByTestId('reminder-title');
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
     expect(sendSpy.mock.calls[0][0]).toBeTruthy();
@@ -245,11 +252,18 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     const user = userEvent.setup();
     await render(<Harness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Did you pay your Rent?');
+    await screen.findByTestId('reminder-title');
     expect(sendSpy).toHaveBeenCalledTimes(1);
 
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
-    await screen.findByText('Did you pay your Internet?');
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which advances the queue exactly as the session
+    // defer did and additionally records the chosen day. The focus property
+    // under test — one focus event per genuine content change — is
+    // unchanged and still asserted below.
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
+    // RECONCILED (Wave 6 polish): titled by the item.
+    await screen.findByText('Internet');
 
     // A further, genuine transition fires a further call — and since both
     // reminder_detail states share the same SmartReminderCard instance
@@ -276,11 +290,24 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     const user = userEvent.setup();
     await render(<Harness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Did you pay your Rent?');
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
-    await screen.findByText('Did you pay your Internet?');
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
-    await screen.findByText('Did you pay your Phone?');
+    await screen.findByTestId('reminder-title');
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which advances the queue exactly as the session
+    // defer did and additionally records the chosen day. The focus property
+    // under test — one focus event per genuine content change — is
+    // unchanged and still asserted below.
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
+    // RECONCILED (Wave 6 polish): titled by the item.
+    await screen.findByText('Internet');
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which advances the queue exactly as the session
+    // defer did and additionally records the chosen day. The focus property
+    // under test — one focus event per genuine content change — is
+    // unchanged and still asserted below.
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
+    await screen.findByText('Phone');
 
     // Exactly 3 genuine content changes (open, ->Internet, ->Phone) — never
     // more, proving the identity-dedup mechanism never re-fires for a
@@ -446,7 +473,7 @@ describe('Reminder focus and announcements — rendered coverage', () => {
 
     const amountInput = screen.getByDisplayValue('');
     await user.type(amountInput, '50');
-    await user.press(screen.getByRole('button', { name: /Cash \(/ }));
+    await user.press(screen.getByTestId('account-choice-cash'));
     await user.press(await screen.findByRole('button', { name: 'Record payment' }));
     await screen.findByText('Payment recorded');
 
@@ -467,10 +494,16 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     await render(<Harness today={today} />);
     const tile = await screen.findByTestId(REMINDER_ROW);
     await user.press(tile);
-    await screen.findByText('Did you pay your Rent?');
+    await screen.findByTestId('reminder-title');
 
     const modalInstance = findNativeModalInstance();
-    await user.press(screen.getByText('Close'));
+    // RECONCILED (Design 5.1 Wave 6 closure): the detached "Close" text
+    // that floated below the reminder content was removed — Close now lives
+    // once, in the sheet header, where every other state of this sheet
+    // already put it. Same control, same handler (handleForceClose), same
+    // meaning: end the review without acknowledging, deferring or recording
+    // anything. Only where the customer taps it changed.
+    await user.press(screen.getByTestId('reminder-header-close'));
     fireNativeModalDismiss(modalInstance);
 
     // A real reminder is still outstanding (nothing was resolved) — the
@@ -507,8 +540,11 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     const heading = await screen.findByRole('header', { name: 'Your Today Briefing' });
 
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await user.press(screen.getByRole('button', { name: 'Yes, I paid it' }));
-    await user.press(await screen.findByRole('button', { name: /Cash/i }));
+    // RECONCILED (Design 5.1 Wave 6 final): the bill's primary verb is now
+    // the context-specific "Mark as paid". Same control, same journey.
+    await user.press(screen.getByRole('button', { name: 'Mark as paid' }));
+    await user.press(await screen.findByTestId('account-choice-cash'));
+    await user.press(screen.getByTestId('bill-confirm-action'));
 
     // The mutation applied and nothing remains eligible — the sheet's own
     // state already settled to 'closed'. This is the ONE scenario where the
@@ -564,7 +600,7 @@ describe('Reminder focus and announcements — rendered coverage', () => {
     await user.press(screen.getByRole('button', { name: 'Record payment' }));
     const amountInput = await screen.findByDisplayValue('');
     await user.type(amountInput, '50');
-    await user.press(screen.getByRole('button', { name: /Cash \(/ }));
+    await user.press(screen.getByTestId('account-choice-cash'));
     await user.press(await screen.findByRole('button', { name: 'Record payment' }));
     expect(await screen.findByText('Payment recorded')).toBeOnTheScreen();
     expect(screen.queryAllByText('Payment recorded').length).toBe(1);

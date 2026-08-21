@@ -11,6 +11,7 @@ import {
   selectMonthMeasures,
   todayScreenMargin,
 } from '../../lib/calculations/todayComposition';
+import { Ionicons } from '@expo/vector-icons';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -57,6 +58,21 @@ import i18n from '../../i18n';
  * Money's own This Month card is a different component (ThisMonthCard) and
  * is untouched — its empty state and its Add transaction action remain.
  */
+/** Wave 6 final refinement — one glyph per measure, from the existing
+ * Ionicons set. No emoji. */
+function measureIcon(key: MonthMeasure['key']): keyof typeof Ionicons.glyphMap {
+  if (key === 'moneyIn') return 'cash-outline';
+  if (key === 'spendingRecorded') return 'receipt-outline';
+  return 'trending-up-outline';
+}
+
+/** Low-intensity tint tiles only — the figures themselves carry the tone. */
+function measureTint(tone: MonthMeasure['tone'], semantic: any): { bg: string; ink: string } {
+  if (tone === 'positive') return { bg: semantic.successTint, ink: semantic.success };
+  if (tone === 'caution') return { bg: semantic.warningTint, ink: semantic.warning };
+  return { bg: semantic.interactiveTint, ink: semantic.interactive };
+}
+
 export function MonthSnapshotCard({ activity }: { activity: MonthToDateActivity }) {
   const navigation = useNavigation<any>();
   const { semantic } = useTheme();
@@ -97,12 +113,19 @@ export function MonthSnapshotCard({ activity }: { activity: MonthToDateActivity 
           flexWrap: layout === 'twoPlusOne' ? 'wrap' : 'nowrap',
           gap: designSpacing.md,
         },
+        // Wave 6 closure — three GENUINELY equal columns. `flexGrow: 1`
+        // with `flexBasis: 0` alone still let a longer value claim width
+        // through its own content, so "Net recorded" sat wider than
+        // "Spent". Equal basis, equal grow, NO shrink and `minWidth: 0`
+        // together mean each cell measures identically regardless of the
+        // characters inside it — including whether the third value happens
+        // to be positive or negative.
         measure: {
           flexGrow: 1,
-          flexShrink: 1,
-          // twoPlusOne: two per line, then the third fills its own line.
+          flexShrink: 0,
           flexBasis: layout === 'twoPlusOne' ? '45%' : layout === 'threeColumn' ? 0 : 'auto',
-          minWidth: layout === 'stacked' ? undefined : 0,
+          minWidth: 0,
+          paddingRight: layout === 'threeColumn' ? designSpacing.xs : 0,
         },
         stackedMeasure: {
           flexDirection: 'row',
@@ -110,13 +133,26 @@ export function MonthSnapshotCard({ activity }: { activity: MonthToDateActivity 
           justifyContent: 'space-between',
           gap: designSpacing.md,
         },
-        // Labels sit ABOVE their figures and may wrap; a currency value
-        // never may — `numberOfLines={1}` below is the hard guarantee that
-        // no amount can split at the sign, whatever the estimate said.
-        label: { ...typeStyle('meta', locale), color: semantic.textSecondary, flexShrink: 1 },
+        // Wave 6 final refinement — the labels were `meta` (13pt) beside a
+        // 28pt figure, which read as micro-text under a disproportionately
+        // large number. `support` (14pt, medium weight) restores the
+        // balance without weakening the figure at all.
+        label: { ...typeStyle('support', locale), color: semantic.textSecondary, fontWeight: '500', flexShrink: 1 },
+        measureTile: {
+          width: 24,
+          height: 24,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: designSpacing.xs,
+        },
         // figureLarge supplies the family, weight and tabular numerals; only
         // the point size steps down the ladder so three columns can hold
         // their values on one line at phone widths.
+        // Wave 6 closure — one restrained step down. The figures still
+        // dominate the labels, but no longer compete with the page's own
+        // hero; the ladder's own top rung is capped rather than the role
+        // being changed, so tabular numerals and family are untouched.
         value: { ...typeStyle('figureLarge', locale), fontSize: figureSize, lineHeight: Math.round(figureSize * 1.2), marginTop: 2, flexShrink: 0 },
         stackedValue: { ...typeStyle('figureRow', locale), flexShrink: 0 },
       }),
@@ -148,6 +184,15 @@ export function MonthSnapshotCard({ activity }: { activity: MonthToDateActivity 
             </View>
           ) : (
             <View key={m.key} style={styles.measure} testID={`month-measure-${m.key}`}>
+              {/* Restrained tinted glyph — success for money in, interactive
+                  for spending, and warning only when the net is genuinely
+                  negative. Never a unique saturated colour per row. */}
+              <View
+                style={[styles.measureTile, { backgroundColor: measureTint(m.tone, semantic).bg }]}
+                importantForAccessibility="no-hide-descendants"
+              >
+                <Ionicons name={measureIcon(m.key)} size={13} color={measureTint(m.tone, semantic).ink} />
+              </View>
               <Text style={styles.label}>{m.label}</Text>
               <Text style={[styles.value, { color: toneInk(m.tone) }]} maxFontSizeMultiplier={1.6} numberOfLines={1}>
                 {m.value}

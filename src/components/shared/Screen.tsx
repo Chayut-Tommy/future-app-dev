@@ -7,6 +7,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { screenBottomClearance } from '../../navigation/floatingNavGeometry';
 import { designLayout } from '../../theme/semanticTokens';
 import { resolveTextStyle } from '../../theme/typography';
+import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 
@@ -100,6 +101,7 @@ export function Screen({
   const tablet = width >= designLayout.breakpoints.tabletMin;
   const horizontalMargin = compact ? designLayout.screenMarginCompact : spacing.lg;
   const collapsedTitleType = resolveTextStyle('titleCard', locale);
+  const screenTitleType = typeStyle('titleScreen', locale);
 
   const styles = useMemo(
     () =>
@@ -189,9 +191,20 @@ export function Screen({
           color: colors.accent,
           marginTop: -2,
         },
+        // Wave 6 final pass — the shared screen title was still on the
+        // LEGACY `typography.title` token: 24/700 in the platform default
+        // font, which is why Money's root header did not match the Design
+        // 5.1 headers beside it. It now uses the `titleScreen` role
+        // through the shipped resolver, so it renders in Figtree at the
+        // published size/weight/tracking and follows the Thai metrics like
+        // every other 5.1 role.
+        //
+        // This is ONE shared style, not the deferred 68-file font
+        // migration: every screen that passes a `title` inherits the
+        // correction at once, and nothing else is touched.
         title: {
-          ...typography.title,
-          color: colors.textPrimary,
+          ...screenTitleType,
+          color: semantic.textTitle,
         },
         // Pass 2E correction — `overlay` is declared before the scroll/
         // content block (below) so assistive-technology focus order

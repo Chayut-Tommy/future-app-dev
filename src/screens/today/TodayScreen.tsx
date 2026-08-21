@@ -32,7 +32,8 @@ import { computeMoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { selectSafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
 import { computeMoneyTimeline } from '../../lib/calculations/moneyTimeline';
 import { computeMonthToDateActivity } from '../../lib/calculations/monthlySummary';
-import { computeTopReminder } from '../../lib/calculations/reminders';
+import { computeRankedReminder } from '../../lib/calculations/reminders';
+import { createSuppressionPredicate } from '../../lib/calculations/reminderSuppression';
 import { ReminderOpenRequest, createReminderOpenRequest } from '../../lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
 import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
@@ -151,7 +152,16 @@ export function TodayScreen() {
     () => formatHeroTimeframe(safeToSpend.daysRemaining, safeToSpend.cycleEnd, safeToSpend.dailyAllowance, !!data.user.nextPayday),
     [safeToSpend.daysRemaining, safeToSpend.cycleEnd, safeToSpend.dailyAllowance, data.user.nextPayday]
   );
-  const topReminder = useMemo(() => computeTopReminder(data, currentDate), [data, currentDate]);
+  // Wave 6 — the Briefing tile reads the SAME ranker as the sheet, now
+  // through the persisted suppression predicate. Without this a dismissed
+  // or snoozed occurrence would vanish from the sheet but keep advertising
+  // itself on Today, which is the one place the customer would notice.
+  // `computeRankedReminder` is the ranker computeTopReminder already
+  // delegates to; only the exclusion argument is new.
+  const topReminder = useMemo(
+    () => computeRankedReminder(data, currentDate, createSuppressionPredicate(data, currentDate)),
+    [data, currentDate]
+  );
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
 
   // Pass 2B — the compact Score chip and Journey snapshot each wrap an
@@ -650,7 +660,6 @@ export function TodayScreen() {
         timelineEvents={timelineEvents}
         topReminder={topReminder}
         timeframeLine={heroTimeframeLine}
-        onPressHowThisWorks={handleBriefingAupPress}
         onPressAup={handleBriefingAupPress}
         onPressEventRow={() => pushMoneyDetail('timeline')}
         onPressReminderTile={() => {

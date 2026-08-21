@@ -44,7 +44,7 @@ export function BillPaymentSourcePicker({
         },
         rowText: { ...typography.body, fontSize: 12, color: colors.textPrimary, fontWeight: '700' },
         emptyBody: { ...typography.body, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
-        backButton: { alignSelf: 'flex-start', paddingVertical: 6 },
+        backButton: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingVertical: 6, paddingRight: spacing.md },
         backButtonText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
       }),
     [colors, radius, spacing, typography]
@@ -55,7 +55,15 @@ export function BillPaymentSourcePicker({
       <View>
         <Text style={styles.emptyBody}>You don't have an eligible account or credit card to pay this from yet.</Text>
         {onBack ? (
-          <TouchableOpacity style={styles.backButton} onPress={onBack} disabled={disabled}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={onBack}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            accessibilityHint="Returns without recording a payment."
+            testID="bill-payment-source-back"
+          >
             <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
         ) : null}
@@ -81,7 +89,20 @@ export function BillPaymentSourcePicker({
         ))}
       </View>
       {onBack ? (
-        <TouchableOpacity style={styles.backButton} onPress={onBack} disabled={disabled}>
+        /* Wave 6 final — this is the Cancel for the whole Mark-as-paid
+           journey, and it was neither announced as a button nor big enough
+           to hit: a 12pt label with 6pt of padding is roughly a 24pt
+           target. It is now a real, named 44pt control. Its handler is
+           unchanged. */
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          accessibilityHint="Returns without recording a payment."
+          testID="bill-payment-source-back"
+        >
           <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
       ) : null}

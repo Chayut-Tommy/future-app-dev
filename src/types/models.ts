@@ -562,4 +562,26 @@ export interface AppData {
    * lessons completed" progress on Discover's Learning Paths (PRD ask: no
    * fabricated progress, only genuine usage). */
   completedLearningCardIds: string[];
+  /**
+   * Design 5.1 Wave 6 — reminder occurrences the customer chose to see
+   * again later, keyed by the SAME canonical occurrence identity the
+   * reminder ranker and its session-exclusion already use
+   * (`occurrenceKeyOf` in reminderInteractionLifecycle.ts), never by
+   * visible copy. The value is a local calendar day, `YYYY-MM-DD`: the
+   * first day the occurrence becomes eligible again.
+   *
+   * Additive and backward-compatible. Absent for every customer who saved
+   * data before this field existed; loadAppData's `{...defaults,
+   * ...parsed}` merge gives them the empty default with no migration. This
+   * field changes no balance, transaction or calculation — the reminder
+   * selectors simply skip a suppressed occurrence.
+   */
+  snoozedReminderOccurrences?: Record<string, string>;
+  /**
+   * Design 5.1 Wave 6 — reminder occurrences the customer permanently
+   * hid. Same canonical identity, same additive contract. Occurrence-level
+   * only: the underlying bill, card, liability and every FUTURE recurrence
+   * are untouched, because a later occurrence computes a different key.
+   */
+  dismissedReminderOccurrences?: string[];
 }

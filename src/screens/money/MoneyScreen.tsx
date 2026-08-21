@@ -13,6 +13,19 @@ import { AddRecurringItemModal } from '../../components/money/AddRecurringItemMo
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { AddAnythingSheet } from '../../components/navigation/AddAnythingSheet';
 import { SafeToSpendHero } from '../../components/money/SafeToSpendHero';
+import { IncludedBalancesRow } from '../../components/money/IncludedBalancesRow';
+import { MoneySectionHeader } from '../../components/money/MoneySectionHeader';
+import {
+  MONEY_MEASURE_DEFINITIONS,
+  resolveOtherCardBalances,
+  resolvePaydayProgress,
+  resolveSourceCardContexts,
+  summariseIncludedBalances,
+} from '../../lib/calculations/moneyComposition';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import i18n from '../../i18n';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
 import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet';
 import { SavingsAllocationDetailSheet } from '../../components/money/SavingsAllocationDetailSheet';
 import { EditSavingsAllocationModal } from '../../components/wealth/EditSavingsAllocationModal';
@@ -25,6 +38,7 @@ import { GoalDetailSheet } from '../../components/goals/GoalDetailSheet';
 import { AddCreditCardModal } from '../../components/credit/AddCreditCardModal';
 import { computeMonthToDateActivity, computeThisMonthRecordedSummary } from '../../lib/calculations/monthlySummary';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
+import { categoryIconSpec } from '../../lib/categoryEmoji';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { deriveDisplayedWaterfall } from '../../lib/calculations/moneyWaterfall';
 import { FlowPeriod, fromMonthlyAmount } from '../../lib/calculations/incomeEngine';
@@ -40,6 +54,16 @@ import { parseMoneySectionFocusRequest, computeMoneySectionFocusFulfillment, Mon
 import { TimelineFocusTarget } from '../../lib/calculations/timelineFocus';
 import { RecurringItem, LiabilityType } from '../../types/models';
 import { brand } from '../../lib/brand';
+
+/** Wave 6 final refinement — the remainder's supporting line names the
+ * SELECTED cycle, so the result is unambiguously "per week" or "per month".
+ * Deliberately "typically left after" — an estimate from what has been
+ * recorded, never "you will have". */
+const REMAINDER_SUPPORT: Record<'weekly' | 'fortnightly' | 'monthly', string> = {
+  weekly: 'Typically left after recorded bills, savings and goals each week',
+  fortnightly: 'Typically left after recorded bills, savings and goals each fortnight',
+  monthly: 'Typically left after recorded bills, savings and goals each month',
+};
 
 const FLOW_PERIODS: { key: FlowPeriod; label: string }[] = [
   { key: 'weekly', label: 'Weekly' },
@@ -76,7 +100,8 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const { data } = useAppState();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { colors, spacing, typography, radius, cardShadow } = useTheme();
+  const { colors, spacing, typography, radius, cardShadow, semantic, minTouchTarget } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   // Pass 2E final correction — the pushed instance owns a private ScrollView
   // ref, never the shared tabScrollRefs.Money singleton MainTabNavigator's
   // "tap active tab to scroll to top" listener and the tab-hosted instance
@@ -205,6 +230,56 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const recentTransactions = useMemo(
     () => [...data.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3),
     [data.transactions]
+  );
+
+  // Wave 6 final pass — Recent activity moved INTO This Month. These are
+  // display rows only: the same transactions, the same order, resolved to
+  // the labels the card renders. No filtering, no re-sorting, no
+  // arithmetic beyond the sign the amount already carries.
+  const recentActivityRows = useMemo(
+    () =>
+      recentTransactions.map((t) => ({
+        id: t.id,
+        label: categoryMap.get(t.categoryId)?.name ?? (t.type === 'income' ? 'Income' : 'Other'),
+        dateLabel: new Date(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+        amountLabel: formatMoney(t.type === 'income' ? t.amount : -t.amount),
+        isIncome: t.type === 'income',
+        // Wave 6 final refinement — the CANONICAL category icon mapping
+        // (addIcons.ts, via categoryIconSpec) rather than one generic
+        // arrow for every row. Groceries becomes a cart, Dining out a
+        // restaurant, Bonus a gift — each with its designed domain tone.
+        // An unmapped category falls back safely inside that map.
+        icon: categoryIconSpec(t.categoryId).name as any,
+        tone: categoryIconSpec(t.categoryId).tone,
+      })),
+    [recentTransactions, categoryMap]
+  );
+
+  // At most two, and compact: icon + short label + value, never the
+  // paragraph-style rows the standalone section used. The insights
+  // themselves still come from the unchanged spending-insights engine.
+  // Wave 6 final refinement — the card-balance snapshot moved from This
+  // Month's own standalone line into Spending sources, attached to the
+  // card that spent. A JOIN by stable id: nothing is summed, and no
+  // balance enters any total.
+  const sourceCardContexts = useMemo(
+    () => resolveSourceCardContexts(thisMonthSummary.spendingSources, data.creditCards),
+    [thisMonthSummary.spendingSources, data.creditCards]
+  );
+  const otherCardBalances = useMemo(
+    () => resolveOtherCardBalances(thisMonthSummary.spendingSources, data.creditCards),
+    [thisMonthSummary.spendingSources, data.creditCards]
+  );
+
+  const compactInsights = useMemo(
+    () =>
+      insights.slice(0, 2).map((i) => ({
+        key: i.title,
+        icon: i.icon,
+        label: i.title,
+        value: i.body,
+      })),
+    [insights]
   );
 
   // Final Pass 2D device-test correction, §9 — reliable targeted AUP/timeline
@@ -393,16 +468,30 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // Every category row is now independently tappable, opening the one
   // shared read-only MoneyFlowCategoryDetailSheet — Unallocated/Remainder
   // stays non-interactive, out of this round's drill-down scope.
-  const flowRows: { key: MoneyFlowCategory; label: string; value: number; color: string }[] = [
-    { key: 'income', label: `Typical ${periodAdjective} income`, value: displayedTypicalIncome, color: colors.accent },
-    { key: 'bills', label: `Typical ${periodAdjective} bills`, value: displayedTypicalBills, color: colors.navy },
-    { key: 'savings', label: `Typical ${periodAdjective} savings`, value: displayedTypicalSavings, color: colors.aiBlue },
-    { key: 'goals', label: `Typical ${periodAdjective} goals`, value: displayedTypicalGoals, color: colors.purple },
+  // Wave 6 final pass — concise labels. The selected period is already
+  // stated once by the Weekly/Fortnightly/Monthly control above, so
+  // repeating "Typical <period>" on all five rows was five restatements of
+  // something the customer had just chosen. Values are untouched.
+  //
+  // Colour supports scanning rather than decorating: income is genuinely
+  // positive, savings and goals keep their existing family accents, bills
+  // stay neutral ink, and the remainder is positive only when it is.
+  const flowRows: { key: MoneyFlowCategory; label: string; value: number; color: string; icon: keyof typeof Ionicons.glyphMap; tint: string }[] = [
+    { key: 'income', label: 'Income', value: displayedTypicalIncome, color: semantic.success, icon: 'cash-outline', tint: semantic.successTint },
+    { key: 'bills', label: 'Bills', value: displayedTypicalBills, color: semantic.textPrimary, icon: 'receipt-outline', tint: semantic.bgRaised },
+    { key: 'savings', label: 'Savings', value: displayedTypicalSavings, color: colors.aiBlue, icon: 'shield-checkmark-outline', tint: semantic.infoTint },
+    { key: 'goals', label: 'Goals', value: displayedTypicalGoals, color: colors.purple, icon: 'flag-outline', tint: semantic.interactiveTint },
   ];
+  // Wave 6 final refinement — the remainder's three honest states. Zero is
+  // neutral, negative is warning WITH an alert glyph, and positive is
+  // featured interactive rather than a success-green celebration: this is
+  // an estimate from recorded recurring information, never a promise.
+  const remainderNegative = displayedTypicalNet < 0;
+  const remainderZero = Math.round(displayedTypicalNet) === 0;
   const remainderRow = {
-    label: displayedTypicalNet >= 0 ? `Typical ${periodAdjective} remainder` : `Typical ${periodAdjective} shortfall`,
+    label: displayedTypicalNet >= 0 ? 'Remainder' : 'Shortfall',
     value: Math.abs(displayedTypicalNet),
-    color: displayedTypicalNet >= 0 ? colors.successBright : colors.warning,
+    color: displayedTypicalNet >= 0 ? semantic.interactive : semantic.warning,
   };
 
   const flowDetailBreakdown = useMemo(
@@ -471,8 +560,17 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     () =>
       StyleSheet.create({
         sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.lg, marginBottom: spacing.sm },
+        // Design 5.1 Wave 6 — one concise definition or provenance line per
+        // measure, so a customer never has to guess what a number counts.
+        // Deliberately quiet: it explains, it does not compete.
+        measureDefinition: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: -designSpacing.xs, marginBottom: designSpacing.sm },
         sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        link: { ...typography.micro, color: colors.accent, fontWeight: '700' },
+        // Wave 6 Correction C — section actions ("+ Add bill", "+ Add")
+        // are navigation, not a positive financial outcome, so they take
+        // the Ocean Blue interactive role rather than the legacy accent
+        // green. 44pt in their own right rather than via hitSlop.
+        link: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        linkTarget: { minHeight: minTouchTarget, justifyContent: 'center' },
         emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
         flowInfoText: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.md },
 
@@ -484,10 +582,32 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           padding: 3,
           marginBottom: spacing.md,
         },
-        periodToggleOption: { flex: 1, paddingVertical: 7, borderRadius: radius.pill, alignItems: 'center' },
-        periodToggleOptionActive: { backgroundColor: colors.accent },
+        periodToggleOption: {
+          minHeight: minTouchTarget,
+          justifyContent: 'center', flex: 1, paddingVertical: 7, borderRadius: radius.pill, alignItems: 'center' },
+        // Wave 6 final refinement — selection is filter state, not a
+        // positive financial outcome, so it takes the Ocean Blue
+        // interactive role rather than the legacy accent green.
+        periodToggleOptionActive: { backgroundColor: semantic.interactive },
         periodToggleText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '700' },
-        periodToggleTextActive: { color: colors.onAccent },
+        flowTile: {
+          width: 26,
+          height: 26,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: designSpacing.xs,
+        },
+        remainderPanel: {
+          borderRadius: designRadius.card,
+          padding: designLayout.cardPadding,
+          marginTop: designSpacing.md,
+        },
+        remainderHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs },
+        remainderLabel: { ...typeStyle('support', locale), color: semantic.textSecondary, fontWeight: '600', flexShrink: 1 },
+        remainderValue: { ...typeStyle('figureLarge', locale), marginTop: designSpacing.xs },
+        remainderSupport: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.xs },
+        periodToggleTextActive: { color: semantic.onInteractive },
 
         // Money Flow bars
         barBlock: { marginBottom: spacing.md, minHeight: 24, justifyContent: 'center' },
@@ -563,7 +683,27 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         debtLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
         debtSub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 1 },
       }),
-    [colors, spacing, typography, radius, cardShadow]
+    [colors, spacing, typography, radius, cardShadow, semantic, locale, minTouchTarget]
+  );
+
+  // Wave 6 — presentation-only derivations. Every input is read straight
+  // off the SafeToSpendResult the hero is already showing; nothing here
+  // recomputes, re-rounds or infers a financial value.
+  const paydayProgress = useMemo(
+    () =>
+      resolvePaydayProgress({
+        cycleStart: safeToSpend.cycleStart,
+        cycleEnd: safeToSpend.cycleEnd,
+        daysRemaining: safeToSpend.daysRemaining,
+        hasKnownPayday: safeToSpend.hasKnownPayday,
+        today: currentDate,
+      }),
+    [safeToSpend.cycleStart, safeToSpend.cycleEnd, safeToSpend.daysRemaining, safeToSpend.hasKnownPayday, currentDate]
+  );
+  const hasIncludedBalances = safeToSpend.includedMoneyBalanceAccounts.length > 0;
+  const includedBalances = useMemo(
+    () => summariseIncludedBalances(safeToSpend.includedMoneyBalanceAccounts, safeToSpend.includedMoneyBalance),
+    [safeToSpend.includedMoneyBalanceAccounts, safeToSpend.includedMoneyBalance]
   );
 
   return (
@@ -589,63 +729,90 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           onSelectBalances={() => setSelectBalancesVisible(true)}
           onReviewInWealth={() => navigation.navigate('Wealth')}
           heroCopy={heroCopy}
+          // Wave 6 correction C — exactly ONE balance affordance per state,
+          // and the hero's tiny "Manage balances" link is never it.
+          //
+          //   balances included -> the dedicated whole-row control below is
+          //     the sole entry point;
+          //   none included     -> the hero's own primary "Select balances"
+          //     CTA is the single obvious action, and the row below is not
+          //     rendered at all.
+          //
+          // Either way the small link would be a second, competing control,
+          // so Money suppresses it in both states. Other consumers of this
+          // hero are unaffected — the prop defaults to true.
+          showManageBalancesLink={false}
+          // Wave 6 Correction B — the payday rail and the provenance line
+          // are now rendered INSIDE the hero shell, so the measure and its
+          // own timeline are one surface. They were siblings here, which is
+          // why they read as unrelated stacked cards.
+          paydayProgress={paydayProgress}
         />
       </View>
+
+      {/* Which balances feed that estimate — and, said in words, that
+          changing them does not change net worth. Rendered only once there
+          is something to manage; the empty state's single obvious action
+          is the hero's own "Select balances" CTA. */}
+      {hasIncludedBalances ? (
+        <IncludedBalancesRow summary={includedBalances} onManage={() => setSelectBalancesVisible(true)} />
+      ) : null}
 
       {/* This Month — a factual, calendar-month recorded-activity summary
           (PRD ask, Finding #40) placed directly under the hero so credit-
           card-heavy users see recorded activity right away, without
           altering what Available Until Payday itself means. */}
       <View
-        style={styles.sectionHeader}
         onLayout={(e) => {
           thisMonthSectionY.current = e.nativeEvent.layout.y;
           attemptMoneySectionFocus();
         }}
       >
-        <Text style={styles.sectionTitle}>This Month</Text>
-        <TouchableOpacity onPress={() => setThisMonthInfoVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
-        </TouchableOpacity>
+        <MoneySectionHeader
+          icon="calendar-outline"
+          tone="interactive"
+          title="This month"
+          action={{ icon: 'information-circle-outline', onPress: () => setThisMonthInfoVisible(true), accessibilityLabel: 'About This month' }}
+          testID="money-section-this-month"
+        />
       </View>
       <ThisMonthCard
         summary={thisMonthSummary}
-        creditCardBalance={currentCreditCardBalance}
-        hasCreditCards={data.creditCards.length > 0}
-        creditCardCount={data.creditCards.length}
         monthStart={thisMonthStart}
-        today={currentDate}
+        recent={recentActivityRows}
+        insights={compactInsights}
+        cardContexts={sourceCardContexts}
+        otherCardBalances={otherCardBalances}
         onViewTransactions={() => navigation.navigate('Transactions')}
         onAddTransaction={() => setTransactionModalVisible(true)}
       />
 
-      {attentionItems.length > 0 ? (
-        <>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Needs your attention</Text>
-          </View>
-          {attentionItems.map((item) => (
-            <View key={item.id} style={styles.attentionRow}>
-              <View style={[styles.attentionIconBadge, { backgroundColor: item.tone === 'warning' ? colors.warningSoft : colors.surfaceMuted }]}>
-                <Ionicons name={item.icon} size={15} color={item.tone === 'warning' ? colors.warning : colors.textSecondary} />
-              </View>
-              <Text style={styles.attentionText}>{item.title}</Text>
-            </View>
-          ))}
-        </>
-      ) : null}
+      {/* Wave 6 Correction C — the standalone "Needs your attention"
+          section is unwired from the default composition.
+          computeAttentionItems derives ENTIRELY from `timelineEvents` (its
+          only other item is a shortfall notice the hero's own shortfall
+          state already owns), so every occurrence it listed is by
+          construction already present in "What happens next" below. The
+          section therefore rendered the same rent and card occurrences
+          twice. Nothing is lost: the timeline carries the same rows, in
+          engine order, with their own due-state treatment and their own
+          contextual edit. computeAttentionItems and its engine are
+          untouched. */}
 
       <View
-        style={styles.sectionHeader}
         onLayout={(e) => {
           whatHappensNextSectionY.current = e.nativeEvent.layout.y;
           attemptMoneySectionFocus();
         }}
       >
-        <Text style={styles.sectionTitle}>What happens next</Text>
-        <TouchableOpacity onPress={openAddBill} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.link}>+ Add bill</Text>
-        </TouchableOpacity>
+        <MoneySectionHeader
+          icon="calendar-number-outline"
+          tone="warm"
+          title="What happens next"
+          definition={MONEY_MEASURE_DEFINITIONS.whatHappensNext}
+          action={{ label: 'Add bill', onPress: openAddBill, accessibilityLabel: 'Add bill' }}
+          testID="money-section-next"
+        />
       </View>
       {timelineEvents.length === 0 ? (
         <SectionCard>
@@ -664,88 +831,23 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         </SectionCard>
       )}
 
-      {/* Spending Tracker — add, review, and understand actual recorded
-          activity in one place (PRD ask: users care about the outcome, not
-          data entry; the whole card is one tap target to Transaction
-          History, with no nested touchables, so "review everything" and
-          "see this one row" never fight for the same tap). Comes right
-          after the timeline: "what's happening" then "what's actually
-          happened," before Typical Money Flow below, which deliberately
-          shows a different, recurring-only basis (PRD ask, Decision 2: real
-          activity must stay clearly visible once Typical Money Flow stops
-          showing it). */}
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Spending Tracker</Text>
-        <TouchableOpacity onPress={() => setTransactionModalVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={styles.link}>+ Add</Text>
-        </TouchableOpacity>
-      </View>
-      {!hasTransactions ? (
-        <SectionCard>
-          <Text style={styles.emptyText}>Add a transaction and it will show up here right away.</Text>
-        </SectionCard>
-      ) : (
-        <>
-          <SectionCard>
-            <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('Transactions')}>
-              <View style={styles.barLabelRow}>
-                <Text style={styles.barLabel}>Spent this month</Text>
-                <Text style={styles.barValue}>{formatMoney(monthToDateActivity.spend)}</Text>
-              </View>
-              <View style={styles.barLabelRow}>
-                <Text style={styles.barLabel}>Income recorded this month</Text>
-                <Text style={styles.barValue}>{formatMoney(monthToDateActivity.income)}</Text>
-              </View>
-
-              <Text style={styles.trackerRecentHeading}>Recent transactions</Text>
-              {recentTransactions.length === 0 ? (
-                <Text style={styles.emptyText}>No transactions recorded yet.</Text>
-              ) : (
-                recentTransactions.map((t) => {
-                  const category = categoryMap.get(t.categoryId);
-                  return (
-                    <View key={t.id} style={styles.trackerTxnRow}>
-                      <View style={styles.trackerTxnLeft}>
-                        <Text style={styles.trackerTxnLabel}>{category?.name ?? (t.type === 'income' ? 'Income' : 'Other')}</Text>
-                        <Text style={styles.trackerTxnDate}>
-                          {new Date(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
-                        </Text>
-                      </View>
-                      <Text style={[styles.trackerTxnAmount, { color: t.type === 'income' ? colors.success : colors.danger }]}>
-                        {formatMoney(t.type === 'income' ? t.amount : -t.amount)}
-                      </Text>
-                    </View>
-                  );
-                })
-              )}
-
-              <View style={styles.trackerFooterRow}>
-                <Text style={[styles.flowLabel, { color: colors.accent, fontWeight: '700' }]}>View all transactions</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.accent} />
-              </View>
-            </TouchableOpacity>
-          </SectionCard>
-
-          {insights.map((insight) => (
-            <View key={insight.title} style={styles.insightCard}>
-              <View style={styles.insightIconBadge}>
-                <Ionicons name={insight.icon} size={15} color={colors.market} />
-              </View>
-              <View style={styles.insightTextBlock}>
-                <Text style={styles.insightHeading}>{insight.title}</Text>
-                <Text style={styles.insightBody}>{insight.body}</Text>
-              </View>
-            </View>
-          ))}
-        </>
-      )}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Typical Money Flow</Text>
-        <TouchableOpacity onPress={() => setFlowInfoVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
-        </TouchableOpacity>
-      </View>
+      {/* Wave 6 final pass — the standalone "Recent activity" section is
+          retired. It was a top-level heading and its own white card,
+          restating the same month-to-date framing This Month owns directly
+          above it, which is what made the page a sixth section long. Its
+          recent-transaction preview and its two insights are now a
+          subsection INSIDE This Month; "View all transactions" is that
+          card's own footer action. No transaction capability was lost, and
+          the standalone "+ Add" is gone because the global "+" already
+          owns Add. */}
+      <MoneySectionHeader
+        icon="swap-vertical-outline"
+        tone="info"
+        title="Typical money flow"
+        definition={MONEY_MEASURE_DEFINITIONS.moneyFlow}
+        action={{ icon: 'information-circle-outline', onPress: () => setFlowInfoVisible(true), accessibilityLabel: 'About Typical money flow' }}
+        testID="money-section-flow"
+      />
       <SectionCard>
         <View style={styles.periodToggleRow}>
           {FLOW_PERIODS.map((p) => (
@@ -753,6 +855,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
               key={p.key}
               style={[styles.periodToggleOption, flowPeriod === p.key ? styles.periodToggleOptionActive : null]}
               onPress={() => setFlowPeriod(p.key)}
+              // Wave 6 final pass — the selected period is announced, not
+              // conveyed by tint alone, and each option is its own 44pt
+              // target.
+              accessibilityRole="radio"
+              accessibilityState={{ selected: flowPeriod === p.key, checked: flowPeriod === p.key }}
+              accessibilityLabel={`${p.label} view`}
+              testID={`money-flow-period-${p.key}`}
             >
               <Text style={[styles.periodToggleText, flowPeriod === p.key ? styles.periodToggleTextActive : null]}>{p.label}</Text>
             </TouchableOpacity>
@@ -770,18 +879,46 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           >
             <View style={styles.barLabelRow}>
               <View style={styles.barLabelWithChevron}>
+                {/* Premium vector glyph in a restrained tint tile — never
+                    an emoji, and never a unique saturated colour per row. */}
+                <View style={[styles.flowTile, { backgroundColor: row.tint }]} importantForAccessibility="no-hide-descendants">
+                  <Ionicons name={row.icon} size={14} color={row.color} />
+                </View>
                 <Text style={styles.barLabel}>{row.label}</Text>
-                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+                {/* Chevron only because this row IS actionable. */}
+                <Ionicons name="chevron-forward" size={14} color={semantic.interactive} />
               </View>
               <Text style={styles.barValue}>{formatMoney(row.value)}</Text>
             </View>
           </TouchableOpacity>
         ))}
-        <View style={styles.barBlock}>
-          <View style={styles.barLabelRow}>
-            <Text style={styles.barLabel}>{remainderRow.label}</Text>
-            <Text style={styles.barValue}>{formatMoney(remainderRow.value)}</Text>
+        {/* Wave 6 final refinement — Remainder is the OUTCOME of the
+            selected cycle, not a fifth peer row, so it reads as a result
+            panel inside the same card. Positive takes the featured
+            interactive treatment rather than a success-green celebration:
+            this is an estimate from recorded recurring information, not an
+            achievement. Negative pairs warning ink with an alert glyph. */}
+        <View
+          style={[styles.remainderPanel, { backgroundColor: remainderNegative ? semantic.warningTint : semantic.interactiveTint }]}
+          accessible
+          accessibilityLabel={`Estimated remainder, ${formatMoney(remainderRow.value)}. ${REMAINDER_SUPPORT[flowPeriod]}`}
+          testID="money-flow-remainder"
+        >
+          <View style={styles.remainderHeaderRow}>
+            {remainderNegative ? (
+              <Ionicons name="alert-circle-outline" size={16} color={semantic.warning} importantForAccessibility="no" />
+            ) : (
+              <Ionicons name="wallet-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+            )}
+            <Text style={styles.remainderLabel}>{remainderNegative ? 'Estimated shortfall' : 'Estimated remainder'}</Text>
           </View>
+          <Text
+            style={[styles.remainderValue, { color: remainderZero ? semantic.textPrimary : remainderNegative ? semantic.warning : semantic.interactive }]}
+            numberOfLines={1}
+          >
+            {formatMoney(remainderRow.value)}
+          </Text>
+          <Text style={styles.remainderSupport}>{REMAINDER_SUPPORT[flowPeriod]}</Text>
         </View>
       </SectionCard>
 
@@ -797,17 +934,14 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         onCta={flowDetailEmpty.onCta}
       />
 
-      {data.user.monthlyIncome > 0 ? (
-        <MoneyPlanCard
-          onAddIncome={() => {
-            setEditIncome(null);
-            setIncomeModalVisible(true);
-          }}
-          onAddBill={openAddBill}
-          onAddGoal={() => setGoalModalVisible(true)}
-          onManageSavingsAllocation={() => setEditSavingsAllocationVisible(true)}
-        />
-      ) : null}
+      {/* Wave 6 final pass — "Typical Monthly Allocation" (MoneyPlanCard)
+          is retired from the default composition. It rendered the SAME
+          income, bills, savings, goals and remainder the combined Typical
+          money flow card above already shows, from the same engines, for
+          the same period — one financial model drawn twice, immediately
+          below itself. The component file is retained, unwired, rather
+          than deleted; its unique planning actions live on under Money
+          plan below, and its detail sheets remain mounted and reachable. */}
 
       {/* End of Month Outlook is temporarily hidden (PRD ask, Decision 4) —
           the old calculation was not a genuine calendar-month forecast (no
@@ -823,9 +957,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
 
       {hasDebt ? (
         <>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Debt Overview</Text>
-          </View>
+          <MoneySectionHeader
+            icon="compass-outline"
+            tone="featured"
+            title="Money plan"
+            definition={MONEY_MEASURE_DEFINITIONS.moneyPlan}
+            testID="money-section-plan"
+          />
           <SectionCard>
             <View style={styles.debtTotalsRow}>
               <View>
@@ -923,7 +1061,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           this month.
         </Text>
         <Text style={styles.flowInfoText}>
-          For real recorded activity — what you've actually earned and spent — see Spending Tracker and Transaction History below.
+          For real recorded activity — what you've actually earned and spent — see This Month above and Recent activity below.
         </Text>
       </InfoSheet>
       <InfoSheet visible={thisMonthInfoVisible} onClose={() => setThisMonthInfoVisible(false)} title="About This Month">

@@ -8,7 +8,8 @@ import { DiscoverScreen } from '../screens/discover/DiscoverScreen';
 import { useReduceMotion } from '../hooks/useReduceMotion';
 import { createRepeatTapScrollListener } from './tabScrollBehaviour';
 import { tabScrollRefs } from './tabScrollRefs';
-import { FloatingNavBar } from '../components/navigation/FloatingNavBar';
+import { TAB_DEFINITIONS } from './tabDefinitions';
+import { publishActiveTab } from './activeTabStore';
 
 const Tab = createBottomTabNavigator();
 
@@ -21,12 +22,12 @@ function scrollToTopOnRepeatPress(tab: keyof typeof tabScrollRefs) {
   return createRepeatTapScrollListener(tab, tabScrollRefs);
 }
 
-const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
-  Today: { outline: 'sunny-outline', filled: 'sunny' },
-  Wealth: { outline: 'trending-up-outline', filled: 'trending-up' },
-  Money: { outline: 'wallet-outline', filled: 'wallet' },
-  Grow: { outline: 'compass-outline', filled: 'compass' },
-};
+/** Wave 6 correction A — the outline/filled mapping now lives in
+ * tabDefinitions.ts, the single definition the root-level dock reads too.
+ * `tabBarIcon` is still set here so React Navigation's own contract stays
+ * intact for anything that inspects it. */
+const ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> =
+  Object.fromEntries(TAB_DEFINITIONS.map((t) => [t.name, { outline: t.outline, filled: t.filled }]));
 
 // Outcome-organized navigation (PRD §3.0) — Today/Money/Wealth/Grow. Money
 // sits second, not third (PRD ask): day-to-day cashflow is where users
@@ -59,7 +60,26 @@ export function MainTabNavigator() {
       // `tabBarStyle`/`tabBarLabelStyle`/`tabBarItemStyle` are the DEFAULT
       // tab bar's own styling hooks — meaningless once a custom `tabBar` is
       // supplied, so they're deliberately no longer set here.
-      tabBar={(props) => <FloatingNavBar {...props} reduceMotion={reduceMotion} />}
+      // Wave 6 correction A — the dock is no longer this navigator's tab
+      // bar. It is mounted once at ROOT level beside the detached "+", so
+      // the two are one assembly that survives a root-stack push; a
+      // tabBar-mounted dock structurally could not exist on MoneyDetail,
+      // GrowDetail, Transactions, Goals, Cards or EmergencyFund, which are
+      // all root-stack routes. React Navigation still needs a tabBar, so
+      // this renders nothing rather than leaving a second, competing dock
+      // mounted underneath the real one.
+      tabBar={() => null}
+      // Wave 6 correction A — the dock now lives at root and cannot read
+      // this navigator's props. It publishes the selected tab from React
+      // Navigation's OWN state event, so there is still exactly one
+      // authority for which tab is selected.
+      screenListeners={{
+        state: (e) => {
+          const st = e.data?.state as { index: number; routes: { name: string }[] } | undefined;
+          const name = st?.routes[st.index]?.name;
+          if (name) publishActiveTab(name);
+        },
+      }}
       screenOptions={({ route }) => ({
         headerShown: false,
         // Animated bottom-tab transitions ('fade'/'shift') were trialled in

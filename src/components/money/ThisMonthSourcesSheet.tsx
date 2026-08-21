@@ -4,6 +4,11 @@ import { useTheme } from '../../theme/ThemeContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { ThisMonthSpendingSource } from '../../lib/calculations/monthlySummary';
+import {
+  CARD_BALANCE_DISCLOSURE,
+  OtherCardBalance,
+  SourceCardContext,
+} from '../../lib/calculations/moneyComposition';
 
 function formatCents(cents: number): string {
   const sign = cents < 0 ? '-' : '';
@@ -26,11 +31,21 @@ export function ThisMonthSourcesSheet({
   onClose,
   sources,
   spendingCents,
+  cardContexts = [],
+  otherCardBalances = [],
 }: {
   visible: boolean;
   onClose: () => void;
   sources: ThisMonthSpendingSource[];
   spendingCents: number;
+  /** Wave 6 final refinement — each credit-card source's CURRENT balance,
+   * joined by its own stable key. Context only: never summed, never added
+   * to the recorded-spending total. */
+  cardContexts?: SourceCardContext[];
+  /** Cards carrying a balance that funded none of this month's spending.
+   * Listed separately so retiring This Month's standalone balance line
+   * could not make an existing snapshot unreachable. */
+  otherCardBalances?: OtherCardBalance[];
 }) {
   const { colors, spacing, typography, radius } = useTheme();
 
@@ -63,28 +78,63 @@ export function ThisMonthSourcesSheet({
       visible={visible}
       onClose={onClose}
       title="How spending was paid"
-      footer={<Button label="Close" onPress={onClose} style={styles.footerButton} />}
+      // Wave 6 correction E — Close is a neutral dismissal, so it takes the
+      // secondary (interactive-ink) treatment rather than the filled
+      // confirmation treatment a Save would use.
+      footer={<Button label="Close" variant="secondary" onPress={onClose} style={styles.footerButton} />}
     >
       <Text style={styles.intro}>Every funding source recorded this month, ranked by amount.</Text>
-      {sources.map((source) => (
-        <View key={source.key} style={styles.row}>
-          <View style={styles.labelBlock}>
-            <Text style={styles.label} accessibilityLabel={source.label}>
-              {source.label}
-            </Text>
-            <Text style={styles.percentage}>{source.percentage}%</Text>
+      {sources.map((source) => {
+        const card = cardContexts.find((c) => c.sourceKey === source.key);
+        // Two labelled lines, so "paid this month" and "current balance"
+        // are unmistakably different concepts on the same row.
+        const paidLine = `Paid this month · ${formatCents(source.amountCents)} · ${source.percentage}%`;
+        return (
+          <View
+            key={source.key}
+            style={styles.row}
+            accessible
+            accessibilityLabel={`${source.label}. ${paidLine}.${card?.balanceLabel ? ` Current card balance ${card.balanceLabel}.` : ''}`}
+            testID={`sources-row-${source.key}`}
+          >
+            <View style={styles.labelBlock}>
+              <Text style={styles.label}>{source.label}</Text>
+              <Text style={styles.percentage}>{paidLine}</Text>
+              {card?.balanceLabel ? (
+                <Text style={styles.percentage} testID={`sources-balance-${source.key}`}>
+                  Current card balance · {card.balanceLabel}
+                </Text>
+              ) : null}
+            </View>
+            <Text style={styles.value}>{formatCents(source.amountCents)}</Text>
           </View>
-          <Text style={styles.value} accessibilityLabel={`${source.label} ${formatCents(source.amountCents)}`}>
-            {formatCents(source.amountCents)}
-          </Text>
+        );
+      })}
+      {/* Cards with a balance that funded none of this month's spending.
+          Listed apart from the sources above and never counted. */}
+      {otherCardBalances.length > 0 ? (
+        <View testID="sources-other-card-balances">
+          <Text style={styles.intro}>Other card balances</Text>
+          {otherCardBalances.map((c) => (
+            <View key={c.id} style={styles.row} accessible accessibilityLabel={`${c.label}, current card balance ${c.balanceLabel}`}>
+              <View style={styles.labelBlock}>
+                <Text style={styles.label}>{c.label}</Text>
+                <Text style={styles.percentage}>No spending recorded this month</Text>
+              </View>
+              <Text style={styles.value}>{c.balanceLabel}</Text>
+            </View>
+          ))}
         </View>
-      ))}
+      ) : null}
+
       <View style={styles.totalRow}>
         <Text style={styles.totalLabel}>Spending recorded</Text>
         <Text style={styles.totalValue} accessibilityLabel={`Spending recorded total ${formatCents(spendingCents)}`}>
           {formatCents(spendingCents)}
         </Text>
       </View>
+      {/* One clarification, once — never repeated per row. */}
+      <Text style={styles.intro} testID="sources-card-disclosure">{CARD_BALANCE_DISCLOSURE}</Text>
     </KeyboardSheet>
   );
 }

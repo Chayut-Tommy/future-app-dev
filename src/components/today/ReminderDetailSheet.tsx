@@ -3,9 +3,15 @@ import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
-import { computeTopReminder, computeRankedReminder, SmartReminder } from '../../lib/calculations/reminders';
+import { computeRankedReminder, SmartReminder } from '../../lib/calculations/reminders';
+import { createSuppressionPredicate, suppressionReasonFor } from '../../lib/calculations/reminderSuppression';
 import { SmartReminderCard } from './SmartReminderCard';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
+import { reminderQueueTitle, reminderDaysUntil } from '../../lib/reminderPresentation';
+
+/** Bounded so a pathological data set cannot spin the queue scan. Far above
+ * any realistic number of simultaneously eligible reminders. */
+const QUEUE_SCAN_LIMIT = 50;
 import { Button } from '../shared/Button';
 import { useLoanRepaymentForm } from '../../hooks/useLoanRepaymentForm';
 import { useCreditCardRepaymentForm } from '../../hooks/useCreditCardRepaymentForm';
@@ -183,8 +189,42 @@ export function ReminderDetailSheet({
   // starts clean regardless of how the previous one ended — an outstanding
   // deferred Reminder becomes eligible again the next time the sheet opens.
   const sessionDeferredKeysRef = useRef<Set<string>>(new Set());
+  /**
+   * Wave 6 — two independent exclusions, deliberately composed rather than
+   * merged. The session set is what the customer did in THIS sitting
+   * ("Not yet"), and is forgotten on close. The suppression predicate is
+   * what they persisted (Snooze until a date, Dismiss this occurrence), and
+   * survives a restart. Both feed the same ranker argument that already
+   * existed, so reminders.ts is untouched.
+   */
   function isSessionExcluded(reminder: SmartReminder): boolean {
-    return sessionDeferredKeysRef.current.has(occurrenceKeyOf(reminder));
+    if (sessionDeferredKeysRef.current.has(occurrenceKeyOf(reminder))) return true;
+    return suppressionReasonFor(data, reminder, today) !== null;
+  }
+
+  /**
+   * Wave 6 closure — the queue's shape, for the header and the
+   * acknowledgement label.
+   *
+   * Derived by walking the SAME canonical ranked selector this sheet
+   * already advances through, with a growing local exclusion set — so the
+   * count can never disagree with the order the customer actually sees. It
+   * selects nothing, excludes nothing persistently and mutates nothing;
+   * `sessionDeferredKeysRef` is untouched. Bounded so a pathological data
+   * set cannot spin.
+   */
+  function describeQueue(latestData: AppData): { position: number; total: number } {
+    const resolved = sessionDeferredKeysRef.current.size;
+    const seen = new Set(sessionDeferredKeysRef.current);
+    let remaining = 0;
+    for (let i = 0; i < QUEUE_SCAN_LIMIT; i++) {
+      const suppressed = createSuppressionPredicate(latestData, today);
+      const next = computeRankedReminder(latestData, today, (r) => seen.has(occurrenceKeyOf(r)) || suppressed(r));
+      if (!next) break;
+      seen.add(occurrenceKeyOf(next));
+      remaining += 1;
+    }
+    return { position: resolved + 1, total: resolved + Math.max(remaining, 1) };
   }
 
   useEffect(() => {
@@ -193,7 +233,10 @@ export function ReminderDetailSheet({
     // condition guarantees it.
     lastProcessedRequestIdRef.current = openRequest!.requestId;
     sessionDeferredKeysRef.current = new Set();
-    const liveTop = computeTopReminder(data, today);
+    // The reminder the tile was pressed for is re-read through the same
+    // suppression the ranker uses, so an occurrence suppressed on another
+    // surface can never be reopened here.
+    const liveTop = computeRankedReminder(data, today, createSuppressionPredicate(data, today));
     dispatch({ type: 'OPEN', reminder: resolveOpenReminder(openRequest!, liveTop) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
@@ -384,15 +427,31 @@ export function ReminderDetailSheet({
     () =>
       StyleSheet.create({
         headerCloseButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-        closeButton: { alignSelf: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, marginTop: spacing.sm },
-        closeText: { color: colors.textSecondary, fontWeight: '600' },
         footerButton: { flex: 1 },
       }),
     [colors, spacing]
   );
 
-  let title = 'Reminder';
-  let headerRight: React.ReactNode = null;
+  // Wave 6 closure — the header now carries queue context. "Reminder" alone
+  // gave a customer no idea whether tapping through led anywhere.
+  const queue = presentedState.kind === 'reminder_detail' ? describeQueue(data) : null;
+  let title = queue ? reminderQueueTitle(queue.position, queue.total) : 'Reminder';
+  // Wave 6 closure — the reminder state now gets the SAME header Close every
+  // other state of this sheet already had, so Close sits in one predictable
+  // place rather than as a link buried under the content. 44pt minimum.
+  let headerRight: React.ReactNode =
+    presentedState.kind === 'reminder_detail' ? (
+      <TouchableOpacity
+        style={styles.headerCloseButton}
+        onPress={handleForceClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close reminders"
+        accessibilityHint="Ends reviewing reminders without recording anything."
+        testID="reminder-header-close"
+      >
+        <Ionicons name="close" size={22} color={colors.textSecondary} />
+      </TouchableOpacity>
+    ) : null;
   let footer: React.ReactNode = null;
   let isDirty = false;
   // reminder_detail preserves the ORIGINAL ReminderDetailSheet's own
@@ -481,6 +540,11 @@ export function ReminderDetailSheet({
     >
       {presentedState.kind === 'reminder_detail' ? (
         <>
+          {/* Wave 6 closure — the detached "Close" link that floated below
+              the reminder content is gone; Close now lives once, in the
+              header, like every other state of this sheet. Its semantics
+              are unchanged: handleForceClose ends the review without
+              acknowledging, deferring or recording anything. */}
           <SmartReminderCard
             topReminder={presentedState.reminder}
             onNavigateAway={handleForceClose}
@@ -488,10 +552,11 @@ export function ReminderDetailSheet({
             onRequestLoanRepayment={() => dispatch({ type: 'REQUEST_LOAN_FORM' })}
             onRequestCreditCardRepayment={() => dispatch({ type: 'REQUEST_CARD_FORM' })}
             titleRef={reminderTitleRef}
+            queuePosition={queue?.position ?? 1}
+            queueTotal={queue?.total ?? 1}
+            daysUntil={reminderDaysUntil(presentedState.reminder.occurrenceDate, today)}
+            today={today}
           />
-          <TouchableOpacity style={styles.closeButton} onPress={handleForceClose}>
-            <Text style={styles.closeText}>Close</Text>
-          </TouchableOpacity>
         </>
       ) : null}
       {presentedState.kind === 'loan_form' && loanLiability && loanRecurringItem ? (

@@ -7,7 +7,34 @@ import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
 import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
 import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
-import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
+import { ON_FEATURED, onFeaturedAlpha, designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { MoneyPaydayBar } from './MoneyPaydayBar';
+import { PaydayProgress, MONEY_MEASURE_DEFINITIONS } from '../../lib/calculations/moneyComposition';
+import { textStyle, typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
+
+/** Matches the identity tile Today's own Briefing hero uses, so the two
+ * heroes share one rhythm. */
+const HERO_TILE_SIZE = 36;
+
+/** Wave 6 Correction C — the no-balance state's exact wording. An estimate
+ * genuinely cannot be produced yet, so this is a missing INPUT, not a
+ * financial warning: neutral treatment, one action, no amount, no `$0`,
+ * and no pay-cycle rail. The support line says, in words, that inclusion
+ * changes this estimate only — the single most common misreading of the
+ * balance toggle. */
+const CHOOSE_BALANCES_STATE = 'Choose balances to get your estimate';
+const CHOOSE_BALANCES_SUPPORT =
+  'Select the cash, savings or everyday accounts Nolie should include. This changes this estimate only — not your Wealth total.';
+const CHOOSE_BALANCES_CTA = 'Choose balances';
+
+/** A negative amount must be SPOKEN as "minus", never left as a glyph a
+ * screen reader may skip or read as a hyphen. The visible string is
+ * untouched — this only affects what is announced. */
+function spokenMoney(display: string): string {
+  return display.replace(/^[-\u2212]/, 'minus ');
+}
 
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
   const { colors, spacing, typography } = useTheme();
@@ -47,6 +74,8 @@ export function SafeToSpendHero({
   onSelectBalances,
   onReviewInWealth,
   heroCopy,
+  paydayProgress = null,
+  showManageBalancesLink = true,
 }: {
   safeToSpend: SafeToSpendResult;
   hasActiveGoals: boolean;
@@ -70,8 +99,24 @@ export function SafeToSpendHero({
    * Business owner) wrapping this exact same calculation — never changes
    * a number, only which words describe it (PRD ask, §3/§12). */
   heroCopy: MoneyHeroCopy;
+  /** Wave 6 Correction B — the payday context now belongs TO the hero.
+   * It was a sibling card in MoneyScreen, which is why the recording shows
+   * two unrelated stacked surfaces where there should be one measure and
+   * its own timeline. Already resolved by resolvePaydayProgress from the
+   * same SafeToSpendResult this hero is showing; the hero recomputes
+   * nothing and infers no date. */
+  paydayProgress?: PaydayProgress | null;
+  /** Wave 6 correction C — suppressed once Money renders its dedicated
+   * whole-row balances control beneath the hero, so exactly ONE Manage
+   * affordance is visible per state. Defaults true so every other consumer
+   * of this hero is unchanged. The no-balance states keep their own
+   * primary "Select balances" CTA either way — that is the single obvious
+   * action there, and it is not this link. */
+  showManageBalancesLink?: boolean;
 }) {
-  const { colors, radius, spacing, typography, glow } = useTheme();
+  const { colors, radius, spacing, typography, glow, semantic } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+  const heroFigureType = textStyle('figureHero', locale);
   const [breakdownVisible, setBreakdownVisible] = useState(false);
 
   // Available Until Payday's card states are genuinely different situations
@@ -104,7 +149,65 @@ export function SafeToSpendHero({
     () =>
       StyleSheet.create({
         card: { borderRadius: radius.card, padding: spacing.lg, marginBottom: spacing.lg, alignItems: 'center', ...glow(colors.accent) },
-        cardWarning: { backgroundColor: colors.warningSoft },
+        // Wave 6 Correction B — the Design 5.1 featured hero. The previous
+        // normal state used the pre-5.1 `colors.heroGradient` legacy token,
+        // which reads as a saturated success/status card for what is an
+        // ESTIMATE, and does not retint with the Wave 5 colour styles.
+        // `heroSurface` is the one Premium Expressive surface a style is
+        // permitted to retint, so Ocean, Purple and Sunrise each get their
+        // own treatment through the token system rather than a hard-coded
+        // gradient.
+        heroShell: {
+          borderRadius: designRadius.hero,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.heroBorder,
+          padding: designLayout.heroPadding,
+          marginBottom: designLayout.cardGap,
+        },
+        identityRow: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.md },
+        identityTile: {
+          width: HERO_TILE_SIZE,
+          height: HERO_TILE_SIZE,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: semantic.interactiveTint,
+        },
+        identityTitle: { ...typeStyle('titleSection', locale), color: semantic.interactive, flexShrink: 1 },
+        // 44x44 in its own right — no reliance on hitSlop.
+        heroInfoButton: {
+          width: designLayout.touchTargetMin,
+          height: designLayout.touchTargetMin,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        heroMeasureLabel: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.md },
+        heroFigure: { ...heroFigureType.style, color: semantic.interactive, marginTop: designSpacing.xs },
+        heroStateText: { ...typeStyle('titleSection', locale), color: semantic.textPrimary, marginTop: designSpacing.xs, flexShrink: 1 },
+        heroWarningRow: { flexDirection: 'row', alignItems: 'flex-start', gap: designSpacing.sm, marginTop: designSpacing.xs },
+        heroWarningIcon: { marginTop: 4 },
+        heroWarningText: { ...typeStyle('titleSection', locale), color: semantic.warning, flexShrink: 1 },
+        heroExplain: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.sm },
+        // The payday rail is separated by a hairline rather than a gap, so
+        // it reads as this hero's own footer, not a second card.
+        heroFooter: {
+          marginTop: designSpacing.lg,
+          paddingTop: designSpacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: semantic.border,
+        },
+        heroProvenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
+        // One interactive action per state — Ocean Blue, never the retired
+        // brown/warning CTA, and 44pt in its own right.
+        heroCta: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          alignSelf: 'flex-start',
+          minHeight: designLayout.touchTargetMin,
+          marginTop: designSpacing.md,
+        },
+        heroCtaText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
         labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: spacing.sm },
         label: { ...typography.micro, fontSize: 11, color: onFeaturedAlpha(0.8), fontWeight: '700', letterSpacing: 0.5 },
         labelWarning: { color: colors.warning },
@@ -131,22 +234,6 @@ export function SafeToSpendHero({
           alignSelf: 'stretch',
         },
         reactionText: { ...typography.caption, fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
-        ctaButton: {
-          marginTop: spacing.md,
-          backgroundColor: onFeaturedAlpha(0.2),
-          borderRadius: radius.pill,
-          paddingVertical: 9,
-          paddingHorizontal: spacing.lg,
-        },
-        ctaText: { ...typography.caption, fontSize: 13, color: ON_FEATURED, fontWeight: '700' },
-        warningCtaButton: {
-          marginTop: spacing.md,
-          backgroundColor: colors.warning,
-          borderRadius: radius.pill,
-          paddingVertical: 9,
-          paddingHorizontal: spacing.lg,
-        },
-        warningCtaText: { ...typography.caption, fontSize: 13, color: ON_FEATURED, fontWeight: '700' },
         breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
         // Stacked, single-column presentation for the daily-estimate row
         // specifically (Stream A follow-up §2) — replaces the generic
@@ -175,7 +262,7 @@ export function SafeToSpendHero({
   // pre-existing empty-state CTAs already use — this control is additive
   // (those CTAs stay exactly as they were), not a replacement.
   function renderManageBalancesButton(warning?: boolean) {
-    if (!onSelectBalances) return null;
+    if (!onSelectBalances || !showManageBalancesLink) return null;
     return (
       <TouchableOpacity
         style={styles.manageBalancesButton}
@@ -244,228 +331,243 @@ export function SafeToSpendHero({
   // included; it has no field to edit or remove a corrupted currentValue,
   // proven via source inspection. "Review in Wealth" is the smallest
   // existing navigation path to a surface that can actually repair it.
-  if (heroState === 'unavailable_balance_data') {
+  // ==========================================================================
+  // Wave 6 Correction C — EVERY state now uses the accepted Correction B
+  // shell.
+  //
+  // ROOT CAUSE OF THE RECORDED DEFECT. Correction B redesigned only the
+  // final fall-through return. Six earlier branches returned before ever
+  // reaching it, still rendering `styles.card` + `styles.cardWarning`
+  // (`colors.warningSoft` — the yellow surface) with `warningCtaButton`
+  // (the brown CTA), an all-caps `styles.label` identity and a centred
+  // dense explanation. `missing_balance` — the "no balances selected"
+  // state the owner recorded — was one of them.
+  //
+  // There is now ONE shell. Each state supplies only what differs: its
+  // wording, its own action, and whether an amount or a pay-cycle rail can
+  // honestly be shown. No branch renders a competing card architecture.
+  // ==========================================================================
+
+  /** One shell for every state. `tone` selects ink only — the SURFACE is
+   * always the Design 5.1 heroSurface, never a warning-coloured card. */
+  function renderShell(opts: {
+    testID: string;
+    tone?: 'neutral' | 'warning';
+    /** The state sentence, shown when no amount can be presented. */
+    stateText?: string | null;
+    supportText?: string | null;
+    /** At most ONE call to action. */
+    cta?: { label: string; onPress: () => void; testID: string } | null;
+    /** Only states that can genuinely produce an estimate show the rail. */
+    showRail?: boolean;
+    showInfo?: boolean;
+    children?: React.ReactNode;
+  }) {
+    const warning = opts.tone === 'warning';
     return (
-      <View style={[styles.card, styles.cardWarning]}>
-        <View style={styles.labelRow}>
-          <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-        </View>
-        <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-        {presentation.supportingCopy ? <Text style={styles.lineWarning}>{presentation.supportingCopy}</Text> : null}
-        {onReviewInWealth ? (
-          <TouchableOpacity style={styles.warningCtaButton} onPress={onReviewInWealth}>
-            <Text style={styles.warningCtaText}>Review in Wealth</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+      <>
+        <LinearGradient
+          colors={semantic.heroSurface as unknown as readonly [string, string, ...string[]]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroShell}
+          testID={opts.testID}
+        >
+          <View style={styles.identityRow}>
+            <View
+              style={styles.identityTile}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              testID="money-aup-hero-icon"
+            >
+              <Ionicons name="wallet-outline" size={20} color={semantic.interactive} />
+            </View>
+            <Text style={styles.identityTitle} accessibilityRole="header" maxFontSizeMultiplier={1.8}>
+              Available until payday
+            </Text>
+            {/* Honours the showManageBalancesLink prop for any consumer
+                that wants it. Money passes false — its dedicated
+                "Balances used" row below is the single entry point there —
+                so this renders null on Money in every state. */}
+            {renderManageBalancesButton()}
+            {opts.showInfo !== false ? (
+              <TouchableOpacity
+                style={styles.heroInfoButton}
+                onPress={() => setBreakdownVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel="How this was calculated"
+                accessibilityHint="Opens every line behind this estimate"
+                testID="money-aup-hero-info"
+              >
+                <Ionicons name="information-circle-outline" size={22} color={semantic.interactive} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {opts.children}
+
+          {opts.stateText ? (
+            warning ? (
+              // Warning ink is paired with an alert glyph, so a shortfall is
+              // never signalled by colour alone.
+              <View style={styles.heroWarningRow} testID={`${opts.testID}-warning`}>
+                <Ionicons name="alert-circle-outline" size={19} color={semantic.warning} style={styles.heroWarningIcon} importantForAccessibility="no" />
+                <Text style={styles.heroWarningText}>{opts.stateText}</Text>
+              </View>
+            ) : (
+              <Text style={styles.heroStateText} testID={`${opts.testID}-state`}>
+                {opts.stateText}
+              </Text>
+            )
+          ) : null}
+
+          {opts.supportText ? <Text style={styles.heroExplain}>{opts.supportText}</Text> : null}
+
+          {opts.cta ? (
+            <TouchableOpacity
+              style={styles.heroCta}
+              onPress={opts.cta.onPress}
+              accessibilityRole="button"
+              accessibilityLabel={opts.cta.label}
+              testID={opts.cta.testID}
+            >
+              <Text style={styles.heroCtaText}>{opts.cta.label}</Text>
+              <Ionicons name="chevron-forward" size={16} color={semantic.interactive} importantForAccessibility="no" />
+            </TouchableOpacity>
+          ) : null}
+
+          {opts.showRail && paydayProgress && !paydayProgress.unknown ? (
+            <View style={styles.heroFooter} testID="money-aup-hero-payday">
+              <MoneyPaydayBar progress={paydayProgress} />
+            </View>
+          ) : null}
+
+          <Text style={styles.heroProvenance}>{MONEY_MEASURE_DEFINITIONS.availableUntilPayday}</Text>
+        </LinearGradient>
+        {breakdown}
+      </>
     );
   }
 
-  // Invalid recorded data from a source OTHER than a balance (a bill,
-  // transaction, or other financial-calculation input) — Pass 1 closure
-  // correction, 2026-08-11. Deliberately does NOT render
-  // renderManageBalancesButton: Manage Balances only controls balance
-  // inclusion, and the actual corrupted record here is not a balance, so
-  // offering that action would point the user at the wrong place to fix
-  // it. No accurate existing repair destination is currently identifiable
-  // from this card alone (SafeToSpendResult does not expose which specific
-  // bill/transaction is invalid) — neutral wording only, no action.
+  // Corrupt balance data — repairable, and Wealth is where it is editable.
+  if (heroState === 'unavailable_balance_data') {
+    return renderShell({
+      testID: 'money-aup-hero-unavailable-balance',
+      tone: 'warning',
+      stateText: presentation.primaryCopy,
+      supportText: presentation.supportingCopy,
+      cta: onReviewInWealth ? { label: 'Review in Wealth', onPress: onReviewInWealth, testID: 'money-aup-cta-wealth' } : null,
+      showInfo: false,
+    });
+  }
+
+  // Corrupt data from a source other than a balance. Deliberately no
+  // action: SafeToSpendResult does not expose WHICH record is invalid, so
+  // any destination offered here would point at the wrong place.
   if (heroState === 'unavailable_other_data') {
-    return (
-      <View style={[styles.card, styles.cardWarning]}>
-        <View style={styles.labelRow}>
-          <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-        </View>
-        <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-        {presentation.supportingCopy ? <Text style={styles.lineWarning}>{presentation.supportingCopy}</Text> : null}
-      </View>
-    );
+    return renderShell({
+      testID: 'money-aup-hero-unavailable-other',
+      tone: 'warning',
+      stateText: presentation.primaryCopy,
+      supportText: presentation.supportingCopy,
+      cta: null,
+      showInfo: false,
+    });
   }
 
   // No known payday: never invent one, and never derive an artificial
-  // planning horizon (e.g. "days of runway" from a spend rate) to stand in
-  // for it (PRD ask, §Adaptive hero). Two honest states instead: show the
-  // balances the user has actually included (State 2), or ask them to pick
-  // one if none are included yet (State 4).
+  // planning horizon to stand in for it. Two honest cases — show the
+  // balances actually included, or ask for one if none are.
   if (heroState === 'no_known_payday') {
     const hasIncludedBalance = safeToSpend.includedMoneyBalance > 0;
-    return (
-      <>
-        <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>💰 {presentation.heading}</Text>
-            <View style={styles.labelRowActions}>{renderManageBalancesButton()}</View>
-          </View>
-          {hasIncludedBalance ? (
-            <>
-              <Text style={styles.line}>{presentation.primaryCopy}</Text>
-              {presentation.amountVisible ? <Text style={styles.value}>{presentation.displayAmount}</Text> : null}
-              {safeToSpend.includedMoneyBalanceAccounts.length > 0 ? (
-                <Text style={styles.explainer}>
-                  {safeToSpend.includedMoneyBalanceAccounts.map((a) => `${a.label} (${formatMoney(a.value)})`).join(', ')}
-                </Text>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <Text style={styles.line}>{presentation.primaryCopy}</Text>
-              <Text style={styles.explainer}>Add or select a money balance that Nolie can use for short-term money calculations.</Text>
-            </>
-          )}
-          {!hasIncludedBalance && onSelectBalances ? (
-            <TouchableOpacity style={styles.ctaButton} onPress={onSelectBalances}>
-              <Text style={styles.ctaText}>Select balances</Text>
-            </TouchableOpacity>
-          ) : null}
-          {onAddPayday ? (
-            <TouchableOpacity style={styles.ctaButton} onPress={onAddPayday}>
-              <Text style={styles.ctaText}>Add an expected payday</Text>
-            </TouchableOpacity>
-          ) : null}
-        </LinearGradient>
-      </>
-    );
+    if (!hasIncludedBalance) {
+      return renderShell({
+        testID: 'money-aup-hero-no-balances',
+        stateText: CHOOSE_BALANCES_STATE,
+        supportText: CHOOSE_BALANCES_SUPPORT,
+        cta: onSelectBalances ? { label: CHOOSE_BALANCES_CTA, onPress: onSelectBalances, testID: 'money-aup-cta-balances' } : null,
+        showRail: false,
+      });
+    }
+    return renderShell({
+      testID: 'money-aup-hero-no-payday',
+      stateText: presentation.amountVisible ? null : presentation.primaryCopy,
+      supportText: safeToSpend.includedMoneyBalanceAccounts.length > 0
+        ? safeToSpend.includedMoneyBalanceAccounts.map((a) => `${a.label} (${formatMoney(a.value)})`).join(', ')
+        : null,
+      cta: onAddPayday ? { label: 'Add an expected payday', onPress: onAddPayday, testID: 'money-aup-cta-payday' } : null,
+      showRail: false,
+      children: presentation.amountVisible ? (
+        <>
+          <Text style={styles.heroMeasureLabel}>{presentation.heading}</Text>
+          <Text
+            style={styles.heroFigure}
+            maxFontSizeMultiplier={heroFigureType.maxFontSizeMultiplier}
+            numberOfLines={1}
+            accessibilityLabel={`${presentation.heading}, ${spokenMoney(presentation.displayAmount!)}`}
+            testID="money-aup-hero-figure"
+          >
+            {presentation.displayAmount}
+          </Text>
+        </>
+      ) : null,
+    });
   }
 
-  // State A — no meaningful balance included: a missing-input problem, not
-  // a financial warning. Bills/savings/goals can't be meaningfully compared
-  // against "available cash" until the user has told Navilo which balance
-  // that is (PRD ask).
+  // THE RECORDED DEFECT — no balance included. A missing INPUT, not a
+  // financial warning, so it is neutral rather than yellow, and it carries
+  // exactly one action.
   if (heroState === 'missing_balance') {
-    return (
-      <>
-        <View style={[styles.card, styles.cardWarning]}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-            <View style={styles.labelRowActions}>
-              {renderManageBalancesButton(true)}
-              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-          {onSelectBalances ? (
-            <TouchableOpacity style={styles.warningCtaButton} onPress={onSelectBalances}>
-              <Text style={styles.warningCtaText}>Select balances</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-        {breakdown}
-      </>
-    );
+    return renderShell({
+      testID: 'money-aup-hero-no-balances',
+      stateText: CHOOSE_BALANCES_STATE,
+      supportText: CHOOSE_BALANCES_SUPPORT,
+      cta: onSelectBalances ? { label: CHOOSE_BALANCES_CTA, onPress: onSelectBalances, testID: 'money-aup-cta-balances' } : null,
+      showRail: false,
+    });
   }
 
-  // State C — a genuine recorded-spending overrun: what's actually been
-  // logged this cycle exceeds the cycle's own budget, independent of the
-  // included balance.
+  // A genuine recorded-spending overrun this cycle.
   if (heroState === 'recorded_overspend') {
-    return (
-      <>
-        <View style={[styles.card, styles.cardWarning]}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-            <View style={styles.labelRowActions}>
-              {renderManageBalancesButton(true)}
-              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-        </View>
-        {breakdown}
-      </>
-    );
+    return renderShell({ testID: 'money-aup-hero-overspend', tone: 'warning', stateText: presentation.primaryCopy, showRail: true });
   }
 
-  // State B — planned commitments (bills, Savings Allocation, goals)
-  // currently exceed the balance included in this estimate. This is not
-  // overspending and not a missing-input problem — it's the ordinary
-  // reality of a cycle whose income hasn't arrived yet (PRD ask: must not
-  // imply money has moved or that the user did anything wrong).
+  // Planned commitments exceed the included balance. Not overspending and
+  // not a missing input — an ordinary cycle whose income has not arrived.
   if (heroState === 'commitments_exceed_cash') {
-    return (
-      <>
-        <View style={[styles.card, styles.cardWarning]}>
-          <View style={styles.labelRow}>
-            <Text style={[styles.label, styles.labelWarning]}>💰 {presentation.heading}</Text>
-            <View style={styles.labelRowActions}>
-              {renderManageBalancesButton(true)}
-              <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <Text style={styles.lineWarning}>{presentation.primaryCopy}</Text>
-        </View>
-        {breakdown}
-      </>
-    );
+    return renderShell({ testID: 'money-aup-hero-commitments', tone: 'warning', stateText: presentation.primaryCopy, showRail: true });
   }
 
-  // Wave 4 closure, P1 — this state no longer has its own amount-less card.
-  //
-  // It used to render a warning card with NO Available Until Payday figure
-  // at all, and a sentence quoting the monthly cash-flow position, so the
-  // card said "only $-6,802 is currently available" while its own breakdown
-  // sheet showed the real $12,050. An active, unallocated goal is not an
-  // Available-Until-Payday condition: it never reduced the cycle pool.
-  //
-  // It now falls through to the ordinary card below, which renders the
-  // canonical amount — the same value the breakdown shows — and appends the
-  // goal statement as supporting copy. There is exactly one amount source
-  // for this surface, so the card and the breakdown cannot disagree.
+  // The populated state — Correction B's accepted hierarchy, now rendered
+  // through the SAME shell every other state uses, so there is exactly one
+  // hero architecture rather than a "new hero" beside an "old setup card".
+  const amountVisible = presentation.amountVisible && !!presentation.displayAmount;
 
-  return (
-    <>
-      <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
-        <View style={styles.labelRow}>
-          <Text style={styles.label}>💰 {presentation.heading}</Text>
-          <View style={styles.labelRowActions}>
-            {renderManageBalancesButton()}
-            <TouchableOpacity style={styles.infoButton} onPress={() => setBreakdownVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="information-circle-outline" size={15} color={onFeaturedAlpha(0.85)} />
-            </TouchableOpacity>
-          </View>
-        </View>
-        <Text style={styles.line}>{presentation.primaryCopy}</Text>
-        {presentation.amountVisible ? <Text style={styles.value}>{presentation.displayAmount}</Text> : null}
-        {/* Advisory only — never a replacement for the amount above. */}
-        {presentation.supportingCopy ? <Text style={styles.explainer}>{presentation.supportingCopy}</Text> : null}
-        {safeToSpend.daysRemaining > 0 ? (
-          <Text style={styles.line}>
-            ≈ {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day for the next {safeToSpend.daysRemaining} day
-            {safeToSpend.daysRemaining === 1 ? '' : 's'}
-          </Text>
-        ) : null}
-        {!hasGoalReservation ? (
-          !hasActiveGoals ? (
-            <TouchableOpacity style={styles.ctaButton} onPress={onCreateGoal}>
-              <Text style={styles.ctaText}>Create a goal to plan ahead</Text>
-            </TouchableOpacity>
-          ) : null
-        ) : topFundedGoal ? (
-          <Text style={styles.explainer}>
-            {fundedGoals.length > 1
-              ? `Based on the assumptions entered, ${formatMoney(goalAllocation.totalAllocatedMonthly)}/month is allocated across ${fundedGoals.length} goals, including "${topFundedGoal.goal.name}".`
-              : `Based on the assumptions entered, ${formatMoney(topFundedGoal.allocatedMonthly)}/month is allocated toward "${topFundedGoal.goal.name}"${
-                  topFundedGoal.goal.targetDate
-                    ? ` (target: ${new Date(topFundedGoal.goal.targetDate).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })})`
-                    : ''
-                }.`}
-          </Text>
-        ) : null}
-        {showTodayReaction ? (
-          <View style={styles.reactionBox}>
-            <Text style={styles.reactionText}>
-              {formatMoney(safeToSpend.todaysSpend)} recorded today — {formatMoney(overToday)} above today's estimated plan. The
-              remaining daily estimate has been adjusted to {formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day.
-            </Text>
-          </View>
-        ) : null}
-      </LinearGradient>
-      {breakdown}
-    </>
-  );
+  return renderShell({
+    testID: 'money-aup-hero',
+    stateText: amountVisible ? null : presentation.primaryCopy,
+    supportText:
+      amountVisible && safeToSpend.daysRemaining > 0
+        ? `About ${formatMoney(Math.max(0, safeToSpend.dailyAllowance))} a day for the next ${safeToSpend.daysRemaining} day${
+            safeToSpend.daysRemaining === 1 ? '' : 's'
+          }.`
+        : presentation.supportingCopy,
+    showRail: true,
+    children: amountVisible ? (
+      <>
+        <Text style={styles.heroMeasureLabel}>Estimated remaining</Text>
+        {/* One semantic unit — the sign can never separate from its amount,
+            and the figure never truncates. */}
+        <Text
+          style={styles.heroFigure}
+          maxFontSizeMultiplier={heroFigureType.maxFontSizeMultiplier}
+          numberOfLines={1}
+          accessibilityLabel={`Estimated remaining, ${spokenMoney(presentation.displayAmount!)}`}
+          testID="money-aup-hero-figure"
+        >
+          {presentation.displayAmount}
+        </Text>
+      </>
+    ) : null,
+  });
 }

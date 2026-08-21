@@ -161,3 +161,139 @@ export function describeMonthYear(month: number | null, year: number | null): st
   if (!Number.isInteger(year) || year < 1000) return 'Not set';
   return `${monthName(month)} ${year}`;
 }
+
+// ---------------------------------------------------------------------------
+// Arbitrary historical dates
+// ---------------------------------------------------------------------------
+
+/**
+ * Wave 6 correction A — the transaction date field offered only four
+ * shortcuts (today, yesterday, 2 days ago, last week), so a customer
+ * recording something from three weeks ago simply could not say so.
+ *
+ * The shortcuts stay — they are the overwhelmingly common cases and one tap
+ * each. Below them sits one more row that opens a real calendar for any
+ * valid past date. This is the SAME field and the SAME committed value; the
+ * calendar is a second view of the same picker, not a second date system.
+ */
+export const CHOOSE_ANOTHER_DATE_KEY = 'choose-another';
+export const CHOOSE_ANOTHER_DATE_LABEL = 'Choose another date…';
+
+export interface MonthGridDay {
+  /** Local midnight of this day. */
+  date: Date;
+  /** 1-31. */
+  dayOfMonth: number;
+  /** False for the leading/trailing blanks that pad the grid to whole weeks. */
+  inMonth: boolean;
+  /** True when this day is after the maximum selectable date. Disabled, and
+   * announced as such — never silently coerced to something else. */
+  disabled: boolean;
+  isToday: boolean;
+}
+
+/** Local midnight — never UTC. A transaction dated "3 August" must stay 3
+ * August regardless of the device's offset from UTC, so every date this
+ * module produces is constructed from local Y/M/D parts rather than from an
+ * ISO instant. */
+export function localMidnight(year: number, month: number, day: number): Date {
+  return new Date(year, month, day, 0, 0, 0, 0);
+}
+
+export function startOfLocalMonth(date: Date): Date {
+  return localMidnight(date.getFullYear(), date.getMonth(), 1);
+}
+
+/** Month arithmetic that cannot overflow: setting month 12 rolls the year,
+ * and a day-of-month beyond the target month's length is impossible because
+ * every grid day is constructed from the target month's own length. */
+export function addLocalMonths(date: Date, delta: number): Date {
+  const y = date.getFullYear();
+  const m = date.getMonth() + delta;
+  return localMidnight(y + Math.floor(m / 12), ((m % 12) + 12) % 12, 1);
+}
+
+export function daysInLocalMonth(year: number, month: number): number {
+  // Day 0 of the following month is the last day of this one — which is how
+  // 29 February in a leap year is obtained without a leap-year rule here.
+  return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * One month as a 6x7 grid of days, padded with out-of-month blanks so every
+ * month renders at the same height and the weekday columns always line up.
+ *
+ * `maximumDate` is inclusive: a day after it is `disabled`, present and
+ * announced, never hidden and never quietly replaced by a different date.
+ */
+/**
+ * Wave 6 (reminder snooze) — `minimumDate` is optional and defaults to
+ * null, so every existing caller keeps its exact previous behaviour. It
+ * exists because Snooze is the first date field in this app that looks
+ * FORWARD: a transaction date can never be in the future, and a snooze
+ * return day can never be in the past.
+ */
+export function buildMonthGrid(
+  monthAnchor: Date,
+  today: Date,
+  maximumDate: Date | null,
+  minimumDate: Date | null = null
+): MonthGridDay[] {
+  const year = monthAnchor.getFullYear();
+  const month = monthAnchor.getMonth();
+  const first = localMidnight(year, month, 1);
+  const leading = first.getDay();
+  const length = daysInLocalMonth(year, month);
+  const maxMs = maximumDate ? localMidnight(maximumDate.getFullYear(), maximumDate.getMonth(), maximumDate.getDate()).getTime() : null;
+  const todayMs = localMidnight(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const minMs = minimumDate ? localMidnight(minimumDate.getFullYear(), minimumDate.getMonth(), minimumDate.getDate()).getTime() : null;
+
+  const cells: MonthGridDay[] = [];
+  for (let i = 0; i < 42; i++) {
+    const dayOffset = i - leading;
+    const inMonth = dayOffset >= 0 && dayOffset < length;
+    const date = localMidnight(year, month, dayOffset + 1);
+    const ms = date.getTime();
+    cells.push({
+      date,
+      dayOfMonth: date.getDate(),
+      inMonth,
+      disabled: (maxMs !== null && ms > maxMs) || (minMs !== null && ms < minMs),
+      isToday: ms === todayMs,
+    });
+  }
+  return cells;
+}
+
+/** Whether the calendar may step back/forward from this month. Forward is
+ * barred once the month already contains the maximum selectable date, so a
+ * customer never lands on a month with nothing selectable in it. */
+export function canStepMonth(
+  monthAnchor: Date,
+  delta: number,
+  maximumDate: Date | null,
+  minimumDate: Date | null = null
+): boolean {
+  if (delta < 0) {
+    // Symmetric to the forward rule: stepping back is barred once the
+    // previous month holds nothing selectable.
+    if (!minimumDate) return true;
+    const previous = addLocalMonths(monthAnchor, delta);
+    return previous.getTime() >= startOfLocalMonth(minimumDate).getTime();
+  }
+  if (!maximumDate) return true;
+  const next = addLocalMonths(monthAnchor, delta);
+  return next.getTime() <= startOfLocalMonth(maximumDate).getTime();
+}
+
+/** "August 2026" — the calendar's own heading. */
+export function formatMonthHeading(monthAnchor: Date): string {
+  return monthAnchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+/** The full, locale-appropriate spoken form of a selectable day. */
+export function spokenGridDay(day: MonthGridDay): string {
+  const full = day.date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  if (day.disabled) return `${full}, unavailable — a transaction cannot be dated in the future`;
+  return day.isToday ? `${full}, today` : full;
+}

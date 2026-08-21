@@ -19,27 +19,24 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 import { AppStateProvider } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { FloatingNavBar } from '../../src/components/navigation/FloatingNavBar';
+import { TAB_DEFINITIONS } from '../../src/navigation/tabDefinitions';
 import { FloatingAddButton } from '../../src/components/navigation/FloatingAddButton';
 
 const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
-const TABS = ['Today', 'Money', 'Wealth', 'Grow'];
+// Wave 6 correction A — the dock no longer takes BottomTabBarProps. It is
+// a presentation component mounted at ROOT (a tabBar-mounted dock could not
+// exist on any pushed route, which is the defect that correction fixed), so
+// this harness now supplies its plain contract instead of a synthetic React
+// Navigation state. The tab SET is taken from the shared definition the
+// production dock reads, so the harness cannot drift from it.
+const TABS = TAB_DEFINITIONS.map((t) => t.name);
 
-function dockProps(activeIndex: number): Record<string, unknown> {
-  const routes = TABS.map((name) => ({ key: `${name}-key`, name }));
-  const descriptors: Record<string, unknown> = {};
-  routes.forEach((r) => {
-    descriptors[r.key] = {
-      options: {
-        tabBarAccessibilityLabel: `${r.name}, tab, ${TABS.indexOf(r.name) + 1} of ${TABS.length}`,
-        tabBarIcon: () => <Text>{`${r.name}-icon`}</Text>,
-      },
-    };
-  });
-  return {
-    state: { index: activeIndex, routes, key: 'tabs', routeNames: TABS },
-    descriptors,
-    navigation: { emit: () => ({ defaultPrevented: false }), navigate: () => undefined },
-  };
+function dockTabs() {
+  return TAB_DEFINITIONS.map((def) => ({
+    name: def.name,
+    label: def.label,
+    icon: () => <Text>{`${def.name}-icon`}</Text>,
+  }));
 }
 
 function tree(activeIndex: number) {
@@ -47,7 +44,7 @@ function tree(activeIndex: number) {
     <SafeAreaProvider initialMetrics={METRICS}>
       <AppStateProvider>
         <ThemeProvider>
-          <FloatingNavBar {...(dockProps(activeIndex) as any)} reduceMotion={false} />
+          <FloatingNavBar tabs={dockTabs()} activeIndex={activeIndex} onSelectTab={() => undefined} reduceMotion={false} />
           <FloatingAddButton />
         </ThemeProvider>
       </AppStateProvider>

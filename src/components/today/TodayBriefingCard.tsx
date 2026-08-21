@@ -4,6 +4,7 @@ import type { RefObject } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useAppState } from '../../state/AppStateContext';
 import { SafeToSpendPresentation } from '../../lib/calculations/safeToSpendPresentation';
 import { TodayBriefingEventRow } from '../../lib/calculations/todayBriefing';
 import { SmartReminder } from '../../lib/calculations/reminders';
@@ -64,6 +65,11 @@ import i18n from '../../i18n';
 const BRIEFING_IDENTITY_TILE_SIZE = 36;
 const BRIEFING_IDENTITY_GLYPH_SIZE = 20;
 
+/** Design 5.1 Wave 6 final refinement — the hero's internal separators.
+ * A device review found StyleSheet.hairlineWidth genuinely imperceptible
+ * here; 1pt reads as a division without reading as a border. */
+export const HERO_DIVIDER_WIDTH = 1;
+
 export function TodayBriefingCard({
   presentation,
   eventRows,
@@ -73,7 +79,6 @@ export function TodayBriefingCard({
   onPressAup,
   onPressEventRow,
   onPressReminderTile,
-  onPressHowThisWorks,
   headingRef,
   reminderTileRef,
 }: {
@@ -92,20 +97,22 @@ export function TodayBriefingCard({
   onPressReminderTile: () => void;
   /** Opens the existing Available Until Payday explanation — the same
    * destination the hero figure itself opens. */
-  onPressHowThisWorks: () => void;
   headingRef?: RefObject<any>;
   reminderTileRef?: RefObject<any>;
 }) {
   const { semantic } = useTheme();
+  // Wave 6 final — read only to resolve a reminder's linked item NAME, so
+  // the row is titled "Rent" rather than "Did you pay your Rent?". No
+  // calculation on this surface depends on it.
+  const { data: appData } = useAppState();
   const { width, fontScale } = useWindowDimensions();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const compact = width <= designLayout.breakpoints.compactMax;
-  const stackFooter = isAccessibilityText(fontScale);
 
   const tiles = useMemo(() => selectBriefingTiles(presentation, topReminder, eventRows), [presentation, topReminder, eventRows]);
   const priorityRows = useMemo(
-    () => selectBriefingPriorityRows(tiles, eventRows, timelineEvents, topReminder),
-    [tiles, eventRows, timelineEvents, topReminder]
+    () => selectBriefingPriorityRows(tiles, eventRows, timelineEvents, topReminder, appData),
+    [tiles, eventRows, timelineEvents, topReminder, appData]
   );
 
   const figureType = textStyle('figureHero', locale);
@@ -189,32 +196,27 @@ export function TodayBriefingCard({
           marginTop: designSpacing.sm,
         },
         setupActionText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        // Wave 6 final refinement — a hairline at the system's own
+        // sub-pixel width was too faint to separate the AUP measure, the
+        // priority rows and the footer, so the hero read as one
+        // undifferentiated box. A full 1pt line at the semantic border role
+        // is clearly perceptible without becoming an outline, and it stays
+        // visible in all six themes because the role itself is theme-aware.
         divider: {
-          height: StyleSheet.hairlineWidth,
+          height: HERO_DIVIDER_WIDTH,
           backgroundColor: semantic.border,
           marginTop: designSpacing.lg,
         },
         rows: { marginTop: designSpacing.xs },
         footer: {
-          flexDirection: stackFooter ? 'column' : 'row',
-          alignItems: stackFooter ? 'flex-start' : 'center',
-          justifyContent: 'space-between',
-          gap: designSpacing.sm,
           marginTop: designSpacing.lg,
           paddingTop: designSpacing.md,
-          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopWidth: HERO_DIVIDER_WIDTH,
           borderTopColor: semantic.border,
         },
-        provenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, flexShrink: 1 },
-        howRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: designSpacing.xs,
-          minHeight: designLayout.touchTargetMin,
-        },
-        howText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        provenance: { ...typeStyle('meta', locale), color: semantic.textTertiary },
       }),
-    [semantic, locale, compact, stackFooter, figureType.style, emphasis]
+    [semantic, locale, compact, figureType.style, emphasis]
   );
 
   const amountVisible = presentation.amountVisible && !!presentation.displayAmount;
@@ -328,21 +330,16 @@ export function TodayBriefingCard({
         </>
       ) : null}
 
+      {/* Wave 6 closure — the "How this works" control is gone. It routed
+          to Money, which the Briefing's own AUP measure and priority rows
+          already reach, so it added a full row of height for no unique
+          destination. Money's hero keeps its own "How this was calculated"
+          journey, which is where the explanation genuinely lives.
+          Provenance stays, as one calm full-width line. */}
       <View style={styles.footer}>
         <Text style={styles.provenance} testID="today-briefing-provenance">
-          Based on what you’ve recorded · updated today
+          Based on what you’ve recorded · Updated today
         </Text>
-        <TouchableOpacity
-          style={styles.howRow}
-          onPress={onPressHowThisWorks}
-          accessibilityRole="button"
-          accessibilityLabel="How this works"
-          accessibilityHint="Opens how your available amount is worked out"
-          testID="today-briefing-how-this-works"
-        >
-          <Text style={styles.howText}>How this works</Text>
-          <Ionicons name="information-circle-outline" size={16} color={semantic.interactive} />
-        </TouchableOpacity>
       </View>
     </LinearGradient>
   );

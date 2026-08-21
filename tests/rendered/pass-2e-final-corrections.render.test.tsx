@@ -13,7 +13,8 @@ import { SavingsAllocationPromptProvider } from '../../src/state/SavingsAllocati
 import { RootNavigator } from '../../src/navigation/RootNavigator';
 import { TodayBriefingCard } from '../../src/components/today/TodayBriefingCard';
 import { ReminderDetailSheet } from '../../src/components/today/ReminderDetailSheet';
-import { computeTopReminder } from '../../src/lib/calculations/reminders';
+import { computeRankedReminder } from '../../src/lib/calculations/reminders';
+import { createSuppressionPredicate } from '../../src/lib/calculations/reminderSuppression';
 import { ReminderOpenRequest, createReminderOpenRequest } from '../../src/lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../src/lib/calculations/todayBriefing';
 import { computeMoneyTimeline } from '../../src/lib/calculations/moneyTimeline';
@@ -193,7 +194,14 @@ describe('Settings control — rendered regression coverage (Pass 2E final corre
 
 function TodayBriefingHarness({ today }: { today: Date }) {
   const { data } = useAppState();
-  const topReminder = useMemo(() => computeTopReminder(data, today), [data, today]);
+  // Wave 6 polish — mirrors TodayScreen's OWN wiring, including the
+  // persisted suppression predicate. Without it this harness would keep
+  // advertising a reminder the real app has already suppressed, and the
+  // suite would be testing a screen that does not exist.
+  const topReminder = useMemo(
+    () => computeRankedReminder(data, today, createSuppressionPredicate(data, today)),
+    [data, today]
+  );
   const timelineEvents = useMemo(() => computeMoneyTimeline(data, today), [data, today]);
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
   const safeToSpend = useMemo(() => computeSafeToSpend(data, today), [data, today]);
@@ -211,7 +219,6 @@ function TodayBriefingHarness({ today }: { today: Date }) {
         timelineEvents={timelineEvents}
         timeframeLine={null}
         topReminder={topReminder}
-        onPressHowThisWorks={() => {}}
         onPressAup={() => {}}
         onPressEventRow={() => {}}
         onPressReminderTile={() => {
@@ -296,7 +303,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     // Genuine, customer-visible content — the real card_due_soon heading
     // creditHealth.ts builds, present the whole time (never blank/delayed).
-    expect(await screen.findByText('Your Everyday Visa payment is due today')).toBeOnTheScreen();
+    expect(await screen.findByTestId('reminder-title')).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: 'Record payment' })).toBeOnTheScreen();
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
   });
@@ -308,14 +315,14 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
     const user = userEvent.setup();
     const view = await render(<ReminderHarness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Your Everyday Visa payment is due today');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
     // Force a genuine React re-render of the whole tree (a new `today`
     // Date instance, same calendar day) without touching visible/open
     // state — the sheet's own `visible` prop stays true throughout.
     view.rerender(<ReminderHarness today={new Date(today)} />);
-    await screen.findByText('Your Everyday Visa payment is due today');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
   });
 
@@ -342,13 +349,18 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Did you pay your Rent?');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which advances the queue exactly as the session
+    // defer did. The property under test — advancing WITHIN the open sheet
+    // never replays the whole-sheet entrance — is unchanged.
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
     // Advanced to the next eligible reminder (the credit card) within the
     // same open sheet — genuinely new content, but no new entrance.
-    await screen.findByText('Your Everyday Visa payment is due today');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
   });
 
@@ -359,17 +371,25 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
     const user = userEvent.setup();
     await render(<ReminderHarness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Your Everyday Visa payment is due today');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(3);
 
-    await user.press(screen.getByText('Close'));
+    // RECONCILED (Design 5.1 Wave 6 closure): the detached "Close" text
+    // that floated below the reminder content was removed — Close now lives
+    // once, in the sheet header, where every other state of this sheet
+    // already put it. Same control, same handler (handleForceClose), same
+    // meaning: end the review without acknowledging, deferring or recording
+    // anything. Only where the customer taps it changed.
+    await user.press(screen.getByTestId('reminder-header-close'));
     // Reopen — a fresh session, same underlying occurrence still eligible.
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await screen.findByText('Your Everyday Visa payment is due today');
+    await screen.findByTestId('reminder-title');
     expect(entranceTimingCallCount(timingSpy)).toBe(6);
 
     // Exactly one live heading at a time — never two stacked sheets.
-    expect(screen.getAllByText('Your Everyday Visa payment is due today').length).toBe(1);
+    // RECONCILED (Wave 6 polish): titled by the card, with the timing in
+    // the status pill rather than restated in a sentence.
+    expect(screen.getAllByTestId('reminder-title').length).toBe(1);
   });
 
   test('reduce motion: the entrance settles instantly (no Animated.timing calls), content still present from the first frame', async () => {
@@ -381,7 +401,7 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
     await render(<ReminderHarness today={today} />);
     await user.press(await screen.findByTestId(REMINDER_ROW));
 
-    expect(await screen.findByText('Your Everyday Visa payment is due today')).toBeOnTheScreen();
+    expect(await screen.findByTestId('reminder-title')).toBeOnTheScreen();
     expect(entranceTimingCallCount(timingSpy)).toBe(0);
   });
 
@@ -396,7 +416,11 @@ describe('Reminder sheet entrance transition — rendered regression coverage (P
 
     const amountInput = screen.getByDisplayValue('');
     await user.type(amountInput, '50');
-    await user.press(await screen.findByRole('button', { name: /Cash/i }));
+    // RECONCILED (Wave 6 polish): the form's source chips became the shared
+    // account rows. This form ALREADY separated selection from
+    // confirmation — setSource, then the sheet's own footer confirm — so
+    // only how the row is found changed.
+    await user.press(await screen.findByTestId('account-choice-cash'));
     await user.press(screen.getByRole('button', { name: 'Record payment' }));
 
     // Real persistence — the card's balance actually decreased, and the

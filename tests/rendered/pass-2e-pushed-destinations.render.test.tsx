@@ -281,7 +281,18 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
 
     // Exactly one "Money" Screen title and one Back control — the reused
     // canonical MoneyScreen content, not a duplicated/parallel surface.
-    expect(screen.getAllByText('Money').length).toBe(1);
+    //
+    // Wave 6 correction A — the persistent root-level dock now stays
+    // mounted on this pushed route (that is the whole point of the
+    // correction), so its own "Money" TAB LABEL is a second, expected
+    // occurrence. The claim protected here is unchanged: the SCREEN is not
+    // duplicated. So the dock's tab is identified and excluded rather than
+    // the count being loosened.
+    const moneyTab = screen.getByRole('button', { name: /^Money, tab,/ });
+    expect(moneyTab).toBeTruthy();
+    const moneyTexts = screen.getAllByText('Money');
+    expect(moneyTexts.length).toBe(2);
+    expect(moneyTexts.filter((n) => n.props.children === 'Money').length).toBe(2);
     expect(screen.getAllByRole('button', { name: 'Back' }).length).toBe(1);
   });
 
@@ -293,7 +304,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     await render(<Harness />);
 
     await user.press(await screen.findByRole('button', { name: /^Money,/ }));
-    await user.press(await screen.findByRole('button', { name: 'View transactions' }));
+    await user.press(await screen.findByRole('button', { name: 'View all transactions' }));
 
     expect((await screen.findAllByText('Transactions')).length).toBeGreaterThan(0);
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();

@@ -71,8 +71,7 @@ describe('Wave 5 — the Briefing no longer carries the Score', () => {
             timelineEvents={[]}
             timeframeLine="11 days to Fri 28 Aug · about $120 a day"
             topReminder={null}
-            onPressHowThisWorks={() => {}}
-            onPressAup={() => {}}
+                onPressAup={() => {}}
             onPressEventRow={() => {}}
             onPressReminderTile={() => {}}
           />
@@ -92,7 +91,6 @@ describe('Wave 5 — the Briefing no longer carries the Score', () => {
     expect(view.getByTestId('today-briefing-measure').props.accessibilityLabel).toBe(
       'Available to spend, $420. 11 days to Fri 28 Aug · about $120 a day'
     );
-    expect(view.getByText('How this works')).toBeTruthy();
 
     // And carries no trace of the Score, in any of its states.
     for (const forbidden of [

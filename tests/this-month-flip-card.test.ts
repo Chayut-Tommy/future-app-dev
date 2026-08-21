@@ -459,11 +459,23 @@ console.log('\n=== Section 18: compact-row overflow rule (mirrored + structural)
   const fourResult = computeCompactRowsMirror(fourSources);
   assert('Exactly 4 sources: all 4 shown individually, no overflow row', fourResult.rows.length === 4 && fourResult.overflow === null);
 
+  // WAVE 6 — the compact rule is retired with the face it served. It
+  // existed only because a flip's back face had room for four rows; the
+  // Sources sheet has room for all of them and truncates nothing, so
+  // there is no longer anything to collapse. The mirror above is kept as a
+  // pure record of the rule's arithmetic (its aggregate-sum guarantee is
+  // the part that mattered), and what is asserted against the shipped code
+  // is that the rule and its truncation are genuinely gone.
   assert(
-    'Structural: the real ThisMonthCard.tsx computeCompactRows matches the mirror above exactly (same 4-row limit, same top-3-plus-overflow shape)',
-    /const COMPACT_ROW_LIMIT = 4;/.test(THIS_MONTH_CARD_SRC) &&
-      /const COMPACT_TOP_N_WHEN_OVERFLOW = 3;/.test(THIS_MONTH_CARD_SRC) &&
-      /if \(sources\.length <= COMPACT_ROW_LIMIT\) return \{ rows: sources, overflow: null \};/.test(THIS_MONTH_CARD_SRC)
+    'Structural: the compact-row rule is retired — no row limit, no overflow aggregation, no truncation anywhere',
+    !/COMPACT_ROW_LIMIT/.test(THIS_MONTH_CARD_SRC) &&
+      !/COMPACT_TOP_N_WHEN_OVERFLOW/.test(THIS_MONTH_CARD_SRC) &&
+      !/computeCompactRows/.test(THIS_MONTH_CARD_SRC) &&
+      !/\.slice\(/.test(THIS_MONTH_SHEET_SRC)
+  );
+  assert(
+    'and the aggregate guarantee it protected still holds: the sheet renders every source, so the rendered rows always sum to the recorded total',
+    /\{sources\.map\(\(source\) => \{/.test(THIS_MONTH_SHEET_SRC) && /formatCents\(spendingCents\)/.test(THIS_MONTH_SHEET_SRC)
   );
 }
 
@@ -471,49 +483,126 @@ console.log('\n=== Section 18: compact-row overflow rule (mirrored + structural)
 // Section 19 — Structural: flip controls, animation, Reduce Motion,
 // accessibility, absence of financial persistence
 // ============================================================================
-console.log('\n=== Section 19: ThisMonthCard.tsx — flip controls and interaction hierarchy (structural) ===');
+console.log('\n=== Section 19: ThisMonthCard.tsx — static summary controls and interaction hierarchy (structural) ===');
 {
-  assert('The whole card background is NOT a flip control — no onPress on the outer SectionCard/View itself outside the two explicit pill buttons', !/onPress=\{flipTo\}/.test(THIS_MONTH_CARD_SRC));
-  assert('"Show spending sources" is an explicit control, distinct from View transactions', /accessibilityLabel="Show spending sources"/.test(THIS_MONTH_CARD_SRC));
-  assert('"Show monthly summary" is an explicit control, back-to-front', /accessibilityLabel="Show monthly summary"/.test(THIS_MONTH_CARD_SRC));
-  assert('"View transactions" is its own explicit, separate control, calling onViewTransactions — never the flip handler', /onPress=\{onViewTransactions\}[\s\S]{0,120}accessibilityLabel="View transactions"/.test(THIS_MONTH_CARD_SRC));
-  assert('"View all" only renders when overflow exists (conditional on the overflow variable)', /\{overflow \? \(\s*\n\s*<TouchableOpacity[\s\S]{0,150}setSourcesSheetVisible\(true\)[\s\S]{0,150}accessibilityLabel="View all sources"/.test(THIS_MONTH_CARD_SRC));
-  assert('Every control has accessibilityRole="button"', (THIS_MONTH_CARD_SRC.match(/accessibilityRole="button"/g) || []).length >= 4);
+  // WAVE 6 — THE FLIP IS RETIRED. This section previously asserted the
+  // flip's own control pair ("Show spending sources" / "Show monthly
+  // summary") and the conditional "View all" that appeared only on the
+  // back face, and only when the compact view overflowed.
+  //
+  // The BEHAVIOURAL claims those assertions protected are unchanged and
+  // re-asserted below against the static card: the card body is not itself
+  // a control; the source breakdown is reached by an explicit, separately
+  // named control; "View transactions" remains its own distinct control;
+  // and every control is a button with a real accessible name. What is
+  // gone is the flip mechanism, not any capability — the breakdown is now
+  // ONE step away and always complete, where it used to be two steps and
+  // truncated.
+  assert('The card body is NOT itself a control — no onPress on the outer card view', !/style=\{styles\.card\}[^>]*onPress/.test(THIS_MONTH_CARD_SRC));
+  assert('"Spending sources" is an explicit, separately named control', /accessibilityLabel="Spending sources"/.test(THIS_MONTH_CARD_SRC));
+  assert('...carrying a hint that says what it opens', /accessibilityHint="Opens which accounts and cards paid for this month's spending"/.test(THIS_MONTH_CARD_SRC));
+  assert('...and opening the complete Sources sheet directly, not a second intermediate face', /onPress=\{\(\) => setSourcesSheetVisible\(true\)\}/.test(THIS_MONTH_CARD_SRC));
+  assert('"View transactions" is still its own explicit, separate control calling onViewTransactions', /onPress=\{onViewTransactions\}[\s\S]{0,200}accessibilityLabel="View all transactions"/.test(THIS_MONTH_CARD_SRC));
+  assert('The source breakdown is no longer gated on overflow — it is reachable whenever spending exists', /\{hasSpending \? \(\s*\n\s*<TouchableOpacity/.test(THIS_MONTH_CARD_SRC));
+  assert('Every control has accessibilityRole="button"', (THIS_MONTH_CARD_SRC.match(/accessibilityRole="button"/g) || []).length >= 3);
+  assert('Every control meets the 44pt activation minimum', /minHeight: designLayout\.touchTargetMin/.test(THIS_MONTH_CARD_SRC));
 }
 
-console.log('\n=== Section 20: ThisMonthCard.tsx — animation, Reduce Motion, accessibility hiding (structural) ===');
+console.log('\n=== Section 20: ThisMonthCard.tsx — the flip mechanism is GONE, and nothing depends on motion (structural) ===');
 {
-  assert('One shared local Animated.Value drives the flip, not one per face', /const flipProgress = useRef\(new Animated\.Value\(0\)\)\.current;/.test(THIS_MONTH_CARD_SRC));
-  assert('rotateY interpolation on both faces (front 0deg->180deg, back -180deg->0deg)', /outputRange: \['0deg', '180deg'\]/.test(THIS_MONTH_CARD_SRC) && /outputRange: \['-180deg', '0deg'\]/.test(THIS_MONTH_CARD_SRC));
-  assert('backfaceVisibility: hidden prevents mirrored/reversed text from ever being visible on the wrong face', /backfaceVisibility: 'hidden'/.test(THIS_MONTH_CARD_SRC));
-  assert('Reduce Motion is checked via the established AccessibilityInfo.isReduceMotionEnabled pattern (same as AddAnythingSheet)', /AccessibilityInfo\.isReduceMotionEnabled\(\)\.then\(\(enabled\) => \{/.test(THIS_MONTH_CARD_SRC));
-  assert('Reduce Motion enabled: instant setValue swap, never Animated.timing/rotateY', /if \(reduceMotionEnabled\) \{\s*\n\s*flipProgress\.setValue\(toValue\);\s*\n\s*setFace\(target\);\s*\n\s*return;\s*\n\s*\}/.test(THIS_MONTH_CARD_SRC));
-  assert('Rapid-tap protection: a generation counter guards the animation completion callback', /generationRef\.current \+= 1;/.test(THIS_MONTH_CARD_SRC) && /if \(myGeneration !== generationRef\.current\) return; \/\/ stale-completion guard/.test(THIS_MONTH_CARD_SRC));
-  assert('Inactive face: pointerEvents="none"', /pointerEvents=\{face === 'front' \? 'auto' : 'none'\}/.test(THIS_MONTH_CARD_SRC) && /pointerEvents=\{face === 'back' \? 'auto' : 'none'\}/.test(THIS_MONTH_CARD_SRC));
-  assert('Inactive face: accessibilityElementsHidden + importantForAccessibility="no-hide-descendants" (the same established pattern as AddAnythingSheet)', /accessibilityElementsHidden=\{face !== 'front'\}/.test(THIS_MONTH_CARD_SRC) && /accessibilityElementsHidden=\{face !== 'back'\}/.test(THIS_MONTH_CARD_SRC));
-  assert('Flip state defaults to front on mount (useState initial value)', /const \[face, setFace\] = useState<'front' \| 'back'>\('front'\);/.test(THIS_MONTH_CARD_SRC));
-  assert('Measured-height logic: onLayout on both faces feeds a shared max-height container', /onLayout=\{\(e\) => updateMeasuredHeight\('front', e\.nativeEvent\.layout\.height\)\}/.test(THIS_MONTH_CARD_SRC) && /const max = Math\.max\(front, back\);/.test(THIS_MONTH_CARD_SRC));
+  // Read with comments stripped: the new card's own doc comment NAMES the
+  // retired mechanism ("rotateY", "backfaceVisibility", "Animated.Value")
+  // in explaining what went, and a comment that documents an absence must
+  // not read as the thing still being present.
+  const CARD_CODE = THIS_MONTH_CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // Each assertion below is the exact inverse of a Wave 5 flip assertion,
+  // so the retirement is proven positively rather than by silence.
+  assert('No Animated.Value drives this card any more', !/Animated\.Value/.test(CARD_CODE));
+  assert('No Animated import at all', !/\bAnimated\b/.test(CARD_CODE));
+  assert('No rotateY interpolation on any face', !/rotateY/.test(CARD_CODE) && !/outputRange: \['0deg', '180deg'\]/.test(CARD_CODE));
+  assert('No 3D transform or perspective', !/perspective/.test(CARD_CODE) && !/transform: \[/.test(CARD_CODE));
+  assert('No backfaceVisibility — there is no back face to hide', !/backfaceVisibility/.test(CARD_CODE));
+  assert('No face state', !/const \[face, setFace\]/.test(CARD_CODE) && !/'front' \| 'back'/.test(CARD_CODE));
+  assert('No per-face pointerEvents gating', !/pointerEvents=\{face/.test(CARD_CODE));
+  assert('No per-face accessibility hiding', !/accessibilityElementsHidden=\{face/.test(CARD_CODE));
+  assert('No measured-height container reconciling two faces', !/updateMeasuredHeight/.test(CARD_CODE) && !/Math\.max\(front, back\)/.test(CARD_CODE));
+  assert('No stale-completion generation guard — there is no animation to supersede', !/generationRef/.test(CARD_CODE));
+  assert('No flip duration constant', !/FLIP_DURATION_MS/.test(CARD_CODE));
+
+  // Reduce Motion: the branch existed ONLY to make the flip instant.
+  // With nothing moving, the card needs no special case — and that is a
+  // stronger guarantee than the branch was, because there is no code path
+  // that could animate.
+  assert('The Reduce Motion branch is gone because nothing moves — no AccessibilityInfo subscription remains', !/AccessibilityInfo/.test(CARD_CODE) && !/reduceMotion/i.test(CARD_CODE));
+  assert('Reduced Motion therefore reaches identical content and identical controls, by construction', /Spending sources/.test(CARD_CODE) && /View all transactions/.test(CARD_CODE));
+
+  // Preserved verbatim from the Wave 5 suite.
   assert(
     'No financial persistence anywhere in this file: never calls useAppState/persist/updateAsset/addTransaction/updateTransaction/deleteTransaction',
-    !/useAppState\(\)|\bpersist\(|updateAsset\(|addTransaction\(|updateTransaction\(|deleteTransaction\(/.test(THIS_MONTH_CARD_SRC)
+    !/useAppState\(\)|\bpersist\(|updateAsset\(|addTransaction\(|updateTransaction\(|deleteTransaction\(/.test(CARD_CODE)
   );
+  assert('And no financial arithmetic — every figure still comes from the summary prop', !/summary\.incomeCents -|summary\.spendingCents \+/.test(CARD_CODE));
+}
+
+console.log('\n=== Section 20B: former-flip content parity — every back-face item survives (structural) ===');
+{
+  // The complete inventory of what the retired back face rendered, each
+  // item proven still reachable. The compact face's own truncation
+  // ("+N more sources") is deliberately NOT reproduced: the sheet shows
+  // every source individually, so the collapsed row has nothing left to
+  // collapse.
+  assert('Back-face title "How spending was paid" is the Sources sheet title', /title="How spending was paid"/.test(THIS_MONTH_SHEET_SRC));
+  assert('Back-face subtitle figure (Spending recorded total) is the sheet total row', /Spending recorded/.test(THIS_MONTH_SHEET_SRC) && /formatCents\(spendingCents\)/.test(THIS_MONTH_SHEET_SRC));
+  assert('Source label is preserved', /\{source\.label\}/.test(THIS_MONTH_SHEET_SRC));
+  assert('Source percentage is preserved', /\{source\.percentage\}%/.test(THIS_MONTH_SHEET_SRC));
+  assert('Source amount is preserved', /formatCents\(source\.amountCents\)/.test(THIS_MONTH_SHEET_SRC));
+  // Wave 6 final refinement — the row's spoken label now names BOTH
+  // concepts: what this source paid this month, and (for a card) its
+  // current balance, explicitly separated. Strictly more information than
+  // the label it replaces, in one announcement rather than several.
+  assert('Per-source accessible labels are preserved, and now distinguish paid-this-month from current balance', /accessibilityLabel=\{`\$\{source\.label\}\. \$\{paidLine\}\./.test(THIS_MONTH_SHEET_SRC) && /Current card balance \$\{card\.balanceLabel\}/.test(THIS_MONTH_SHEET_SRC));
+  assert('Deterministic row ORDER is preserved — the sheet maps the engine array as given, never re-sorting', /\{sources\.map\(\(source\) => \{/.test(THIS_MONTH_SHEET_SRC) && !/\.sort\(/.test(THIS_MONTH_SHEET_SRC));
+  assert('The overflow row is superseded, not lost — the sheet truncates nothing', !/\.slice\(/.test(THIS_MONTH_SHEET_SRC) && !/more sources/.test(THIS_MONTH_SHEET_SRC));
+  assert('The card no longer needs compact-row collapsing at all', !/computeCompactRows|COMPACT_ROW_LIMIT|COMPACT_TOP_N_WHEN_OVERFLOW/.test(THIS_MONTH_CARD_SRC));
+  assert('Front-face figures survive on the static card: Income recorded, Spending recorded, Net recorded', /Income recorded/.test(THIS_MONTH_CARD_SRC) && /Spending recorded/.test(THIS_MONTH_CARD_SRC) && /Net recorded/.test(THIS_MONTH_CARD_SRC));
+  // Wave 6 final refinement — the front-face card snapshot moved into
+  // Spending sources. Multi-card wording is superseded by something
+  // strictly better: each card now gets its OWN row with its own balance,
+  // rather than one merged "Across N cards" figure, and a card with a
+  // balance but no spending keeps its snapshot under "Other card
+  // balances". The guarantee — every card balance stays reachable and
+  // separate cards never merge — is preserved and strengthened.
+  assert('Credit-card snapshots survive per card in Spending sources, never merged into one figure', /Current card balance · \{card\.balanceLabel\}/.test(THIS_MONTH_SHEET_SRC) && /sources-other-card-balances/.test(THIS_MONTH_SHEET_SRC) && !/Across \$\{creditCardCount\} cards/.test(THIS_MONTH_CARD_SRC));
+  assert('Front-face disclosure lines survive', /Based on transactions recorded in Nolie\./.test(THIS_MONTH_CARD_SRC) && /Some recorded amounts couldn't be included\./.test(THIS_MONTH_CARD_SRC));
+  assert('The true empty state and its Add transaction action survive', /No transactions recorded yet\./.test(THIS_MONTH_CARD_SRC) && /accessibilityLabel="Add transaction"/.test(THIS_MONTH_CARD_SRC));
+  assert('The income-only state and its wording survive', /No spending recorded yet\./.test(THIS_MONTH_CARD_SRC));
 }
 
 console.log('\n=== Section 21: ThisMonthSourcesSheet.tsx — View all sheet (structural) ===');
 {
   assert('Reuses the established KeyboardSheet primitive, not a new modal framework', /import \{ KeyboardSheet \} from '\.\.\/shared\/KeyboardSheet';/.test(THIS_MONTH_SHEET_SRC));
-  assert('Shows every source individually (maps the full sources array, no slicing/truncation)', /\{sources\.map\(\(source\) => \(/.test(THIS_MONTH_SHEET_SRC) && !/\.slice\(/.test(THIS_MONTH_SHEET_SRC));
+  assert('Shows every source individually (maps the full sources array, no slicing/truncation)', /\{sources\.map\(\(source\) => \{/.test(THIS_MONTH_SHEET_SRC) && !/\.slice\(/.test(THIS_MONTH_SHEET_SRC));
   assert('Shows the exact total, matching Spending recorded', /Spending recorded/.test(THIS_MONTH_SHEET_SRC) && /formatCents\(spendingCents\)/.test(THIS_MONTH_SHEET_SRC));
   assert('No balance mutation or persistence logic anywhere in this file', !/useAppState\(\)|\bpersist\(|updateAsset\(|addTransaction\(/.test(THIS_MONTH_SHEET_SRC));
-  assert('Accessible close behaviour via the shared Button + KeyboardSheet onClose contract', /<Button label="Close" onPress=\{onClose\}/.test(THIS_MONTH_SHEET_SRC));
+  // Wave 6 correction E — Close is a neutral dismissal, so it takes the
+  // secondary (interactive-ink) treatment rather than the filled
+  // confirmation treatment. The onClose contract itself is unchanged.
+  assert('Accessible close behaviour via the shared Button + KeyboardSheet onClose contract, in the neutral treatment', /<Button label="Close" variant="secondary" onPress=\{onClose\}/.test(THIS_MONTH_SHEET_SRC));
 }
 
 console.log('\n=== Section 22: MoneyScreen.tsx — info icon isolation + corrected info copy (structural) ===');
 {
-  assert('The info icon is a sibling of ThisMonthCard in the section header, never nested inside it (pre-existing, unmodified pattern)', /onPress=\{\(\) => setThisMonthInfoVisible\(true\)\}/.test(MONEY_SCREEN_SRC));
+  // Wave 6 closure — the four bare section headings became one shared
+  // MoneySectionHeader, so the info control is now that component's
+  // `action` slot. It remains a SIBLING of ThisMonthCard, never nested
+  // inside it, which is the property this assertion protects.
+  assert('The info control is a sibling of ThisMonthCard in the shared section header, never nested inside it', /onPress: \(\) => setThisMonthInfoVisible\(true\)/.test(MONEY_SCREEN_SRC) && MONEY_SCREEN_SRC.indexOf('setThisMonthInfoVisible(true)') < MONEY_SCREEN_SRC.indexOf('<ThisMonthCard'));
   assert('The corrected info-sheet copy no longer claims a generic credit-card repayment flow is treated separately', !/Credit-card repayments are treated separately/.test(MONEY_SCREEN_SRC));
   assert('The corrected copy explains the local month-to-date window, transfer exclusion, Net recorded, funding breakdown, record-only expenses, and the credit-card snapshot distinction', /start of the current calendar month through/.test(MONEY_SCREEN_SRC) && /Move Money transfers between your own balances are excluded/.test(MONEY_SCREEN_SRC) && /Net recorded is Income recorded minus Spending recorded/.test(MONEY_SCREEN_SRC) && /An expense recorded without changing a tracked balance/.test(MONEY_SCREEN_SRC) && /separate from month-to-date\s+spending/.test(MONEY_SCREEN_SRC));
-  assert('ThisMonthCard is wired with the new unified summary prop, not the old broad-bucket activity prop', /summary=\{thisMonthSummary\}/.test(MONEY_SCREEN_SRC));
+  assert('ThisMonthCard is wired with the unified summary prop, not the old broad-bucket activity prop', /summary=\{thisMonthSummary\}/.test(MONEY_SCREEN_SRC));
+  // Wave 6 — the card no longer needs `today`; its only use was the flip
+  // body's own state. `monthStart` still supplies the month-to-date label.
+  assert('...and no longer receives the now-unused today prop', /<ThisMonthCard[\s\S]{0,400}monthStart=\{thisMonthStart\}/.test(MONEY_SCREEN_SRC));
   assert('computeThisMonthRecordedSummary is computed once, memoized off the same [data, currentDate] dependency computeMonthToDateActivity already uses', /const thisMonthSummary = useMemo\(\(\) => computeThisMonthRecordedSummary\(data, currentDate\), \[data, currentDate\]\);/.test(MONEY_SCREEN_SRC));
 }
 
@@ -701,16 +790,32 @@ console.log('\n=== Section 26: income-only state — $500/$0/$500 (real import +
   assert('Income recorded is exactly $500.00 (50000 cents)', result.incomeCents === 50000);
   assert('Spending recorded is exactly $0.00 (0 cents) — not independently computed, genuinely zero', result.spendingCents === 0);
   assert('Net recorded is exactly $500.00 (50000 cents) — incomeCents minus zero spendingCents', result.netCents === 50000);
-  assert('spendingSources is empty — no flip target exists', result.spendingSources.length === 0);
+  assert('spendingSources is empty — there is no breakdown to show', result.spendingSources.length === 0);
 
+  // WAVE 6 — the income-only state is no longer a separate front-only
+  // BRANCH; the card is static, so it is simply the same card with the
+  // source control suppressed. Every behavioural claim is unchanged.
   assert(
-    'Structural: ThisMonthCard.tsx routes hasSpending === false straight to the front-only branch (no ThisMonthFlipBody) regardless of income',
-    /if \(!hasSpending\) \{\s*\n\s*return \(\s*\n\s*<SectionCard>\s*\n\s*\{frontFigures\}/.test(THIS_MONTH_CARD_SRC)
+    'Structural: with no spending, the Spending sources control is not rendered at all',
+    /\{hasSpending \? \(\s*\n\s*<TouchableOpacity/.test(THIS_MONTH_CARD_SRC)
   );
-  assert('Structural: the front-only branch never renders "Show spending sources" (that control only exists inside ThisMonthFlipBody)', !/if \(!hasSpending\) \{[\s\S]{0,400}Show spending sources/.test(THIS_MONTH_CARD_SRC));
-  assert('Structural: the front-only branch DOES render View transactions', /if \(!hasSpending\) \{[\s\S]{0,400}View transactions/.test(THIS_MONTH_CARD_SRC));
-  assert('Structural: frontFigures (shared by both the income-only and normal flip states) renders Income recorded / Spending recorded / Net recorded unconditionally', /Income recorded/.test(THIS_MONTH_CARD_SRC) && /Spending recorded/.test(THIS_MONTH_CARD_SRC) && /Net recorded/.test(THIS_MONTH_CARD_SRC));
-  assert('Structural: the credit-card snapshot inside frontFigures is gated on hasCreditCards alone, independent of income/spending state', /\{hasCreditCards \? \(/.test(THIS_MONTH_CARD_SRC));
+  assert('Structural: and the income-only wording is still shown', /\{!hasSpending \? <Text style=\{styles\.emptyText\}>No spending recorded yet\.<\/Text> : null\}/.test(THIS_MONTH_CARD_SRC));
+  assert('Structural: View transactions is NOT gated on spending — it renders in every populated state', (() => {
+    const at = THIS_MONTH_CARD_SRC.indexOf('accessibilityLabel="View all transactions"');
+    const gate = THIS_MONTH_CARD_SRC.indexOf('{hasSpending ? (');
+    const gateEnd = THIS_MONTH_CARD_SRC.indexOf(') : null}', gate);
+    return at !== -1 && (at < gate || at > gateEnd);
+  })());
+  assert('Structural: the three recorded figures render unconditionally in every populated state', /Income recorded/.test(THIS_MONTH_CARD_SRC) && /Spending recorded/.test(THIS_MONTH_CARD_SRC) && /Net recorded/.test(THIS_MONTH_CARD_SRC));
+  // Wave 6 final refinement — the standalone "Current credit-card balance"
+  // line was retired from This Month. It sat beneath three month-to-date
+  // measures while being a present-moment snapshot, inviting exactly the
+  // misreading its own disclaimer warned about. The snapshot is not lost:
+  // it is now attached to the card that spent it, inside Spending sources,
+  // as an explicitly separate line — and a card with a balance but no
+  // spending this month keeps its snapshot in "Other card balances".
+  assert('Structural: the credit-card snapshot moved into Spending sources, where paid-this-month and current balance are separate labelled lines', /Current card balance · \{card\.balanceLabel\}/.test(THIS_MONTH_SHEET_SRC) && !/Current credit-card balance/.test(THIS_MONTH_CARD_SRC));
+  assert('Structural: and a card with a balance but no spending this month is still reachable', /sources-other-card-balances/.test(THIS_MONTH_SHEET_SRC) && /No spending recorded this month/.test(THIS_MONTH_SHEET_SRC));
 }
 
 // ============================================================================
@@ -740,7 +845,7 @@ console.log('\n=== Section 27: invalid-only degraded state (real import + struct
     /if \(!hasActivity\) \{[\s\S]{0,50}return \(/.test(THIS_MONTH_CARD_SRC)
   );
   assert('Structural: the neutral disclosure line is present and reads calmly, with no parser/technical terminology', /Some recorded amounts couldn't be included\./.test(THIS_MONTH_CARD_SRC) && !/NaN|parse|invalid input/i.test(THIS_MONTH_CARD_SRC.match(/disclaimer[\s\S]{0,300}/)?.[0] ?? ''));
-  assert('Structural: View transactions remains present in the same front-only branch this state now reaches', /if \(!hasSpending\) \{[\s\S]{0,400}View transactions/.test(THIS_MONTH_CARD_SRC));
+  assert('Structural: View transactions remains present in the populated state this degraded case reaches', /accessibilityLabel="View all transactions"/.test(THIS_MONTH_CARD_SRC));
 }
 
 // ============================================================================

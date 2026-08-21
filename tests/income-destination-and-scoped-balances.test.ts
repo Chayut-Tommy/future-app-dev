@@ -913,8 +913,13 @@ console.log('\n=== Section 11: SafeToSpendHero.tsx — Manage balances control (
   // Until Payday substitution); it falls through to the ordinary card, which
   // already renders this control. One fewer call site, same guarantee: the
   // control is defined once and every card state that shows it reuses it.
+  // Wave 6 Correction C — every hero state was converged onto ONE shared
+  // shell, so the control has exactly one call site instead of five. The
+  // claim protected here is unchanged and now stronger: it is defined once
+  // and every state that shows it reuses that one definition, so no state
+  // can render a divergent copy.
   const callSiteCount = (SAFE_TO_SPEND_HERO_SRC.match(/\{renderManageBalancesButton\(/g) || []).length;
-  assert('renderManageBalancesButton is called from exactly 5 card-state render branches (goals_underfunded now uses the ordinary card; unavailable_balance_data uses onReviewInWealth)', callSiteCount === 5);
+  assert('renderManageBalancesButton is defined once and reused by the one shared hero shell, so every state gets the same control', callSiteCount === 1 && /function renderShell\(/.test(SAFE_TO_SPEND_HERO_SRC));
   assert(
     'The control opens the EXISTING onSelectBalances callback (Select Balances) — never a new/second balance-management surface',
     /onPress=\{onSelectBalances\}/.test(SAFE_TO_SPEND_HERO_SRC) && /accessibilityLabel="Manage balances"/.test(SAFE_TO_SPEND_HERO_SRC)
@@ -928,8 +933,12 @@ console.log('\n=== Section 11: SafeToSpendHero.tsx — Manage balances control (
     /hitSlop=\{\{ top: 10, bottom: 10, left: 10, right: 10 \}\}/.test(SAFE_TO_SPEND_HERO_SRC)
   );
   assert(
-    'The pre-existing empty-state "Select balances" CTA buttons are still present, untouched — this is an ADDITIVE control, not a replacement',
-    /Select balances<\/Text>/.test(SAFE_TO_SPEND_HERO_SRC)
+    // Wave 6 Correction C — the empty state's CTA keeps its role and its
+    // destination; its wording is the authorised "Choose balances", and it
+    // is now one interactive action rather than a brown warning button.
+    'The empty state still carries its own balance CTA, opening the same Select Balances journey — an ADDITIVE control, not a replacement',
+    /const CHOOSE_BALANCES_CTA = 'Choose balances';/.test(SAFE_TO_SPEND_HERO_SRC) &&
+      /label: CHOOSE_BALANCES_CTA, onPress: onSelectBalances/.test(SAFE_TO_SPEND_HERO_SRC)
   );
 }
 

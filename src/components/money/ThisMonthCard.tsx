@@ -1,13 +1,41 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { Animated, AccessibilityInfo, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
-import { SectionCard } from '../shared/SectionCard';
-import { ThisMonthRecordedSummary, ThisMonthSpendingSource } from '../../lib/calculations/monthlySummary';
+import { ThisMonthRecordedSummary } from '../../lib/calculations/monthlySummary';
 import { ThisMonthSourcesSheet } from './ThisMonthSourcesSheet';
+import {
+  MONEY_MEASURE_DEFINITIONS,
+  OtherCardBalance,
+  SourceCardContext,
+  isAccessibilityText,
+} from '../../lib/calculations/moneyComposition';
+import { Ionicons } from '@expo/vector-icons';
+import { AddIconTone } from '../../lib/addIcons';
 
-const FLIP_DURATION_MS = 350;
-const COMPACT_ROW_LIMIT = 4;
-const COMPACT_TOP_N_WHEN_OVERFLOW = 3;
+/** One recent transaction, already resolved for display by the caller. */
+export interface RecentActivityRow {
+  id: string;
+  label: string;
+  dateLabel: string;
+  amountLabel: string;
+  isIncome: boolean;
+  /** From the canonical addIcons category map — never a generic arrow and
+   * never an emoji. */
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: AddIconTone;
+}
+
+/** One compact insight — icon, short label, value. Never a paragraph. */
+export interface ActivityInsight {
+  key: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 /** `$60` for an exact whole dollar, `$60.25` when cents exist, `-$` prefix
  * for a negative value — never independently re-rounds a value that was
@@ -20,411 +48,400 @@ function formatCents(cents: number): string {
   return remainder === 0 ? `${sign}$${whole.toLocaleString()}` : `${sign}$${whole.toLocaleString()}.${String(remainder).padStart(2, '0')}`;
 }
 
-function sanitizeBalance(value: number): number {
-  return Number.isFinite(value) ? value : 0;
-}
+/** Design 5.1 Wave 6 — the default page's content budget: a preview, not
+ * a list. The full journey is one tap away. */
+const MAX_RECENT_ROWS = 3;
+const MAX_INSIGHTS = 2;
 
-/** Deterministic compact-row shape (PRD ask, "Compact source rule" — one
- * rule, not two unresolved alternatives): 1-4 sources show individually;
- * 5+ show the top 3 individually plus one aggregated overflow row whose
- * amount is the exact sum of everything past the top 3 — never 4
- * individual rows plus a 5th overflow row. `spendingSources` is already
- * sorted deterministically (amount desc, label, key) by
- * computeThisMonthRecordedSummary itself — never re-sorted here. */
-function computeCompactRows(sources: ThisMonthSpendingSource[]): {
-  rows: ThisMonthSpendingSource[];
-  overflow: { count: number; amountCents: number } | null;
-} {
-  if (sources.length <= COMPACT_ROW_LIMIT) return { rows: sources, overflow: null };
-  const rows = sources.slice(0, COMPACT_TOP_N_WHEN_OVERFLOW);
-  const rest = sources.slice(COMPACT_TOP_N_WHEN_OVERFLOW);
-  return { rows, overflow: { count: rest.length, amountCents: rest.reduce((sum, s) => sum + s.amountCents, 0) } };
+/** Restrained tint tiles. Icons carry a low-intensity tinted surface so the
+ * rows are differentiable at a glance; the AMOUNTS stay neutral unless the
+ * money itself is genuinely positive. Colour communicates type, not
+ * judgement — ordinary spending never turns red. */
+function toneTint(tone: AddIconTone, semantic: any): { bg: string; ink: string } {
+  switch (tone) {
+    case 'mint':
+      return { bg: semantic.successTint, ink: semantic.success };
+    case 'teal':
+      return { bg: semantic.infoTint, ink: semantic.infoText };
+    case 'amber':
+      return { bg: semantic.warningTint, ink: semantic.warning };
+    case 'violet':
+      return { bg: semantic.interactiveTint, ink: semantic.interactive };
+    case 'coral':
+      return { bg: semantic.urgentTint, ink: semantic.urgentText };
+    case 'ocean':
+    default:
+      return { bg: semantic.interactiveTint, ink: semantic.interactive };
+  }
 }
 
 /**
- * "This Month" — a factual, calendar-month recorded-activity summary (PRD
- * ask, Finding #40), redesigned as a two-face flip card (correction round,
- * 2026-08-10). Front answers "how much qualifying income and spending has
- * been recorded so far this month"; back answers "which recorded funding
- * sources paid for that spending." Complements Available Until Payday
- * rather than altering it — Available Until Payday answers "how much
- * included cash is estimated to remain until payday"; this answers "what
- * have I actually recorded this calendar month." Related but genuinely
- * different questions, never merged into one number (PRD ask).
+ * "This Month" — a factual, calendar-month recorded-activity summary.
  *
- * Both faces read from the ONE shared `summary` (ThisMonthRecordedSummary,
- * monthlySummary.ts) — incomeCents/spendingCents/netCents on the front,
- * spendingSources on the back — never independently-rounded broad buckets
- * on one face and exact cents on the other (PRD ask, "Unify the front and
- * back exact-cent contract"). `sum(spendingSources[].amountCents) ===
- * spendingCents` holds exactly, by construction, inside that function.
+ * WAVE 6: THE FLIP IS RETIRED.
+ *
+ * This was a two-face 3D flip card. The front carried income, spending and
+ * net recorded; the back carried the funding-source breakdown, reachable
+ * only by flipping — and the complete, untruncated source list was reachable
+ * only by a "View all" control that itself only appeared on the back face,
+ * and only when there were enough sources to overflow. Three levels of
+ * disclosure for one list.
+ *
+ * It is now a static summary with one explicit "Spending sources" control
+ * that opens ThisMonthSourcesSheet directly. Nothing was lost: the sheet
+ * already showed EVERY source with its label, percentage and amount plus a
+ * reconciling total, so what the compact back face could only show as
+ * "+N more sources" is now always fully available in one step.
+ *
+ * Retired with the flip: the shared Animated.Value, both rotateY
+ * interpolations, `backfaceVisibility`, the absolute back face, the
+ * measured-height container, per-face `pointerEvents`/accessibility
+ * hiding, the `face` state, and the Reduce Motion branch that existed
+ * solely to make the flip instant. Reduce Motion now needs no special case
+ * here at all, because nothing moves.
+ *
+ * Every figure still comes from `summary` (computeThisMonthRecordedSummary,
+ * unmodified). This component performs no financial arithmetic.
  */
 export function ThisMonthCard({
   summary,
-  creditCardBalance,
-  hasCreditCards,
-  creditCardCount,
   monthStart,
-  today,
+  recent = [],
+  insights = [],
+  cardContexts = [],
+  otherCardBalances = [],
   onViewTransactions,
   onAddTransaction,
 }: {
   summary: ThisMonthRecordedSummary;
-  creditCardBalance: number;
-  hasCreditCards: boolean;
-  creditCardCount: number;
   monthStart: Date;
-  today: Date;
+  /** Wave 6 final pass — Recent activity was a SEPARATE top-level section
+   * repeating this card's own month-to-date framing. It is now a
+   * subsection here: at most three rows, preview only, no nested scroll.
+   * Already selected and ordered by the caller; this card re-sorts
+   * nothing. */
+  recent?: RecentActivityRow[];
+  /** Joined from the caller's own card list by stable id — never computed
+   * here, and never added to any total. */
+  cardContexts?: SourceCardContext[];
+  otherCardBalances?: OtherCardBalance[];
+  /** At most two compact insights, already computed by the existing
+   * spending-insights engine. */
+  insights?: ActivityInsight[];
   onViewTransactions: () => void;
   onAddTransaction: () => void;
 }) {
-  const { colors, spacing, typography, radius } = useTheme();
+  const { semantic } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+  // At accessibility sizes — or on a genuinely narrow phone — the metric
+  // cells and the action buttons become full-width blocks rather than
+  // shrinking their labels into micro-text.
+  const stackMetrics = isAccessibilityText(fontScale);
+  const stackActions = stackMetrics || width <= designLayout.breakpoints.compactMax;
+  const [sourcesSheetVisible, setSourcesSheetVisible] = useState(false);
 
   const hasIncome = summary.incomeCents > 0;
   const hasSpending = summary.spendingCents > 0;
-  // Correction round, 2026-08-10 ("Define the invalid-only degraded
-  // state"): a month with no valid income/expense transactions but at
-  // least one recorded transaction that failed strict validation must NOT
-  // fall into the true empty state below — that would say "No transactions
-  // recorded yet," which is false (something was recorded, it just
-  // couldn't be included) and would hide the disclosure line entirely.
-  // Treating hasInvalidRecordedAmounts as activity routes this case into
-  // the same safe-zero-values + disclosure + View transactions rendering
-  // as the ordinary income-only state below, never the flip (hasSpending
-  // stays false either way).
+  // A month with no valid income/expense transactions but at least one
+  // recorded transaction that failed strict validation must NOT fall into
+  // the true empty state — that would say "No transactions recorded yet,"
+  // which is false, and would hide the disclosure line entirely.
   const hasActivity = hasIncome || hasSpending || summary.hasInvalidRecordedAmounts;
 
   const monthLabel = `${monthStart.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} to today`;
 
-  // Sign-aware credit-card snapshot — unchanged arithmetic from the prior
-  // single-face card, only the multi-card label (PRD ask, "Multiple-card
-  // wording decision") is new. `< 0` (not `<= 0`) deliberately excludes -0
-  // from the "in credit" branch.
-  const sanitizedCreditCardBalance = sanitizeBalance(creditCardBalance);
-  const cardsInCredit = sanitizedCreditCardBalance < 0;
-  const displayedCardBalance = Math.round(Math.abs(sanitizedCreditCardBalance));
-  const creditCardLabel = creditCardCount > 1 ? 'Current credit-card balances' : 'Current credit-card balance';
-  const creditCardSubLabel = cardsInCredit
-    ? 'Your cards are currently in credit'
-    : creditCardCount > 1
-    ? `Across ${creditCardCount} cards`
-    : "A snapshot, not this month's spending";
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
-        subtitle: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.md },
-        row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
-        rowLabel: { ...typography.body, fontSize: 13, color: colors.textSecondary },
-        rowValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        sourceLabel: { ...typography.body, fontSize: 13, color: colors.textSecondary, flexShrink: 1, marginRight: spacing.sm },
-        sourcePercentage: { ...typography.caption, fontSize: 11, color: colors.textMuted, marginTop: 1 },
-        divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: spacing.sm },
-        balanceLabel: { ...typography.micro, fontSize: 11, color: colors.textMuted },
-        emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, marginBottom: spacing.sm },
-        addButton: {
-          alignSelf: 'flex-start',
-          backgroundColor: colors.accentSoft,
-          borderRadius: radius.pill,
-          paddingVertical: 8,
-          paddingHorizontal: spacing.md,
-          minHeight: 44,
+        card: {
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          padding: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
+        },
+        subtitle: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginBottom: designSpacing.xs },
+        definition: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginBottom: designSpacing.md },
+        row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: designSpacing.md, paddingVertical: 6 },
+        // Three compact metric cells. They reflow to full-width blocks at
+        // accessibility sizes rather than shrinking their labels.
+        metricGrid: {
+          flexDirection: stackMetrics ? 'column' : 'row',
+          gap: designSpacing.md,
+          marginBottom: designSpacing.sm,
+        },
+        metricCell: { flex: stackMetrics ? undefined : 1, minWidth: 0 },
+        metricTile: {
+          width: 26,
+          height: 26,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: designSpacing.xs,
+        },
+        // Readable, never micro-text.
+        metricLabel: { ...typeStyle('meta', locale), color: semantic.textSecondary },
+        metricValue: { ...typeStyle('figureRow', locale), marginTop: 2, flexShrink: 0 },
+        rowLabel: { ...typeStyle('support', locale), color: semantic.textSecondary, flexShrink: 1 },
+        rowValue: { ...typeStyle('figureRow', locale), color: semantic.textPrimary, flexShrink: 0 },
+        divider: { height: StyleSheet.hairlineWidth, backgroundColor: semantic.border, marginVertical: designSpacing.sm },
+        balanceLabel: { ...typeStyle('meta', locale), color: semantic.textTertiary },
+        emptyText: { ...typeStyle('support', locale), color: semantic.textSecondary, marginBottom: designSpacing.sm },
+        actionRow: {
+          flexDirection: stackActions ? 'column' : 'row',
+          gap: designSpacing.sm,
+          marginTop: designSpacing.md,
+        },
+        // The owner asked for borders that are unmistakably visible — a
+        // deliberate 2pt, not a hairline that reads as a divider.
+        outlineButton: {
+          flex: stackActions ? undefined : 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: designSpacing.xs,
+          minHeight: designLayout.touchTargetMin,
+          paddingHorizontal: designSpacing.md,
+          borderRadius: designRadius.control,
+          borderWidth: 2,
+          borderColor: semantic.interactive,
+        },
+        outlineButtonText: { ...typeStyle('labelButton', locale), color: semantic.interactive, flexShrink: 1 },
+        action: {
+          minHeight: designLayout.touchTargetMin,
+          justifyContent: 'center',
+          paddingHorizontal: designSpacing.md,
+          borderRadius: designRadius.control,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+        },
+        actionText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        linkButton: { minHeight: designLayout.touchTargetMin, justifyContent: 'center', alignSelf: 'flex-start' },
+        linkButtonText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        disclaimer: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
+        // Recent activity — a subsection of this card, separated by the
+        // card's own divider rather than becoming another white card.
+        subHeading: { ...typeStyle('meta', locale), color: semantic.textSecondary, fontWeight: '600', marginBottom: designSpacing.xs },
+        txnRow: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.md, paddingVertical: designSpacing.xs },
+        txnIcon: {
+          width: 28,
+          height: 28,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
           justifyContent: 'center',
         },
-        addButtonText: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '700' },
-        disclaimer: { ...typography.micro, fontSize: 10, color: colors.textMuted, marginTop: spacing.sm },
-        controlRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
-        pillButton: {
-          borderRadius: radius.pill,
-          paddingVertical: 8,
-          paddingHorizontal: spacing.md,
-          borderWidth: 1,
-          borderColor: colors.border,
-          minHeight: 44,
-          justifyContent: 'center',
-        },
-        pillButtonText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
-        linkButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-        linkButtonText: { ...typography.caption, fontSize: 12, color: colors.accentStrong, fontWeight: '700' },
-        faceContainer: { position: 'relative' },
-        face: { backfaceVisibility: 'hidden' },
-        faceBack: { position: 'absolute', top: 0, left: 0, right: 0 },
+        txnBody: { flex: 1 },
+        txnLabel: { ...typeStyle('support', locale), color: semantic.textPrimary },
+        txnDate: { ...typeStyle('meta', locale), color: semantic.textTertiary },
+        txnAmount: { ...typeStyle('figureRow', locale), flexShrink: 0 },
+        // Icon + short label + value. No prose.
+        insightStrip: { flexDirection: 'row', flexWrap: 'wrap', gap: designSpacing.md, marginTop: designSpacing.md },
+        insightItem: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, flexShrink: 1 },
+        insightText: { ...typeStyle('meta', locale), color: semantic.textSecondary, flexShrink: 1 },
       }),
-    [colors, spacing, typography, radius]
+    [semantic, locale, stackMetrics, stackActions]
   );
 
   // ==========================================================================
-  // State A — no income, no spending: the established empty state, no flip
-  // control, no back face at all (PRD ask, "no income and no spending").
+  // State A — nothing recorded at all.
   // ==========================================================================
   if (!hasActivity) {
     return (
-      <SectionCard>
-        <Text style={styles.title}>This Month</Text>
+      <View style={styles.card} testID="money-this-month-card">
         <Text style={styles.subtitle}>Month to date · {monthLabel}</Text>
         <Text style={styles.emptyText}>No transactions recorded yet.</Text>
-        <TouchableOpacity style={styles.addButton} onPress={onAddTransaction} accessibilityRole="button" accessibilityLabel="Add transaction">
-          <Text style={styles.addButtonText}>Add transaction</Text>
+        <TouchableOpacity style={styles.linkButton} onPress={onAddTransaction} accessibilityRole="button" accessibilityLabel="Add transaction">
+          <Text style={styles.linkButtonText}>Add transaction</Text>
         </TouchableOpacity>
-      </SectionCard>
+      </View>
     );
   }
 
-  const netColor = summary.netCents > 0 ? colors.accentStrong : summary.netCents < 0 ? colors.warning : colors.textPrimary;
+  // Positive net reads in the success role, negative in caution — never
+  // urgent red, which is reserved for genuinely time-sensitive items.
+  const netColor =
+    summary.netCents > 0 ? semantic.success : summary.netCents < 0 ? semantic.warning : semantic.textPrimary;
 
-  const frontFigures = (
-    <>
-      <Text style={styles.title}>This Month</Text>
+  return (
+    <View style={styles.card} testID="money-this-month-card">
       <Text style={styles.subtitle}>Month to date · {monthLabel}</Text>
-      <View style={styles.row}>
-        <Text style={styles.rowLabel}>Income recorded</Text>
-        <Text style={[styles.rowValue, { color: colors.accentStrong }]} accessibilityLabel={`Income recorded ${formatCents(summary.incomeCents)}`}>
-          {formatCents(summary.incomeCents)}
-        </Text>
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.rowLabel}>Spending recorded</Text>
-        <Text style={styles.rowValue} accessibilityLabel={`Spending recorded ${formatCents(summary.spendingCents)}`}>
-          {formatCents(summary.spendingCents)}
-        </Text>
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.rowLabel}>Net recorded</Text>
-        <Text style={[styles.rowValue, { color: netColor }]} accessibilityLabel={`Net recorded ${formatCents(summary.netCents)}`}>
-          {formatCents(summary.netCents)}
-        </Text>
-      </View>
-      {hasCreditCards ? (
-        <>
-          <View style={styles.divider} />
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.rowLabel}>{creditCardLabel}</Text>
-              <Text style={styles.balanceLabel}>{creditCardSubLabel}</Text>
+      <Text style={styles.definition}>{MONEY_MEASURE_DEFINITIONS.thisMonth}</Text>
+
+      {/* Wave 6 final refinement — three compact metric cells rather than
+          three identical label/value rows. Each carries a restrained tinted
+          icon tile so the measures are differentiable at a glance; only the
+          amounts that are genuinely positive money take the success role,
+          and ordinary spending stays neutral ink. */}
+      <View style={styles.metricGrid}>
+        {[
+          {
+            key: 'income',
+            testID: 'this-month-income',
+            label: 'Income recorded',
+            value: formatCents(summary.incomeCents),
+            icon: 'cash-outline' as keyof typeof Ionicons.glyphMap,
+            tile: semantic.successTint,
+            tileInk: semantic.success,
+            valueInk: semantic.success,
+          },
+          {
+            key: 'spending',
+            testID: 'this-month-spending',
+            label: 'Spending recorded',
+            value: formatCents(summary.spendingCents),
+            icon: 'receipt-outline' as keyof typeof Ionicons.glyphMap,
+            tile: semantic.interactiveTint,
+            tileInk: semantic.interactive,
+            valueInk: semantic.textPrimary,
+          },
+          {
+            key: 'net',
+            testID: 'this-month-net',
+            label: 'Net recorded',
+            value: formatCents(summary.netCents),
+            icon: (summary.netCents < 0 ? 'trending-down-outline' : 'trending-up-outline') as keyof typeof Ionicons.glyphMap,
+            tile: summary.netCents < 0 ? semantic.warningTint : semantic.interactiveTint,
+            tileInk: summary.netCents < 0 ? semantic.warning : semantic.interactive,
+            valueInk: netColor,
+          },
+        ].map((m) => (
+          <View key={m.key} style={styles.metricCell} testID={m.testID}>
+            <View style={[styles.metricTile, { backgroundColor: m.tile }]} importantForAccessibility="no-hide-descendants">
+              <Ionicons name={m.icon} size={14} color={m.tileInk} />
             </View>
-            <Text style={styles.rowValue}>
-              {cardsInCredit ? '-' : ''}
-              {`$${displayedCardBalance.toLocaleString()}`}
+            <Text style={styles.metricLabel} numberOfLines={2}>{m.label}</Text>
+            <Text
+              style={[styles.metricValue, { color: m.valueInk }]}
+              numberOfLines={1}
+              accessibilityLabel={`${m.label} ${m.value}`}
+            >
+              {m.value}
             </Text>
           </View>
-        </>
-      ) : null}
-    </>
-  );
+        ))}
+      </View>
 
-  const disclosureLines = (
-    <>
-      <Text style={styles.disclaimer}>Based on transactions recorded in Nolie.</Text>
-      {summary.hasInvalidRecordedAmounts ? <Text style={styles.disclaimer}>Some recorded amounts couldn't be included.</Text> : null}
-    </>
-  );
+      {/* Wave 6 final refinement — the standalone "Current credit-card
+          balance" line is gone from this card. It sat directly beneath
+          three month-to-date measures while being a present-moment
+          snapshot, which invited exactly the misreading it carried a
+          disclaimer about. It now lives inside Spending sources, attached
+          to the card it belongs to, where "paid this month" and "current
+          balance" are two labelled lines on one row and can no longer be
+          confused for each other. */}
 
-  // ==========================================================================
-  // State B — income recorded, no spending: front-only, no flip control, no
-  // back face rendered at all (PRD ask, "no spending — no flip; there is no
-  // source breakdown to show").
-  // ==========================================================================
-  if (!hasSpending) {
-    return (
-      <SectionCard>
-        {frontFigures}
-        <Text style={styles.emptyText}>No spending recorded yet.</Text>
-        <View style={styles.controlRow}>
-          <TouchableOpacity
-            style={styles.linkButton}
-            onPress={onViewTransactions}
-            accessibilityRole="button"
-            accessibilityLabel="View transactions"
-          >
-            <Text style={styles.linkButtonText}>View transactions</Text>
-          </TouchableOpacity>
-        </View>
-        {disclosureLines}
-      </SectionCard>
-    );
-  }
+      {!hasSpending ? <Text style={styles.emptyText}>No spending recorded yet.</Text> : null}
 
-  // ==========================================================================
-  // States C/D — spending exists: full two-face flip card.
-  // ==========================================================================
-  return (
-    <ThisMonthFlipBody
-      summary={summary}
-      frontFigures={frontFigures}
-      disclosureLines={disclosureLines}
-      onViewTransactions={onViewTransactions}
-      styles={styles}
-      colors={colors}
-    />
-  );
-}
-
-/** Split out from ThisMonthCard so the flip-specific state (Animated.Value,
- * Reduce Motion, measured height, the sources-detail sheet) only exists
- * when there's genuinely something to flip to (spending > 0) — states A/B
- * above never mount any of it. */
-function ThisMonthFlipBody({
-  summary,
-  frontFigures,
-  disclosureLines,
-  onViewTransactions,
-  styles,
-  colors,
-}: {
-  summary: ThisMonthRecordedSummary;
-  frontFigures: React.ReactNode;
-  disclosureLines: React.ReactNode;
-  onViewTransactions: () => void;
-  styles: Record<string, any>;
-  colors: ReturnType<typeof useTheme>['colors'];
-}) {
-  const [face, setFace] = useState<'front' | 'back'>('front');
-  const [sourcesSheetVisible, setSourcesSheetVisible] = useState(false);
-  const flipProgress = useRef(new Animated.Value(0)).current;
-  const generationRef = useRef(0);
-  const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
-  const [containerHeight, setContainerHeight] = useState<number | undefined>(undefined);
-  const frontHeightRef = useRef<number | undefined>(undefined);
-  const backHeightRef = useRef<number | undefined>(undefined);
-
-  // Reduce Motion — the same established AccessibilityInfo pattern already
-  // used for AddAnythingSheet's push transition, the only other flip/
-  // transition surface in this app (PRD ask: reuse, don't reinvent).
-  useEffect(() => {
-    let mounted = true;
-    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (mounted) setReduceMotionEnabled(enabled);
-    });
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotionEnabled);
-    return () => {
-      mounted = false;
-      sub.remove();
-    };
-  }, []);
-
-  function flipTo(target: 'front' | 'back') {
-    if (face === target) return;
-    generationRef.current += 1;
-    const myGeneration = generationRef.current;
-    const toValue = target === 'back' ? 1 : 0;
-    if (reduceMotionEnabled) {
-      flipProgress.setValue(toValue);
-      setFace(target);
-      return;
-    }
-    Animated.timing(flipProgress, { toValue, duration: FLIP_DURATION_MS, useNativeDriver: true }).start(() => {
-      if (myGeneration !== generationRef.current) return; // stale-completion guard — rapid-tap safe
-      setFace(target);
-    });
-  }
-
-  function updateMeasuredHeight(face: 'front' | 'back', height: number) {
-    if (face === 'front') frontHeightRef.current = height;
-    else backHeightRef.current = height;
-    const front = frontHeightRef.current;
-    const back = backHeightRef.current;
-    if (front !== undefined && back !== undefined) {
-      const max = Math.max(front, back);
-      setContainerHeight((prev) => (prev === max ? prev : max));
-    }
-  }
-
-  const frontRotateY = flipProgress.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
-  const backRotateY = flipProgress.interpolate({ inputRange: [0, 1], outputRange: ['-180deg', '0deg'] });
-
-  const { rows: compactRows, overflow } = computeCompactRows(summary.spendingSources);
-
-  return (
-    <SectionCard>
-      <View style={[styles.faceContainer, containerHeight !== undefined ? { height: containerHeight } : null]}>
-        {/* FRONT FACE */}
-        <Animated.View
-          style={[styles.face, { transform: [{ perspective: 1000 }, { rotateY: frontRotateY }] }]}
-          onLayout={(e) => updateMeasuredHeight('front', e.nativeEvent.layout.height)}
-          pointerEvents={face === 'front' ? 'auto' : 'none'}
-          accessibilityElementsHidden={face !== 'front'}
-          importantForAccessibility={face === 'front' ? 'auto' : 'no-hide-descendants'}
-        >
-          {frontFigures}
-          <View style={styles.controlRow}>
-            <TouchableOpacity
-              style={styles.pillButton}
-              onPress={() => flipTo('back')}
-              accessibilityRole="button"
-              accessibilityLabel="Show spending sources"
-              accessibilityHint="Flips the card to show which sources funded this month's spending"
+      {/* Wave 6 final pass — Recent activity, merged in from its retired
+          standalone section. Preview only: at most three rows, no nested
+          scroll, and the full journey stays one tap away below. */}
+      {recent.length > 0 ? (
+        <>
+          <View style={styles.divider} />
+          <Text style={styles.subHeading}>Recent activity</Text>
+          {recent.slice(0, MAX_RECENT_ROWS).map((t) => (
+            <View
+              key={t.id}
+              style={styles.txnRow}
+              testID={`this-month-recent-${t.id}`}
+              accessible
+              accessibilityLabel={`${t.label}, ${t.dateLabel}, ${t.amountLabel}`}
             >
-              <Text style={styles.pillButtonText}>Show spending sources</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.controlRow}>
-            <TouchableOpacity style={styles.linkButton} onPress={onViewTransactions} accessibilityRole="button" accessibilityLabel="View transactions">
-              <Text style={styles.linkButtonText}>View transactions</Text>
-            </TouchableOpacity>
-          </View>
-          {disclosureLines}
-        </Animated.View>
-
-        {/* BACK FACE */}
-        <Animated.View
-          style={[styles.face, styles.faceBack, { transform: [{ perspective: 1000 }, { rotateY: backRotateY }] }]}
-          onLayout={(e) => updateMeasuredHeight('back', e.nativeEvent.layout.height)}
-          pointerEvents={face === 'back' ? 'auto' : 'none'}
-          accessibilityElementsHidden={face !== 'back'}
-          importantForAccessibility={face === 'back' ? 'auto' : 'no-hide-descendants'}
-        >
-          <Text style={styles.title}>How spending was paid</Text>
-          <Text style={styles.subtitle}>Month to date · Spending recorded {formatCents(summary.spendingCents)}</Text>
-          {compactRows.map((source) => (
-            <View key={source.key} style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sourceLabel} numberOfLines={1} accessibilityLabel={source.label}>
-                  {source.label}
-                </Text>
-                <Text style={styles.sourcePercentage}>{source.percentage}%</Text>
+              {/* Canonical category glyph and its designed domain tone, so
+                  Groceries, Dining out and Bonus are distinguishable at a
+                  glance without any of them shouting. */}
+              <View
+                style={[styles.txnIcon, { backgroundColor: toneTint(t.tone, semantic).bg }]}
+                importantForAccessibility="no-hide-descendants"
+              >
+                <Ionicons name={t.icon} size={14} color={toneTint(t.tone, semantic).ink} />
               </View>
-              <Text style={styles.rowValue} accessibilityLabel={`${source.label} ${formatCents(source.amountCents)}`}>
-                {formatCents(source.amountCents)}
+              <View style={styles.txnBody}>
+                <Text style={styles.txnLabel} numberOfLines={1}>{t.label}</Text>
+                <Text style={styles.txnDate}>{t.dateLabel}</Text>
+              </View>
+              {/* Income may read as success; ordinary spending is neutral
+                  ink, never urgent red. */}
+              <Text
+                style={[styles.txnAmount, { color: t.isIncome ? semantic.success : semantic.textPrimary }]}
+                numberOfLines={1}
+              >
+                {t.amountLabel}
               </Text>
             </View>
           ))}
-          {overflow ? (
-            <View style={styles.row}>
-              <Text style={styles.sourceLabel}>{`+${overflow.count} more sources`}</Text>
-              <Text style={styles.rowValue}>{formatCents(overflow.amountCents)}</Text>
+          {insights.length > 0 ? (
+            <View style={styles.insightStrip} testID="this-month-insights">
+              {insights.slice(0, MAX_INSIGHTS).map((i) => (
+                <View key={i.key} style={styles.insightItem}>
+                  <Ionicons name={i.icon} size={13} color={semantic.textTertiary} importantForAccessibility="no" />
+                  <Text style={styles.insightText} numberOfLines={2}>
+                    {i.label} · {i.value}
+                  </Text>
+                </View>
+              ))}
             </View>
           ) : null}
-          <View style={styles.controlRow}>
-            <TouchableOpacity
-              style={styles.pillButton}
-              onPress={() => flipTo('front')}
-              accessibilityRole="button"
-              accessibilityLabel="Show monthly summary"
-              accessibilityHint="Flips the card back to income, spending and net recorded"
-            >
-              <Text style={styles.pillButtonText}>Show monthly summary</Text>
-            </TouchableOpacity>
-            {overflow ? (
-              <TouchableOpacity
-                style={styles.pillButton}
-                onPress={() => setSourcesSheetVisible(true)}
-                accessibilityRole="button"
-                accessibilityLabel="View all sources"
-              >
-                <Text style={styles.pillButtonText}>View all</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </Animated.View>
+        </>
+      ) : null}
+
+      {/* Wave 6 final refinement — two explicit outline buttons. These
+          were plain text links, which read as captions rather than
+          controls. A deliberately thick 2pt interactive border makes them
+          unmistakably tappable without the filled treatment a confirmation
+          would use. */}
+      <View style={styles.actionRow}>
+        {hasSpending ? (
+          <TouchableOpacity
+            style={styles.outlineButton}
+            onPress={() => setSourcesSheetVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Spending sources"
+            accessibilityHint="Opens which accounts and cards paid for this month's spending"
+            testID="money-spending-sources-action"
+          >
+            <Ionicons name="pie-chart-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+            <Text style={styles.outlineButtonText} numberOfLines={1}>Spending sources</Text>
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          style={styles.outlineButton}
+          onPress={onViewTransactions}
+          accessibilityRole="button"
+          accessibilityLabel="View all transactions"
+          testID="money-view-transactions-action"
+        >
+          <Ionicons name="receipt-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+          {/* Wave 6 closure — "View all transactions" beside "Spending
+              sources" cannot fit two full labels in half a 390pt card, and
+              the device review showed it truncating. Rather than shrink
+              the type or ellipsise meaning, the VISIBLE label shortens to
+              "Transactions" while the accessible name stays complete — so
+              nothing is lost to a screen reader, and nothing is clipped on
+              screen. Side by side it reads "Spending sources /
+              Transactions", which is unambiguous in context. */}
+          <Text style={styles.outlineButtonText} numberOfLines={1}>
+            {stackActions ? 'View all transactions' : 'Transactions'}
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      <Text style={styles.disclaimer}>Based on transactions recorded in Nolie.</Text>
+      {summary.hasInvalidRecordedAmounts ? (
+        <Text style={styles.disclaimer}>Some recorded amounts couldn't be included.</Text>
+      ) : null}
 
       <ThisMonthSourcesSheet
         visible={sourcesSheetVisible}
         onClose={() => setSourcesSheetVisible(false)}
         sources={summary.spendingSources}
         spendingCents={summary.spendingCents}
+        cardContexts={cardContexts}
+        otherCardBalances={otherCardBalances}
       />
-    </SectionCard>
+    </View>
   );
 }

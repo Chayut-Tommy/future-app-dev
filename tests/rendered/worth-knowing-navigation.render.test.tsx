@@ -126,7 +126,19 @@ async function findEventText(view: any, label: string) {
  * currently-rendered list having genuinely reported layout, the
  * precondition computeTimelineFocusFulfillment requires before it will
  * safely give up on a target that isn't validly among them. */
+/** Wave 6 correction D — the timeline now shows its next five events by
+ * default and expands inline, so a helper that must reach EVERY group has
+ * to expand it first. This is presentation only: the expand control mounts
+ * the remaining rows, it never changes their order, grouping or content. */
+async function expandTimeline(view: any) {
+  const control = view.queryByTestId('money-timeline-expand');
+  // Idempotent: a focus request already expands the timeline on arrival,
+  // and pressing an expanded control would collapse it again.
+  if (control && !control.props.accessibilityState?.expanded) fireEvent.press(control);
+}
+
 async function layoutEveryGroup(view: any) {
+  await expandTimeline(view);
   const seenLabels = new Set<string>();
   const labelsInGroupOrder = EVENTS.map((e) => e.label).filter((label) => {
     if (seenLabels.has(label)) return false;

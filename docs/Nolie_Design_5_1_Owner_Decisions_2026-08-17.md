@@ -458,3 +458,408 @@ Anchors only, each keeping its behavioural claim: the hero-order and hero-ink ma
 ## Verification
 
 TypeScript 0. Legacy **72 files / 4,945**. Rendered **25 suites / 176**, clean twice. Wave 5 hierarchy **351/351**. Contrast 141/141 and 43/43. Expo Doctor 17/18. Both exports exit 0. Dependency diff empty. `git diff --check` clean. All 18 read-only financial engines byte-identical; the only file changed under `src/lib/calculations` is `todayComposition.ts`, the Wave 5 pure presentation helper.
+
+---
+
+# Change control — Wave 6 (Money) implementation record (20 August 2026)
+
+**Baseline.** `ab7727c` (the Wave 5 checkpoint). **Status: implemented, all gates passed, unstaged and uncommitted** pending owner iOS testing. Wave 7 not started.
+
+## A. The flip is retired, and nothing was lost
+
+**Before.** `ThisMonthCard` was a two-face 3D flip. The front carried income, spending and net recorded; the back carried the funding-source breakdown, reachable only by flipping. The complete, untruncated source list was a *third* step — a "View all" control that appeared only on the back face, and only when 5+ sources overflowed the compact 4-row rule.
+
+**After.** A static summary with one explicit **"Spending sources"** control opening `ThisMonthSourcesSheet` directly, whenever spending exists. The sheet already listed **every** source with label, percentage and amount plus a reconciling total, so what the compact face could only show as "+N more sources" is now always fully available in one step.
+
+**Retired with the flip:** the shared `Animated.Value`, both `rotateY` interpolations, `perspective`, `backfaceVisibility`, the absolutely-positioned back face, the measured-height container, per-face `pointerEvents` and accessibility hiding, the `face` state, the stale-completion generation guard, `FLIP_DURATION_MS`, and the compact-row rule. The Reduce Motion branch existed **solely** to make the flip instant — with nothing moving it is gone entirely, which is a stronger guarantee than the branch was: no code path can animate.
+
+## B. Money recomposed
+
+Order: **Available Until Payday hero → payday progress (attached to the hero) → included-balances row → This Month + Sources → What happens next → Money Flow → Money Plan.** One hero-level surface; everything below it is a flat bordered supporting card.
+
+- **Payday bar** (`MoneyPaydayBar`) reads `cycleStart`, `cycleEnd`, `daysRemaining` and `hasKnownPayday` straight off the same `SafeToSpendResult` the hero shows. No local date arithmetic, no payday inference. Without a known payday it says so and shows no bar rather than filling an invented cycle. A zero-length or inverted span is reported honestly instead of dividing into NaN. The fraction is clamped to [0,1] at both ends. The cycle **start** is derived from the payday minus the pay frequency, so it is labelled an estimate — in words, not by shape.
+- **Included-balances row** (`IncludedBalancesRow`) reports the engine's own `includedMoneyBalanceAccounts` count and `includedMoneyBalance` total, opens the existing `SelectBalancesSheet` unchanged, and states in rendered text that **changing inclusion does not change net worth**. Empty state shows no total rather than a fabricated `$0`.
+- **Definitions.** Eight one-sentence measure definitions in `MONEY_MEASURE_DEFINITIONS`, policed by a banned-word test. A banned word is permitted only as an explicit denial — Money Plan reads "A forecast built from your own preferences — not a guarantee, and not advice", and never implies unallocated money is spendable cash.
+
+## C. Presentation-only, verified
+
+`src/lib/calculations/moneyComposition.ts` is the only file added under `src/lib/calculations`. It imports no engine, calls no `compute*` function, and contains **exactly one division in its whole body** — a time span into a 0..1 progress fraction. No money value is multiplied, divided, summed or reduced anywhere in it. All seven protected engines are byte-identical to `ab7727c`.
+
+## D. Flip test rewritten, not deleted
+
+`tests/this-month-flip-card.test.ts` grew from **136 to 157** assertions. Sections 1–18 and 21–28 (real-import financial coverage: reconciliation to the cent, percentage largest-remainder allocation, deterministic ordering, source identity, invalid amounts, transfer exclusion, BNPL exclusion, date boundaries) are untouched. Sections 19/20 were replaced by their exact inverse — each retired mechanism asserted absent by name — plus a new Section 20B proving item-by-item that every former back-face and front-face element survives. The compact-rule mirror is kept as a record of its arithmetic; what is asserted against shipped code is that the rule and its truncation are genuinely gone.
+
+## E. Verification
+
+TypeScript 0. Legacy **73 files / 5,091** (from 72 / 4,945). Rendered **26 suites / 185** (from 25 / 176), green twice. Wave 6 hierarchy 124/124. Wave 6 rendered 9/9. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Doctor 17/18. Both exports exit 0. Dependency diff empty. `git diff --check` clean.
+
+Financial regression: safe-to-spend 46/71/25, move-money 121, income-destination 230, transfer-funds 83, this-month 157, everyday-account 61/55/72/40 — all green.
+
+**Android** physical testing remains deferred to Wave 11; automated Android export passed. **Android has not been device-tested.**
+
+## F. Out of scope, confirmed untouched
+
+The per-goal "include in Available Until Payday" opt-in remains deferred. No route, navigation architecture, dependency, persistence schema, icon system or Add phase-machine change. No glass effect outside the dock.
+
+---
+
+# Change control — Wave 6 correction pass (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted**; Wave 6 not checkpointed, Wave 7 not started.
+
+## A. Arbitrary transaction dates
+
+**Root cause.** `quickDateChoices` returned exactly four offsets and `DateTriggerField` rendered only those, so a customer recording something from three weeks ago had no way to say so.
+
+**Fix.** The four shortcuts stay — they are the common cases at one tap each. Beneath them sits **"Choose another date…"**, which swaps the picker's body to an inline calendar. Deliberately **not** a free-text field and **not** a second date system: same field, same `setDraft`, same committed value, so Cancel/Done still belong entirely to `FocusedPickerTrigger` and a cancelled calendar selection restores the previously committed date exactly as a cancelled shortcut always did.
+
+**Not a second Modal.** The picker is already an overlay inside a sheet, and `MOTION_HARD_RULES` rule 2 allows one native Modal at a time. `InlineCalendar` renders in that same overlay, which also avoids the gesture conflict `DatePickerModal` exists to work around. No dependency added, no `setTimeout` anywhere.
+
+**Local-date integrity.** Every date is constructed from local Y/M/D parts (`localMidnight`), never from an ISO instant and never via `Date.UTC` — so a day chosen as 3 August stays 3 August west of UTC. The calendar's only `new Date(...)` normalises the selected value to local midnight for comparison, from those same parts.
+
+**Future dates are disabled, not coerced.** `maximumDate` is today for a past-facing field and inclusive, so today is selectable and tomorrow is not. A disabled day is still rendered and announced as *"…unavailable — a transaction cannot be dated in the future"*. Forward month-stepping stops at the maximum's own month so a customer never lands on a month with nothing selectable. A future-facing field (a bill's next due date) is untouched and keeps its forward run of days.
+
+Every day cell and month stepper clears 44pt; selection and "today" each carry a shape (filled pill / ring) as well as a colour.
+
+## B. Included balances redesigned
+
+**Root cause.** A wide right-hand "Manage balances" column took content width, squeezing the explanation into three narrow lines.
+
+**Fix.** The whole row is the action, the label column is gone, and a chevron takes only its own width. Title "Balances used", primary summary **"$40,000 across 2 accounts"** (one coherent value, correct singular/plural), support line *"Used only for this estimate — your Wealth total is unchanged."* The action is now spoken rather than spelled out: `"Balances used, $40,000 across 2 accounts. Manage balances."` At accessibility sizes the summary gains a second line rather than truncating.
+
+## C. One Manage affordance per state
+
+**Root cause.** `SafeToSpendHero` rendered a small "Manage balances" link in *every* state, and Wave 6 added the dedicated row beneath it.
+
+**Fix.** `showManageBalancesLink` (default `true`, so other consumers are unchanged) is passed `false` from Money in **both** states. With balances included, the dedicated row is the sole entry point; with none, the hero's own primary **"Select balances"** CTA is the single obvious action and the row is not rendered at all. My first attempt suppressed the link only in the populated state — which left it competing with the hero's own CTA in the empty state, and the rendered test caught it.
+
+## D. Timeline — nested scroll confirmed and removed
+
+**Inspection confirmed the defect.** `MoneyTimelineCard` owned a `ScrollView` with `nestedScrollEnabled` and `maxHeight: 440` once there were more than six events.
+
+**Fix.** The inner scroll, its near-end handler and its `scrollTo` are gone; the page owns all scrolling. The timeline shows the next **five** events with one full-width inline **"View all upcoming" / "Show less"**, exposing `accessibilityState.expanded` and announcing the hidden count. The slice is on the already-ordered engine array and nothing else — grouping runs on whatever slice is displayed, so day headers stay correct in both states. Expanding also asks the parent to widen the planning horizon, as the retired scroll did. An incoming focus target expands the timeline first, so a destination beyond the fifth event is still mounted and the fulfillment lifecycle resolves exactly once per request.
+
+## E. Dismissal polish
+
+`InfoSheet`'s Close gains an explicit 44pt activation area (it previously fell out of padding plus line height) and the interactive role instead of muted secondary ink, still text-only with no button chrome. `ThisMonthSourcesSheet`'s Close moves from the filled `primary` variant to `secondary` — a neutral dismissal should not wear a confirmation's treatment. Backdrop dismissal, accessibility escape and focus restoration are unchanged.
+
+## Verification
+
+TypeScript 0. Legacy **74 files / 5,177** (from 73 / 5,091). Rendered **26 suites / 185**, green twice. Wave 6 hierarchy 126/126. Wave 6 date/timeline 84/84 (new). Wave 6 rendered 9/9. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Doctor 17/18. Both exports exit 0. Dependency diff empty. `git diff --check` clean. **All seven protected engines byte-identical.**
+
+Android physical testing remains deferred; the automated Android export passed. **Android has not been device-tested.**
+
+---
+
+# Change control — Wave 6 Correction A: persistent root-level dock (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Corrections B and C not started; Wave 7 not started.
+
+## Root cause
+
+`FloatingNavBar` was `MainTabNavigator`'s `tabBar` render-prop, so it existed only while `Main` was the visible root-stack screen. `FloatingAddButton` is a root-level singleton and survives pushes. Every eligible detail route — `MoneyDetail`, `GrowDetail`, `Transactions`, `Goals`, `Cards`, `EmergencyFund` — is registered on the **root stack** (verified: 1 registration each on the root stack, 0 on the tab navigator). Pushing any of them therefore unmounted the dock and left an orphaned `+`.
+
+`dockVisibility.ts` classified all six as visible throughout. The matrix was correct; the dock was not mounted to consult it.
+
+## Architecture after
+
+The dock and `+` are one root-level assembly, siblings of `RootStack.Navigator`, driven by **one** projection:
+
+- **`tabDefinitions.ts`** (new, pure) — route names, labels, both icon states, canonical order, and `ROUTE_OWNER_TAB`. The outline/filled mapping is now defined exactly once; `MainTabNavigator` derives its `ICONS` from it, so the dock no longer needs React Navigation's `descriptors` to reach it — which is precisely what pinned it inside the tab navigator.
+- **`rootNavAssembly.ts`** (new, pure) — `resolveRootNavAssembly` (visibility + active tab) and `resolveTabPress` (three outcomes). It adds no route rule: visibility is delegated wholesale to `dockVisibility.ts`, so the exhaustive matrix stays the single authority including its fail-closed treatment of unknown routes.
+- **`FloatingNavBar`** — now presentation-only (`tabs`, `activeIndex`, `onSelectTab`, `reduceMotion`). No `BottomTabBarProps`, no `descriptors`, no navigation interpretation. Capsule, blur, pill, icons, labels, tablet cap, touch targets, the iOS/Android role split and the `"<label>, tab, n of 4"` announcement are unchanged.
+- **`GlobalNavDock.tsx`** (new) — the one place the tab set becomes elements.
+- **`activeTabStore.ts`** (new) — where the selected tab is published from.
+
+**One writer for the selected tab.** The root stack's `state` event does not re-emit for a change confined to the nested navigator, so observing only at root left the pill stale after a cross-tab move from a pushed route. Reading *both* the root's nested snapshot and the tab event gave two writers, and the root event could fire second carrying a stale snapshot and clobber the correct value. The root listener now reads **only** the root route; the tab navigator publishes its own selection from React Navigation's own state event. React Navigation remains the sole authority.
+
+**No global container ref.** `RootNavigator` renders the root navigator and has no parent navigator context, so no hook can supply navigation. The navigation object is captured from React Navigation's own `screenListeners({ navigation })` — strictly less than `createNavigationContainerRef`, and asserted absent.
+
+## Tab-press semantics
+
+| From | Press | Outcome |
+|---|---|---|
+| Tab root | same tab | `scrollToTop` — same `tabScrollRefs` map the tab listener used; no navigation dispatched |
+| Tab root | other tab | `navigate` into `Main` |
+| Detail route | owner tab | `returnToRoot` — never scrolls a covered root |
+| Detail route | other tab | `navigate`; the detail does not stay layered above |
+
+## Verification
+
+TypeScript 0. Legacy **75 files / 5,263** (from 74 / 5,177). Rendered **27 suites / 194** (from 26 / 185), green twice. Nav shell 86/86 pure + 9/9 rendered (new). Dock matrix 66/66. Wave 6 hierarchy 126/126, date/timeline 84/84. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Doctor 17/18. Both exports 0. Dependency diff empty. `diff --check` clean.
+
+**All 12 protected files byte-identical** — the seven engines, `floatingAddTransition.ts`, `addWorkspaceTransitionController.ts` and the three transition tests.
+
+Android physical testing remains deferred; the automated Android export passed. **Android has not been device-tested.**
+
+---
+
+# Change control — Wave 6 Correction B: Available Until Payday hero (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Correction C not started; Wave 7 not started.
+
+## Root cause
+
+Two things, both presentation:
+
+1. The normal-state hero rendered on **`colors.heroGradient`** — a pre-5.1 legacy token. It does not retint with the Wave 5 colour styles (which is why Sunrise looked wrong in the recording), and a saturated fill reads as a success/status card for what is an **estimate**. The label carried a `💰` emoji, and the body was a stack of sentences with no dominant element.
+2. **`MoneyPaydayBar` was a sibling of the hero in `MoneyScreen`**, not part of it — so the measure and its own timeline read as two unrelated stacked cards.
+
+## Before → after
+
+| | Before | After |
+|---|---|---|
+| Surface | `colors.heroGradient` (legacy, style-blind) | `semantic.heroSurface` + `heroBorder` at `designRadius.hero` |
+| Identity | `💰 AVAILABLE UNTIL PAYDAY` (11pt caps) | 36pt `interactiveTint` tile + Ionicons `wallet-outline` + "Available until payday" at `titleSection` |
+| Figure | body-sized amount inside a sentence stack | `figureHero` (46pt, tabular) in `semantic.interactive` |
+| Payday | sibling card below the hero | the hero's own footer, separated by a hairline |
+| Provenance | a separate line in `MoneyScreen` | inside the hero, from the authoritative definition |
+
+Hierarchy is now identity → figure → interpretation → payday rail → provenance, asserted by render order and by type-role size ordering (46 > 20 > 14 > 13).
+
+## Colour and state
+
+The figure is the Ocean Blue **interactive** role, never success green — a positive estimate is not an achievement. The hero uses **no urgent/danger role at all**: an ordinary shortfall is not an emergency, and shortfall states keep their existing warning treatment plus their own non-colour cue. Missing/invalid data stays neutral and renders the presentation's own exact wording — the hero contains **no literal `$0`** anywhere.
+
+State is taken from `heroState`/`amountVisible`, never by parsing a formatted amount or date. Every state-specific CTA is preserved: *Add an expected payday*, *Select balances*, *Review in Wealth*. No second CTA was added to a state that already has one.
+
+**The no-payday state deliberately does not render the rail.** That branch already owns a real *"Add an expected payday"* action; the rail's passive "not recorded yet" line would be a second affordance for the same gap.
+
+## Contrast — measured against every hero-surface stop, all six themes
+
+Figure/title 4.71 · interpretation 4.63 · provenance 3.42 (large floor) · warning 4.73 · progress fill 4.71. Body floor 4.5, large/non-text floor 3.0.
+
+## Correction A — untouched and re-proved
+
+All seven Correction A production files are byte-identical. Three safeguards were added as **pure assertions only, with no production change**: a restored detail route resolves to the correct owner tab with no nested-tab information (so no transient wrong pill); `subscribeActiveTab` returns a working unsubscribe and an unsubscribed consumer is never notified; and exactly one production file publishes the selected tab (`MainTabNavigator`, from React Navigation's own state event). Nav shell is now **102/102** pure and 9/9 rendered.
+
+## Verification
+
+TypeScript 0. Legacy **76 files / 5,357**. Rendered **27 suites / 195**, green twice. Hero 76/76 (new). Nav shell 102/102 + 9/9. Dock matrix 66/66. Wave 6 hierarchy 128/128, date/timeline 84/84. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Safe-to-Spend 25/71/46. Doctor 17/18. Both exports 0. Dependency and config diff empty. `diff --check` clean.
+
+**All 19 protected files byte-identical.** Zero financial outcome changes.
+
+Android physical testing remains deferred — the owner has iOS-only device access. The automated Android export passed. **Android has not been device-tested**; Wave 11 must recover cross-platform physical testing.
+
+---
+
+# Change control — Wave 6 Correction C: Money composition and AUP convergence (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Wave 7 not started.
+
+## A. Root cause — six legacy AUP branches, not one
+
+Correction B redesigned only `SafeToSpendHero`'s **final fall-through** return. Six earlier branches returned before ever reaching it and still rendered `styles.card` + `styles.cardWarning` (`colors.warningSoft` — the yellow surface) with `warningCtaButton`/`warningCtaText` (the brown CTA), an all-caps `styles.label` identity and centred dense copy:
+
+`unavailable_balance_data` · `unavailable_other_data` · `no_known_payday` · **`missing_balance`** · `recorded_overspend` · `commitments_exceed_cash`
+
+`missing_balance` is the "no balances selected" state the owner recorded. Fixing only that branch would have left five others behind.
+
+**Fix.** One `renderShell` used by **every** state — verified: the file now contains exactly **one** `<LinearGradient>`, and `cardWarning`/`warningCtaButton`/`warningCtaText` are deleted, not merely unused. Each state supplies only its wording, its single action, and whether an amount or rail can honestly be shown.
+
+**No-balance state:** identity → *"Choose balances to get your estimate"* → *"Select the cash, savings or everyday accounts Nolie should include. This changes this estimate only — not your Wealth total."* → one **Choose balances** action. Neutral interactive, no amount, **no `$0`**, **no rail** (an estimate cannot exist yet).
+
+Warning states keep warning ink **plus** an alert glyph — never colour alone. The hero uses **no urgent/danger role at all**.
+
+## B. Payday rail named
+
+A nearly-full bar with only two dates beside it reads as *money used*. The rail now leads with **"Pay cycle progress"** and **"N days left"**, then the bar, then the two dates, then *"Cycle start estimated"* once — the day count was previously stated twice.
+
+## C. Deduplication
+
+**Needs your attention → unwired.** `computeAttentionItems` derives *entirely* from `timelineEvents` (its only other item is a shortfall notice the hero's own shortfall state owns), so every occurrence it listed was **by construction** already in "What happens next". No identity helper was needed: removing the section cannot lose an occurrence, and separate recurrence dates remain separate because the timeline array is untouched. The engine is unchanged.
+
+**Spending Tracker → "Recent activity".** Its *"Spent this month"* and *"Income recorded this month"* rows were the same month-to-date measures This Month already owned. Those two rows are gone. Everything unique stays: the recent-transaction preview, the largest-category and average-daily-spend insights (kept here because they describe **actual recorded activity**, not the recurring forecast), and *View all transactions*. The component is unwired from duplication, not deleted.
+
+## D. Green removed from navigation
+
+`SelectBalancesSheet` selected rows now use `interactiveTint`/`interactive` instead of `accentSoft`/`accentStrong`, with the existing checkmark as the non-colour cue; *"+ Add a money balance"* is interactive blue. Money's section actions (*+ Add bill*, *+ Add*) take the interactive role and a real 44pt target instead of `hitSlop`. Green stays reserved for money genuinely received.
+
+## Verification
+
+TypeScript 0. Legacy **76 files / 5,359**. Rendered **27 suites / 195**, green twice. Hero 78/78. Nav shell 102/102 + 9/9. Dock 66/66. Wave 6 hierarchy 128/128, date/timeline 84/84. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Balance-inclusion 230/230. Doctor 17/18. Both exports 0. Dependency diff empty. `diff --check` clean.
+
+**All 19 protected files byte-identical.** Zero raw colour in every changed Money surface. Zero financial outcome changes.
+
+Android physical testing remains deferred — iOS-only device access. Automated Android export passed. **Android has not been device-tested**; Wave 11 must recover cross-platform verification.
+
+---
+
+# Change control — Wave 6 final Money composition and polish (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Wave 7 not started.
+
+## Correcting a reporting error
+
+The Correction C report described "five sections" and then listed **six** — Available until payday, This month, Recent activity, What happens next, Money flow, Money plan. Recent activity was the one that should never have been top-level. That miscount is corrected here, not restated.
+
+## Root cause of the remaining page length
+
+Three surfaces each added a heading and a full-width card for information already on the page:
+
+1. **Recent activity** — its own top-level section restating This Month's month-to-date framing, with two paragraph-style insight rows and a duplicate `+ Add`.
+2. **Typical Monthly Allocation** (`MoneyPlanCard`) — the **same** income, bills, savings, goals and remainder the Typical money flow card above it already showed, for the same period, from the same engines.
+3. **Five-row timeline preview** — still pushed Typical money flow and Money plan below the fold at 390pt.
+
+Plus every flow row restated the period the selector had just set (*"Typical monthly income"* ×5).
+
+## Before → after
+
+| | Before | After |
+|---|---|---|
+| Sections | 6 | **5** |
+| Recent activity | own section + card | subsection inside This Month, ≤3 rows |
+| Activity insights | 2 prose rows | ≤2 compact `label · value` items |
+| Timeline preview | 5 rows | **3** rows |
+| Flow + Allocation | two cards, same model | **one** card |
+| Flow row labels | "Typical monthly income" ×5 | Income · Bills · Savings · Goals · Remainder |
+| Root title | legacy `typography.title` (platform font) | Design 5.1 `titleScreen` via the shipped resolver |
+
+Final order: **Available until payday → This month → What happens next → Typical money flow → Money plan.**
+
+## Reachability — nothing lost
+
+All ten unique actions verified present: *How this was calculated*, *Choose/Manage balances*, *Spending sources*, *View all transactions*, *Add bill*, Money Flow details, Savings allocation details, *Add income*, *Add goal*, *Manage savings allocation*. `MoneyPlanCard`'s four empty-state CTAs were themselves duplicates — each destination has an independent entry point on Money, verified with 4/1/2/3 call sites respectively. The component is **unwired, not deleted**, and its detail sheet stays mounted.
+
+## Root title
+
+`Screen`'s shared title was on the legacy `typography.title` token — 24/700 in the platform default font. It now uses the `titleScreen` role through the shipped resolver, in `semantic.textTitle`. One shared style, so every screen that passes a title inherits it at once; this is **not** the deferred 68-file font migration.
+
+## Period selector
+
+Kept, and now announces its selection: `accessibilityRole="radio"` with `accessibilityState.selected`, each option a 44pt target. Colour: income success, bills neutral ink, savings/goals their existing accents, remainder interactive when positive and **warning plus the word "Shortfall"** when not — never colour alone.
+
+## Verification
+
+TypeScript 0. Legacy **76 files / 5,394**. Rendered **27 suites / 195**, green twice. Wave 6 hierarchy **162/162**. AUP hero 78/78. Nav shell 102/102 + 9/9. Dock 66/66. Date/timeline 84/84. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Typography 59/59. Doctor 17/18. Both exports 0. Dependency diff empty. `diff --check` clean.
+
+**All 19 protected files byte-identical.** Zero raw colour in every changed surface. Zero financial outcome changes — monthly `10,000 − 6,083 − 1,000 − 77 = 2,840` and weekly `2,308 − 1,404 − 231 − 18 = 655` reconcile through the unchanged engines.
+
+Android physical testing remains deferred — iOS-only device access. Automated Android export passed. **Android has not been device-tested**; Wave 11 must recover cross-platform verification.
+
+---
+
+# Change control — Wave 6 final visual refinement (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Wave 6 closure candidate; Wave 7 not started.
+
+## Root causes
+
+1. **This Month** — three identical label/value rows and one generic arrow glyph for every transaction, so nothing was differentiable at a glance.
+2. **Actions** — plain text links read as captions, not controls.
+3. **Credit-card balance** — a present-moment snapshot sat directly beneath three month-to-date measures, inviting exactly the misreading its own disclaimer warned about.
+4. **Today Briefing** — `StyleSheet.hairlineWidth` is sub-pixel; the AUP measure, the priority rows and the footer ran together as one box.
+5. **August so far** — `meta` (13pt) labels beside a 28pt figure read as micro-text.
+6. **Money Flow** — no icons, and the selected period was still legacy accent green.
+
+## What changed
+
+**This Month** — three compact metric cells with tinted glyph tiles (income `cash-outline`/success, spending `receipt-outline`/interactive, net `trending-*`/featured-or-warning); only genuinely positive money takes the success amount role. Recent activity now uses the **canonical** `categoryIconSpec` mapping — Groceries a cart, Dining out a restaurant, Bonus a gift — each with its designed domain tone, and an unmapped category falls back safely inside that map. Two **2pt** outline buttons (*Spending sources* with a pie glyph, *View all transactions* with a receipt), 44pt each, stacking at narrow width or accessibility scale.
+
+**Spending sources** — each card source now shows `Paid this month · $150 · 23%` and `Current card balance · $1,150` as two labelled lines that cannot be confused. `resolveSourceCardContexts` is a **join by stable id**, not arithmetic: it sums nothing and no balance enters any total. A card with a balance but no spending this month keeps its snapshot under *Other card balances*, so retiring the standalone line could not make an existing snapshot unreachable. One clarification, rendered once. The standalone line and its dead derivations (`sanitizeBalance`, `cardsInCredit`, `displayedCardBalance`, and the three props) are **deleted**, not merely unused.
+
+**Today Briefing** — `HERO_DIVIDER_WIDTH = 1` on the hero divider, the footer rule and each priority row's separator, at the theme-aware `semantic.border` role. The hero stays one card; no row became its own surface.
+
+**August so far** — labels moved from `meta` to `support` (14pt, medium) with the figure untouched; "Spending recorded" shortened to "Spent"; each measure gained a restrained tinted glyph. Values and responsive logic unchanged.
+
+**Typical money flow** — selected period is now `semantic.interactive` / `onInteractive`, never success green. Premium glyphs per category with restrained tints; chevrons only on genuinely actionable rows. **Remainder is a result panel** inside the same card: `Estimated remainder`, dominant amount, and a supporting line naming the selected cycle. Positive takes the featured interactive treatment rather than a success-green celebration; zero is neutral; negative pairs warning ink with an alert glyph **and** the word "shortfall".
+
+## Verification
+
+TypeScript 0. Legacy **76 files / 5,453**. Rendered **27 suites / 195**, green twice. Wave 6 hierarchy **220/220**. AUP hero 78/78. Nav shell 102/102 + 9/9. Dock 66/66. Date/timeline 84/84. Wave 5 hierarchy 351/351. Contrast 141/141 and 43/43. Typography 59/59. Doctor 17/18. Both exports 0. Dependency diff empty. `diff --check` clean.
+
+**All 19 protected files byte-identical.** Zero raw colour and zero emoji in every touched surface. Zero financial outcome changes.
+
+Android physical testing remains deferred — iOS-only device access. Automated Android export passed. **Android has not been device-tested**; Wave 11 must recover cross-platform verification.
+
+---
+
+# Change control — Wave 6 closure polish (20 August 2026)
+
+**Baseline** `ab7727c`. **Unstaged and uncommitted.** Wave 6 closure candidate; Wave 7 not started.
+
+## A. "August so far" metric balance
+
+**Root cause.** `flexGrow: 1` with `flexBasis: 0` still let a longer value claim width through its own content, so "Net recorded" measured wider than "Spent". And the figure ladder's top rung was `figureLarge`'s own 28pt beside a 14pt label.
+
+**Fix.** Equal basis + `flexGrow: 1` + **`flexShrink: 0`** + `minWidth: 0` — each cell now measures identically regardless of the characters inside it, including whether the third value is positive or negative. The ladder's top rung steps to **22pt** (comfortable rung 20pt); the *role* is unchanged, so family, weight and tabular numerals still come from `figureLarge`. Measured: **three equal columns at 375/390/430pt**, deterministic 2+1 at 320pt, complete blocks at accessibility sizes. `+$17,500` / `$675` / `+$16,825` unchanged and unsplit.
+
+## B. "How this works" retired from the Briefing
+
+It routed to Money, which the Briefing's own AUP measure and priority rows already reach — a full row of height for no unique destination. Removed, along with its prop, callback, styles and every harness reference. Provenance stays as one calm full-width line: **"Based on what you've recorded · Updated today"**, wrapping rather than truncating. Money's hero keeps its own *How this was calculated* journey, which is where the explanation genuinely lives.
+
+## C. Reminder actions — investigated, then corrected precisely
+
+Code inspection established the semantics rather than inferring them from wording:
+
+| Kind | Control | Handler | Mutation |
+|---|---|---|---|
+| `bill_due_soon` | **Noted** (was "Got it") | `acknowledgeReminder` | **none** — session-excludes, advances queue |
+| all deferrable | Not yet | `deferReminder` | **none** — same |
+| `salary_check` | Yes, received → destination | `confirmSalary` | real, via destination choice |
+| `bill_overdue`, `bnpl_repayment_due` | source choice → confirm | `confirmBillPaid` / `confirmBnplEveryday` | real, with `transactionId` |
+| `card_due_soon`, `loan_repayment_due` | repayment journey | existing handlers | real |
+
+**"Got it" is not relabelled "Close"** — it does more than close: it acknowledges and advances. It is now **"Noted"**, which says exactly what happens and mutates nothing.
+
+**A real defect surfaced.** The action buttons were `paddingVertical: 7` around 12pt text — roughly a **30pt** target on the controls that resolve money. Now **48pt** (`REMINDER_ACTION_MIN_HEIGHT`), above the 44pt floor.
+
+`design5-wave6-reminder-actions.test.ts` (38 assertions) is the guard that this stayed a wording-and-target change: every kind's branch, handler and outcome kind is pinned, and both non-mutating handlers are proved to write nothing.
+
+**Scoped down, deliberately:** the sheet's full visual re-hierarchy is *not* in this pass. It has eight kind branches and a queue/focus lifecycle; a partial redesign there would risk accepted reminder behaviour for a cosmetic gain, which is a poor trade in a closure pass.
+
+## D. One shared Money section header
+
+`MoneySectionHeader.tsx` — 32pt icon tile, `titleSection` role via the shipped resolver, `semantic.textTitle`, optional definition, optional 44pt trailing action, `accessibilityRole="header"`. All four sections adopt it; **zero** legacy `styles.sectionTitle` headings remain. Deliberately **not** a card — a header that became a surface would add a fifth box to a page this wave spent three passes shortening.
+
+Icons: This month `calendar-outline`/interactive · What happens next `calendar-number-outline`/warm · Typical money flow `swap-vertical-outline`/info · Money plan `compass-outline`/featured.
+
+## E–F. Connected polish
+
+**Truncation:** two full labels cannot fit half a 390pt card. The *visible* label shortens to **"Transactions"** while `accessibilityLabel="View all transactions"` stays complete — nothing clipped, nothing lost to a screen reader. Both keep their 2pt border and 44pt target, and stack at narrow/accessibility widths.
+
+**Select Balances Save:** now `semantic.interactive`, scoped to that one control — `Button`'s own `primary` variant is untouched, so no other primary action changes. Green stays reserved for money genuinely received. Contrast verified across all six themes.
+
+## Verification
+
+TypeScript 0. Legacy **77 files / 5,515**. Rendered **27 suites / 195**, green twice. Wave 6 hierarchy **242/242**. Reminder actions 38/38 (new). AUP hero 78/78. Nav shell 102/102 + 9/9. Dock 66/66. Date/timeline 84/84. Wave 5 hierarchy 353/353. Contrast 141/141 and 43/43. Typography 59/59. Doctor 17/18. Both exports 0. Dependency diff empty. `diff --check` clean.
+
+**All 19 protected files byte-identical.** Zero raw colour, zero emoji in every touched surface. Zero financial outcome changes — `$16,123` AUP, `$17,500`/`$675`/`$16,825`, and both flow reconciliations preserved.
+
+Android physical testing remains deferred — iOS-only device access. Automated Android export passed. **Android has not been device-tested**; Wave 11 must recover cross-platform verification.
+
+---
+
+# Change control — Wave 6 closure and checkpoint (21 August 2026)
+
+**Baseline** `ab7727c` (Wave 5 checkpoint). This entry closes Wave 6 and records the owner's iOS approval. Earlier entries above are the wave's working record and are left exactly as written.
+
+## What Wave 6 delivered
+
+**Money hierarchy.** Exactly five top-level sections — Available until payday, This month (Recent activity merged in as a subsection), What happens next, Money flow, Money plan — each led by one shared `MoneySectionHeader`. The Available Until Payday hero converged to a single premium featured surface across all its states, with the duplicate "Manage balances" affordance and the flip-card retired. The Sources sheet and Balances Used row replaced the earlier duplicated balance affordances.
+
+**Navigation.** The dock was hoisted to the root navigator. Root cause: `FloatingNavBar` was `MainTabNavigator`'s `tabBar`, and all six eligible detail routes are root-stack routes, so the dock disappeared the moment a customer opened one. `GlobalNavDock` is now a presentation-only root component driven by `tabDefinitions` / `rootNavAssembly` / `activeTabStore`, with one writer for the selected tab.
+
+**Reminder action and suppression model.** Three intentions per reminder: complete the financial action with a context-specific verb (Mark as paid / Record payment / Record repayment / Confirm received), Snooze until a chosen local date, or Dismiss this occurrence. Suppression is keyed by the canonical occurrence identity (`occurrenceKeyOf`) and persisted in two additive, backward-compatible fields — `snoozedReminderOccurrences`, `dismissedReminderOccurrences` — that load empty for existing customers with no migration. Retention is folded into the write path; there is no timer and no background task. Future recurrences are untouched, because a later occurrence computes a different key.
+
+The canonical composition is now identity → facts → one full-width 52pt primary → two equal secondary columns → optional inline navigation. The primary no longer precedes the facts. Reminder wording is derived from structured fields, so `reminders.ts` is untouched while "Did you pay your Rent?" and the income reminder's party emoji no longer reach a customer on either the sheet or the Today row.
+
+**Shared account-choice presentation.** One row model (`accountChoice.ts`) and one component (`AccountChoiceList.tsx`) now serve bill payment, income destination, credit-card repayment and loan repayment — replacing three separate wrapping-chip implementations. Rows are 56pt, carry the account's type in words, show the balance in its own column (moving beneath the name at 320pt or font scale ≥1.3 rather than truncating), announce their selected state, and distinguish cards from money accounts by icon as well as tint. Credit cards appear under their own `Credit cards` heading with the caption explaining that choosing one records the bill against that card balance.
+
+**Eligibility is read, never rewritten.** Income can credit Savings and never a card; a bill can be charged to a card and never paid from Savings, because `computeBalanceEffect` has no savings-funded-expense branch; the repayment forms stay assets-only. Verified that cards are a correctly classified bill source, not an unfiltered catalogue.
+
+**Select-before-confirm.** The previous pickers fired the caller's mutation straight out of `onSelect`, so a customer discovered they had recorded a payment by having already recorded it. Selecting an account now only marks it: no transaction, no balance change, no occurrence advance, no sheet close. A separate primary control performs the accepted mutation, and remains inert until a choice exists — explicit confirmation is required even when only one account is eligible.
+
+## Device approval
+
+**iOS: approved by the owner.** The recording confirms the canonical hierarchy and aligned actions, the full-width primary with equal Snooze/Dismiss controls, the dated Snooze chooser, the shared account rows, selection occurring separately from confirmation, a successful $50 NAB credit-card repayment, Available until payday $21,989 → $21,939, August spending unchanged at $925 and net recorded unchanged at $16,575 because a repayment is correctly excluded from spending, exactly one −$50 NAB repayment in Transactions, persistent dock behaviour, and no freeze or stuck overlay.
+
+**Android: export-tested only.** The automated Android export exits 0. Android has **not** been device-tested — the owner has iOS-only physical access. Cross-platform device verification remains deferred to Wave 11.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **79 files / 5,840**. Rendered **31 suites / 248**, green twice. Wave 6 hierarchy 242/242. Reminder actions 101/101. Reminder intents 135/135. Account choice 125/125 pure + 13/13 rendered. Mark as paid 14/14. Snooze/Dismiss 11/11. Reminder sheet 15/15. AUP hero 78/78. Nav shell 102/102 + 9/9. Dock 66/66. Date/timeline 84/84. Wave 5 hierarchy 353/353. Income destinations 230/230. Contrast 141/141, 43/43 and 55/55. Typography 59/59. Doctor 17/18 (the pre-existing SDK version check). Both exports exit 0.
+
+**Zero financial-engine changes:** all 27 protected files byte-identical, and the original 21-file Wave 5 baseline byte-identical too — every calculation engine, the occurrence-confirmation and repayment paths, both eligibility resolvers, the reminder selectors, and every navigation and Add transition controller. **Zero dependency or configuration changes**; lockfile diff empty. `git diff --check` clean.
+
+Two persistence additions are intentional and additive only: the snooze and dismiss occurrence maps described above. No destructive migration; old stored data remains valid.

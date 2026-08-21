@@ -8,7 +8,8 @@ import { AppStateProvider, useAppState } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { TodayBriefingCard } from '../../src/components/today/TodayBriefingCard';
 import { ReminderDetailSheet } from '../../src/components/today/ReminderDetailSheet';
-import { computeTopReminder } from '../../src/lib/calculations/reminders';
+import { computeRankedReminder } from '../../src/lib/calculations/reminders';
+import { createSuppressionPredicate } from '../../src/lib/calculations/reminderSuppression';
 import { ReminderOpenRequest, createReminderOpenRequest } from '../../src/lib/calculations/reminderInteractionLifecycle';
 import { selectTodayBriefingEventRows } from '../../src/lib/calculations/todayBriefing';
 import { computeMoneyTimeline } from '../../src/lib/calculations/moneyTimeline';
@@ -69,7 +70,14 @@ const STORAGE_KEY = 'moneycoach.appdata.v1';
  */
 function TodayBriefingHarness({ today }: { today: Date }) {
   const { data } = useAppState();
-  const topReminder = useMemo(() => computeTopReminder(data, today), [data, today]);
+  // Wave 6 polish — mirrors TodayScreen's OWN wiring, including the
+  // persisted suppression predicate. Without it this harness would keep
+  // advertising a reminder the real app has already suppressed, and the
+  // suite would be testing a screen that does not exist.
+  const topReminder = useMemo(
+    () => computeRankedReminder(data, today, createSuppressionPredicate(data, today)),
+    [data, today]
+  );
   const timelineEvents = useMemo(() => computeMoneyTimeline(data, today), [data, today]);
   const briefingEventRows = useMemo(() => selectTodayBriefingEventRows(timelineEvents, topReminder), [timelineEvents, topReminder]);
   const safeToSpend = useMemo(() => computeSafeToSpend(data, today), [data, today]);
@@ -87,7 +95,6 @@ function TodayBriefingHarness({ today }: { today: Date }) {
         timelineEvents={timelineEvents}
         timeframeLine={null}
         topReminder={topReminder}
-        onPressHowThisWorks={() => {}}
         onPressAup={() => {}}
         onPressEventRow={() => {}}
         onPressReminderTile={() => {
@@ -171,9 +178,28 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
     // Genuine, customer-visible content — the real question text
     // reminders.ts builds for an overdue bill, queried by real text, not a
     // structural/testID proxy.
-    expect(screen.getByText('Did you pay your Rent?')).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Yes, I paid it' })).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Not yet' })).toBeOnTheScreen();
+    // RECONCILED (Design 5.1 Wave 6 polish): the engine's question sentence
+    // "Did you pay your Rent?" is no longer what the customer reads — it
+    // prepended "your" to an already-named item and restated timing the
+    // status pill and supporting line already carry. reminders.ts is
+    // untouched; the surface titles the reminder by the ITEM. The property
+    // this clause protects — real, customer-visible content, never a blank
+    // shell — is unchanged.
+    expect(screen.getByTestId('reminder-title').props.children).toBe('Rent');
+    // RECONCILED (Design 5.1 Wave 6 final): the ordinary/overdue bill's
+    // primary verb is now the context-specific "Mark as paid" from the
+    // approved action matrix, replacing the generic "Yes, I paid it". Same
+    // control, same two-step journey, same handler: it only OPENS the
+    // source picker, and no money moves until an account is chosen there.
+    expect(screen.getByRole('button', { name: 'Mark as paid' })).toBeOnTheScreen();
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which does everything the session defer did
+    // (remove this occurrence from the active queue and advance) and also
+    // records the day the customer chose, so it survives a restart. The
+    // behavioural property this clause protects — advancing without
+    // resolving or recording anything — is unchanged and still asserted.
+    expect(screen.getByRole('button', { name: 'Snooze' })).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeOnTheScreen();
   });
 
   test('"Not yet" advances to the next outstanding Reminder in the same mounted session, sheet stays mounted, content is never blank', async () => {
@@ -206,28 +232,55 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
     await render(<Harness today={today} />);
 
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    expect(screen.getByText('Did you pay your Rent?')).toBeOnTheScreen();
+    // RECONCILED (Design 5.1 Wave 6 polish): the engine's question sentence
+    // "Did you pay your Rent?" is no longer what the customer reads — it
+    // prepended "your" to an already-named item and restated timing the
+    // status pill and supporting line already carry. reminders.ts is
+    // untouched; the surface titles the reminder by the ITEM. The property
+    // this clause protects — real, customer-visible content, never a blank
+    // shell — is unchanged.
+    expect(screen.getByTestId('reminder-title').props.children).toBe('Rent');
 
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
+    // RECONCILED (Design 5.1 Wave 6 final): "Not yet" on a bill is
+    // superseded by Snooze, which does everything the session defer did
+    // (remove this occurrence from the active queue and advance) and also
+    // records the day the customer chose, so it survives a restart. The
+    // behavioural property this clause protects — advancing without
+    // resolving or recording anything — is unchanged and still asserted.
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
 
     // Same-sheet advancement: never a second, stacked sheet — exactly one
     // "Not yet" action is rendered at a time (RNTL's getByRole itself would
     // throw on an ambiguous match), and the content genuinely moved on to
     // the next eligible occurrence, never a blank shell in between.
-    expect(screen.getAllByRole('button', { name: 'Not yet' }).length).toBe(1);
-    expect(screen.getByText('Did you pay your Internet?')).toBeOnTheScreen();
-    expect(screen.queryByText('Did you pay your Rent?')).toBeNull();
+    expect(screen.getAllByTestId('reminder-snooze-action').length).toBe(1);
+    expect(screen.getByTestId('reminder-title').props.children).toBe('Internet');
   });
 
-  test('closing and reopening begins a new session — a "Not yet" occurrence is eligible again', async () => {
+  // RECONCILED (Design 5.1 Wave 6 polish). This clause originally protected
+  // one property: a SESSION defer is forgotten when the sheet closes, so
+  // the same occurrence is outstanding again on reopen. No visible control
+  // produces a session-only defer any more — "Not yet" was retired on every
+  // kind, and Snooze, which replaced it, is DELIBERATELY persistent. The
+  // property is therefore inverted by design, and the test now asserts the
+  // behaviour the customer actually gets, which is the stronger promise:
+  // a snooze they chose is still honoured after they close and reopen.
+  //
+  // The underlying session boundary still exists and is still guarded:
+  // `sessionDeferredKeysRef` being cleared at the start of every opening
+  // effect is asserted structurally in
+  // tests/pass-reminder-queue-correction.test.ts, and the loan branch's
+  // unresolvable-liability fallback still routes through deferReminder.
+  test('closing and reopening honours a snooze — it is persistent, not session-only', async () => {
     const data = baseData(today);
     data.recurringItems.push({
-      id: 'rent',
-      type: 'expense',
-      label: 'Rent',
-      amount: 500,
+      id: 'salary',
+      type: 'income',
+      label: 'Salary',
+      amount: 3000,
       frequency: 'monthly',
-      nextDueDate: isoDaysAgo(today, 2),
+      nextDueDate: isoDaysAgo(today, 1),
       isFixed: true,
       active: true,
     });
@@ -237,15 +290,16 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
     await render(<Harness today={today} />);
 
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await user.press(screen.getByRole('button', { name: 'Not yet' }));
-    // Only one candidate this scenario — session-deferred, so the sheet
-    // closes (SETTLED with latestTopReminder === null).
-    expect(screen.queryByText('Did you pay your Rent?')).toBeNull();
+    expect(screen.getByTestId('reminder-title').props.children).toBe('Salary');
+    await user.press(screen.getByTestId('reminder-snooze-action'));
+    await user.press(screen.getByTestId('reminder-snooze-tomorrow'));
 
-    // Reopen: a fresh session clears sessionDeferredKeysRef, so the SAME
-    // occurrence is genuinely outstanding again.
-    await user.press(await screen.findByTestId(REMINDER_ROW));
-    expect(screen.getByText('Did you pay your Rent?')).toBeOnTheScreen();
+    // Only one candidate this scenario, so the sheet closes cleanly.
+    expect(screen.queryByTestId('reminder-title')).toBeNull();
+
+    // And the Briefing no longer advertises it: a snooze the customer chose
+    // is honoured, not forgotten the moment the sheet closes.
+    expect(screen.queryByTestId(REMINDER_ROW)).toBeNull();
   });
 
   test('completing the only outstanding Reminder removes the Briefing tile entirely (no reminder tile left to query)', async () => {
@@ -267,16 +321,26 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
     await render(<Harness today={today} />);
 
     await user.press(await screen.findByTestId(REMINDER_ROW));
-    await user.press(screen.getByRole('button', { name: 'Yes, I paid it' }));
+    // RECONCILED (Design 5.1 Wave 6 final): the ordinary/overdue bill's
+    // primary verb is now the context-specific "Mark as paid" from the
+    // approved action matrix, replacing the generic "Yes, I paid it". Same
+    // control, same two-step journey, same handler: it only OPENS the
+    // source picker, and no money moves until an account is chosen there.
+    await user.press(screen.getByRole('button', { name: 'Mark as paid' }));
     // Ordinary bill flow asks for a payment source next.
-    await user.press(await screen.findByRole('button', { name: /Cash/i }));
+    // RECONCILED (Wave 6 polish): account chips became full rows in the one
+    // shared chooser, and selecting is no longer confirming. The row is
+    // found by its stable id and the mutation now runs from the separate
+    // confirm control — which is the correction, not a weakening.
+    await user.press(await screen.findByTestId('account-choice-cash'));
+    await user.press(screen.getByTestId('bill-confirm-action'));
 
     // The confirmation applied (a real confirmRecurringOccurrence mutation)
     // and there is nothing left to rank — the sheet closes (no more
     // reminder_detail content) and the Briefing's own reminder tile is gone
     // from the rendered tile row, proving the row genuinely re-rendered in
     // response to the completed occurrence, not just the sheet.
-    expect(screen.queryByText('Did you pay your Rent?')).toBeNull();
+    expect(screen.queryByTestId('reminder-title')).toBeNull();
     expect(screen.queryByTestId(REMINDER_ROW)).toBeNull();
   });
 
@@ -392,7 +456,7 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
 
     const amountInput = screen.getByDisplayValue('');
     await user.type(amountInput, '999');
-    await user.press(screen.getByRole('button', { name: /Cash \(/ }));
+    await user.press(screen.getByTestId('account-choice-cash'));
 
     // The real exceedsBalance-gated inline error — no submit even possible
     // (canConfirm stays false), and the recorded balance line still reads
@@ -424,7 +488,7 @@ describe('Reminder lifecycle — rendered regression coverage (Pass 2E)', () => 
 
     const amountInput = screen.getByDisplayValue('');
     await user.type(amountInput, '50');
-    await user.press(screen.getByRole('button', { name: /Cash \(/ }));
+    await user.press(screen.getByTestId('account-choice-cash'));
 
     const confirmButton = await screen.findByRole('button', { name: 'Record payment' });
     // Two overlapping attempts, not two sequentially awaited presses — both

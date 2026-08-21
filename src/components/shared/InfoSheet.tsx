@@ -46,8 +46,20 @@ export function InfoSheet({
         sheetCap: { maxHeight: '80%', paddingBottom: 0 },
         title: { ...typography.heading, fontSize: 18, color: colors.textPrimary, marginBottom: 2 },
         subtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.lg },
-        closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
-        closeText: { color: colors.textSecondary, fontWeight: '600' },
+        // Wave 6 correction E — an explicit 44pt activation area rather
+        // than one that happened to fall out of padding plus line height,
+        // and the interactive role rather than muted secondary ink: Close
+        // is a real, findable action, not a caption. Deliberately still
+        // text-only — no heavy button chrome on a dismissal.
+        closeButton: {
+          alignSelf: 'center',
+          minHeight: 44,
+          justifyContent: 'center',
+          paddingVertical: spacing.sm,
+          paddingHorizontal: spacing.lg,
+          marginBottom: Math.max(insets.bottom, spacing.md),
+        },
+        closeText: { color: semantic.interactive, fontWeight: '600' },
       }),
     [colors, semantic, radius, spacing, typography, insets.bottom]
   );
@@ -61,7 +73,7 @@ export function InfoSheet({
           <Text style={styles.title}>{title}</Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
           <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
             <Text style={styles.closeText}>Close</Text>
           </TouchableOpacity>
         </View>

@@ -599,7 +599,15 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
       /const heroCopy = useMemo\(\(\) => computeMoneyHeroCopy\(data\), \[data\]\);/.test(TODAY_SCREEN_SRC) &&
       /const safeToSpendPresentation = useMemo\(\(\) => selectSafeToSpendPresentation\(safeToSpend, heroCopy\), \[safeToSpend, heroCopy\]\);/.test(TODAY_SCREEN_SRC) &&
       /const timelineEvents = useMemo\(\(\) => computeMoneyTimeline\(data, currentDate\), \[data, currentDate\]\);/.test(TODAY_SCREEN_SRC) &&
-      /const topReminder = useMemo\(\(\) => computeTopReminder\(data, currentDate\), \[data, currentDate\]\);/.test(TODAY_SCREEN_SRC) &&
+      // RECONCILED (Design 5.1 Wave 6 final): topReminder is now selected
+      // through computeRankedReminder with the persisted suppression
+      // predicate, so a snoozed or dismissed occurrence never reaches the
+      // Briefing tile. computeRankedReminder is the ranker computeTopReminder
+      // was already a no-exclusion wrapper around — the tier order,
+      // tie-breaks and day-count boundaries are byte-identical. The property
+      // this clause protects is unchanged and still asserted: computed
+      // exactly once, via useMemo, keyed on [data, currentDate].
+      /const topReminder = useMemo\(\s*\(\) => computeRankedReminder\(data, currentDate, createSuppressionPredicate\(data, currentDate\)\),\s*\[data, currentDate\]\s*\);/.test(TODAY_SCREEN_SRC) &&
       /const briefingEventRows = useMemo\(\(\) => selectTodayBriefingEventRows\(timelineEvents, topReminder\), \[timelineEvents, topReminder\]\);/.test(TODAY_SCREEN_SRC)
   );
   assert(

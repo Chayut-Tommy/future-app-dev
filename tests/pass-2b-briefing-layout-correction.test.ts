@@ -214,9 +214,23 @@ console.log('\n=== Section 4: detailed reminder account actions remain reachable
     // onSettled with onOutcome (session-deferred "Not yet" fix) — same real
     // SmartReminderCard mount, updated wiring.
     'ReminderDetailSheet.tsx mounts the real, full, unmodified SmartReminderCard (all account-choice controls included) when a reminder is being displayed',
-    /presentedState\.kind === 'reminder_detail' \? \(\s*<>\s*<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/.test(
+    // WHY STALE (Design 5.1 Wave 6 closure): the sheet's detached footer
+    // "Close" link was removed — Close now lives once, in the header — so
+    // the fragment this clause required to sit IMMEDIATELY before
+    // <SmartReminderCard> now contains a doc comment and a single child.
+    // The clause's behavioural intent is unchanged and re-asserted below in
+    // full: the real, full, unmodified SmartReminderCard is still what the
+    // reminder state mounts, still fed by presentedState.reminder, and
+    // still wired to the same navigate-away and outcome handlers. Only the
+    // adjacency requirement — presentation, not behaviour — is dropped.
+    /presentedState\.kind === 'reminder_detail' \? \([\s\S]{0,600}<SmartReminderCard\s*topReminder=\{presentedState\.reminder\}\s*onNavigateAway=\{handleForceClose\}\s*onOutcome=\{handleReminderOutcome\}/.test(
       REMINDER_SHEET_SRC
-    )
+    ) &&
+      // Still the REAL component, never a local reimplementation, and still
+      // carrying every account-choice control this clause exists to protect.
+      /import \{ SmartReminderCard \} from '\.\/SmartReminderCard';/.test(REMINDER_SHEET_SRC) &&
+      /onRequestLoanRepayment=\{\(\) => dispatch\(\{ type: 'REQUEST_LOAN_FORM' \}\)\}/.test(REMINDER_SHEET_SRC) &&
+      /onRequestCreditCardRepayment=\{\(\) => dispatch\(\{ type: 'REQUEST_CARD_FORM' \}\)\}/.test(REMINDER_SHEET_SRC)
   );
   // WHY STALE: the confirmed blank-sheet defect (see ReminderDetailSheet.tsx's
   // own doc comment) removed `reminderSheetVisible` entirely — the tile

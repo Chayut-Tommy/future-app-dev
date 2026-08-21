@@ -10,8 +10,23 @@ import { AppStateProvider } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { SavingsAllocationPromptProvider } from '../../src/state/SavingsAllocationPromptContext';
-import { MainTabNavigator } from '../../src/navigation/MainTabNavigator';
+import { RootNavigator } from '../../src/navigation/RootNavigator';
 import { createEmptyAppData } from '../../src/lib/storage';
+
+/**
+ * Wave 6 correction A — this harness now mounts the REAL RootNavigator.
+ *
+ * It previously mounted MainTabNavigator alone, which was sufficient while
+ * the dock was that navigator's own tabBar. The dock is now a root-level
+ * sibling of the detached "+" (a tabBar-mounted dock structurally could not
+ * exist on MoneyDetail, GrowDetail, Transactions, Goals, Cards or
+ * EmergencyFund, which are all root-stack routes), so the tab controls this
+ * file presses live at root. Mounting half the production tree can no
+ * longer drive navigation.
+ *
+ * Nothing this file asserts about tab CONTENT or state retention changed —
+ * only the amount of the real tree it has to mount to exercise it.
+ */
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
@@ -50,7 +65,7 @@ function Harness() {
           <CelebrationProvider>
             <SavingsAllocationPromptProvider>
               <NavigationContainer>
-                <MainTabNavigator />
+                <RootNavigator />
               </NavigationContainer>
             </SavingsAllocationPromptProvider>
           </CelebrationProvider>
@@ -63,6 +78,8 @@ function Harness() {
 async function seedData() {
   const data = createEmptyAppData();
   data.user.name = 'Jamie';
+  // RootNavigator gates the main experience behind this flag.
+  data.user.hasSeenIntro = true;
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -90,9 +107,14 @@ describe('Motion reconciliation — MainTabNavigator render-callback state reten
     await render(<Harness />);
 
     await user.press(await screen.findByRole('button', { name: /^Money,/ }));
-    await screen.findByText('Typical Money Flow');
+    await screen.findByText('Typical money flow');
     await user.press(screen.getByText('Weekly'));
-    await screen.findByText(/Typical weekly income/);
+    // Wave 6 final pass — the flow rows no longer repeat the period in
+    // every label ("Typical weekly income" -> "Income"), because the
+    // selector already states it once. The selected period is now read
+    // from the control's own announced state, which is a stronger signal
+    // than a row label and is what a screen reader actually hears.
+    await screen.findByRole('radio', { name: 'Weekly view' });
 
     // Flip the live OS Reduce Motion preference — this changes
     // MainTabNavigator's own `reduceMotion` state, forcing it to re-render
@@ -106,9 +128,11 @@ describe('Motion reconciliation — MainTabNavigator render-callback state reten
       changeHandler!(true);
     });
 
-    // Local state survived — still showing the weekly figures, not reset.
-    expect(await screen.findByText(/Typical weekly income/)).toBeOnTheScreen();
-    expect(screen.queryByText(/Typical monthly income/)).toBeNull();
+    // Local state survived — Weekly is still the selected period, and
+    // Monthly is not, so the toggle genuinely did not reset.
+    const weekly = await screen.findByRole('radio', { name: 'Weekly view' });
+    expect(weekly.props.accessibilityState?.selected).toBe(true);
+    expect(screen.getByRole('radio', { name: 'Monthly view' }).props.accessibilityState?.selected).toBe(false);
   });
 
   test('Grow retains local UI state (Journey expanded) across a MainTabNavigator rerender triggered by a live Reduce Motion change', async () => {
