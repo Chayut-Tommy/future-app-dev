@@ -2,10 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { AppData, RecurringItem } from '../../types/models';
 import { computeSafeToSpend } from '../../lib/calculations/safeToSpend';
 import { frequencyAdverb, toMonthlyAmount } from '../../lib/calculations/incomeEngine';
 import { computeRetirementSavings, computeTotalWealth } from '../../lib/calculations/wealthDefinitions';
+import { formatWealthAmount } from '../../lib/calculations/wealthComposition';
 import { AddIncomeModal } from '../income/AddIncomeModal';
 import { EditSavingsAllocationModal } from './EditSavingsAllocationModal';
 import { OptionsSheet } from '../shared/OptionsSheet';
@@ -35,7 +39,9 @@ function savingsAllocationSub(user: AppData['user'], monthlyAmount: number): str
  * liabilities, not a literal addition of monthly flow to stock balances.
  */
 export function MoneyEngineCard({ data }: { data: AppData }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
+  // Wave 7 correction B — the same shipped role resolver Money and Today use.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const safeToSpend = useMemo(() => computeSafeToSpend(data), [data]);
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [incomeSourcesSheetVisible, setIncomeSourcesSheetVisible] = useState(false);
@@ -93,6 +99,13 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
   // Colour is used for icon circles and supporting labels only — main
   // values stay dark/readable, never a different bright colour per row
   // (PRD ask, §B6: "visual hierarchy without making it overly colourful").
+  /* Wave 7 correction B — two visual groups, no nested cards.
+
+     The five rows answer two different questions: the first two are the
+     customer's monthly PACE, the last three are the wealth BASE they have
+     built. Reading them as one undifferentiated list is why the total
+     underneath invited a false sum. Grouping is presentational only — the
+     rows, values, handlers and destinations are unchanged. */
   const rows = [
     {
       icon: 'cash-outline' as const,
@@ -140,7 +153,7 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
     },
     {
       icon: 'lock-closed' as const,
-      label: 'Retirement Savings',
+      label: 'Retirement savings',
       sub: 'Long-term restricted wealth',
       value: retirementSavings,
       flow: false,
@@ -154,27 +167,53 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        caption: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.md, lineHeight: 17 },
-        row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+        caption: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.md },
+        identityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
+        identityTile: { width: 36, height: 36, borderRadius: 18, backgroundColor: semantic.interactiveTint, alignItems: 'center', justifyContent: 'center' },
+        identityTitle: { ...typeStyle('titleSection', locale), color: semantic.textTitle },
+        /* Wave 7 correction B — calm title case, not a shouted micro
+           heading. Two all-caps labels inside one card read as system
+           chrome rather than as the customer's own money. */
+        groupLabel: { ...typeStyle('support', locale), fontWeight: '700', color: colors.textSecondary, marginTop: spacing.md, marginBottom: spacing.xs },
+        row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44, paddingVertical: 2, marginBottom: spacing.xs },
         iconBadge: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
         labelBlock: { flex: 1 },
-        label: { ...typography.caption, fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
-        labelSub: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: 1 },
-        value: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
+        label: { ...typeStyle('body', locale), color: colors.textPrimary, fontWeight: '600' },
+        labelSub: { ...typeStyle('meta', locale), color: colors.textMuted, marginTop: 1 },
+        value: { ...typeStyle('figureRow', locale), color: colors.textPrimary, fontVariant: ['tabular-nums'] },
         divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: spacing.sm },
         totalRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         totalIconBadge: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
-        totalLabel: { ...typography.heading, fontSize: 14, color: colors.textPrimary, flex: 1 },
-        totalValue: { ...typography.title, fontSize: 19, color: colors.textPrimary },
+        totalLabel: { ...typeStyle('titleCard', locale), color: colors.textPrimary, flex: 1 },
+        totalValue: { ...typeStyle('figureLarge', locale), color: semantic.textFigure, fontVariant: ['tabular-nums'] },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic, locale]
   );
 
   return (
     <View>
-      <Text style={styles.caption}>How your wealth is built — your income and saving are the engine, your investments and assets are the fuel.</Text>
-      {rows.map((r) => (
-        <TouchableOpacity key={r.label} style={styles.row} activeOpacity={r.onPress ? 0.7 : 1} disabled={!r.onPress} onPress={r.onPress}>
+      {/* Wave 7 correction B — a Design 5.1 identity row, so the card names
+          itself the way every other Wave 5–7 surface does. */}
+      <View style={styles.identityRow}>
+        <View style={styles.identityTile}>
+          <Ionicons name="speedometer-outline" size={18} color={semantic.interactive} accessibilityElementsHidden importantForAccessibility="no" />
+        </View>
+        <Text style={styles.identityTitle} accessibilityRole="header">Your money engine</Text>
+      </View>
+      {/* Shortened: the original sentence explained the metaphor twice. */}
+      <Text style={styles.caption}>Your income and saving build wealth; your assets hold it.</Text>
+      {rows.map((r, i) => (
+        <React.Fragment key={r.label}>
+          {i === 0 ? <Text style={styles.groupLabel}>Your monthly pace</Text> : null}
+          {i === 2 ? <Text style={styles.groupLabel}>What you’ve built</Text> : null}
+        <TouchableOpacity
+          style={styles.row}
+          activeOpacity={r.onPress ? 0.7 : 1}
+          disabled={!r.onPress}
+          onPress={r.onPress}
+          accessibilityRole={r.onPress ? 'button' : undefined}
+          accessibilityLabel={`${r.label}. ${formatWealthAmount(r.value)}.`}
+        >
           <View style={[styles.iconBadge, { backgroundColor: r.iconBg }]}>
             <Ionicons name={r.icon} size={15} color={r.iconColor} />
           </View>
@@ -188,19 +227,31 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
             </TouchableOpacity>
           ) : null}
           <Text style={styles.value}>
-            {formatMoney(r.value)}
+            {formatWealthAmount(r.value)}
             {r.flow ? '/mo' : ''}
           </Text>
-          {r.onPress ? <Ionicons name="chevron-forward" size={14} color={colors.textMuted} style={{ marginLeft: 2 }} /> : null}
+          {/* Chevron only where the row genuinely goes somewhere. */}
+          {r.onPress ? <Ionicons name="chevron-forward" size={14} color={colors.textMuted} style={{ marginLeft: 2 }} accessibilityElementsHidden importantForAccessibility="no" /> : null}
         </TouchableOpacity>
+        </React.Fragment>
       ))}
       <View style={styles.divider} />
       <View style={styles.totalRow}>
         <View style={styles.totalIconBadge}>
           <Ionicons name="diamond-outline" size={15} color={colors.textSecondary} />
         </View>
-        <Text style={styles.totalLabel}>= Total Wealth Today</Text>
-        <Text style={styles.totalValue}>{formatMoney(totalWealth)}</Text>
+        {/* Wave 7 correction B — the leading "=" is gone, and so is
+            "Total Wealth Today".
+
+            The equals sign asserted an equation the rows above do not make.
+            `totalWealth` is assets minus LIABILITIES, and no liability is
+            displayed here at all; the first two rows are monthly flows, not
+            wealth components. Five rows and a total joined by "=" told the
+            customer to add them up and get that figure, which they cannot.
+            The figure and its source are unchanged — only the false
+            arithmetic claim and the superseded name are. */}
+        <Text style={styles.totalLabel}>Net worth today</Text>
+        <Text style={styles.totalValue}>{formatWealthAmount(totalWealth)}</Text>
       </View>
       <OptionsSheet
         visible={incomeSourcesSheetVisible}

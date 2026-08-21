@@ -2,10 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { computeAgeProjections, computeWhatIfMilestone, computeNextWealthMilestone, computeCashflowIsNegative } from '../../lib/calculations/futureProjection';
 import { ACCESSIBLE_INVESTMENT_TYPES } from '../../lib/calculations/assetGroups';
+import { formatWealthAmount } from '../../lib/calculations/wealthComposition';
 import { computeAccessibleNetWorth, computeRetirementSavings } from '../../lib/calculations/wealthDefinitions';
 import { useFinancialState } from '../../lib/calculations/financialState';
 import { InfoSheet } from '../shared/InfoSheet';
@@ -27,7 +31,9 @@ function formatMoney(value: number): string {
  */
 export function YourFutureCard() {
   const { data, updateUser } = useAppState();
-  const { colors, radius, spacing, typography, glow } = useTheme();
+  const { colors, radius, spacing, typography, glow, semantic } = useTheme();
+  // Wave 7 correction B — the same shipped role resolver Money and Today use.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [ageInput, setAgeInput] = useState('');
   const [breakdownAge, setBreakdownAge] = useState<AgeProjection | null>(null);
 
@@ -52,10 +58,10 @@ export function YourFutureCard() {
     () =>
       StyleSheet.create({
         card: { ...glow(colors.navy) },
-        title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 4 },
-        body: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, marginBottom: spacing.md },
-        freedomText: { ...typography.body, fontSize: 15, color: colors.textPrimary, lineHeight: 21, marginBottom: spacing.sm, fontWeight: '600' },
-        subheading: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm },
+        title: { ...typeStyle('titleCard', locale), color: colors.textPrimary, marginBottom: 4 },
+        body: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.md },
+        freedomText: { ...typeStyle('body', locale), color: colors.textPrimary, marginBottom: spacing.sm, fontWeight: '600' },
+        subheading: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.sm },
         input: {
           backgroundColor: colors.surfaceMuted,
           borderRadius: radius.control,
@@ -66,9 +72,17 @@ export function YourFutureCard() {
           marginBottom: spacing.md,
         },
         row: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-        ageBlock: { flex: 1, backgroundColor: colors.navySoft, borderRadius: radius.control, padding: spacing.md, alignItems: 'center' },
-        ageLabel: { ...typography.micro, color: colors.textSecondary, marginBottom: 2 },
-        ageValue: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
+        identityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+        identityTile: { width: 36, height: 36, borderRadius: 18, backgroundColor: semantic.interactiveTint, alignItems: 'center', justifyContent: 'center' },
+        identityTitle: { ...typeStyle('titleSection', locale), color: semantic.textTitle },
+        projectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, flexWrap: 'wrap' },
+        calcButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
+        calcButtonText: { ...typeStyle('support', locale), fontWeight: '700', color: semantic.interactive },
+        /* Three EQUAL cells — flexBasis:0 so a longer figure cannot claim
+           more width than its neighbours. */
+        ageBlock: { flexGrow: 1, flexBasis: 0, minWidth: 0, backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, alignItems: 'center', minHeight: 44, justifyContent: 'center' },
+        ageLabel: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: 2 },
+        ageValue: { ...typeStyle('figureRow', locale), color: colors.textPrimary, fontVariant: ['tabular-nums'] },
         insightRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -78,18 +92,18 @@ export function YourFutureCard() {
           padding: spacing.sm,
           marginBottom: spacing.sm,
         },
-        insightText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, flex: 1, lineHeight: 17 },
-        disclaimer: { ...typography.micro, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 14 },
+        insightText: { ...typeStyle('support', locale), color: colors.textPrimary, flex: 1 },
+        disclaimer: { ...typeStyle('meta', locale), color: colors.textMuted, marginTop: spacing.xs },
         breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
-        breakdownLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
-        breakdownValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        breakdownSubLabel: { ...typography.caption, fontSize: 12, color: colors.textMuted, paddingLeft: spacing.sm },
-        breakdownSubValue: { ...typography.caption, fontSize: 12, color: colors.textMuted },
+        breakdownLabel: { ...typeStyle('body', locale), color: colors.textPrimary },
+        breakdownValue: { ...typeStyle('figureRow', locale), color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+        breakdownSubLabel: { ...typeStyle('meta', locale), color: colors.textMuted, paddingLeft: spacing.sm },
+        breakdownSubValue: { ...typeStyle('meta', locale), color: colors.textMuted },
         breakdownTotalRow: { borderTopWidth: 1, borderTopColor: colors.border, marginTop: 2 },
         addAgeLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.md },
-        addAgeLinkText: { ...typography.micro, color: colors.accent, fontWeight: '700' },
+        addAgeLinkText: { ...typeStyle('support', locale), color: semantic.interactive, fontWeight: '700' },
       }),
-    [colors, radius, spacing, typography, glow]
+    [colors, radius, spacing, typography, glow, semantic, locale]
   );
 
   // Financial Rebuild state: kept deliberately factual — no ordered action
@@ -101,7 +115,13 @@ export function YourFutureCard() {
     const deficit = totalLiabilities - totalAssets;
     return (
       <SectionCard style={styles.card}>
-        <Text style={styles.title}>Your Future</Text>
+        {/* Wave 7 correction B — a Design 5.1 identity row. */}
+      <View style={styles.identityRow}>
+        <View style={styles.identityTile}>
+          <Ionicons name="trending-up-outline" size={18} color={semantic.interactive} accessibilityElementsHidden importantForAccessibility="no" />
+        </View>
+        <Text style={styles.identityTitle} accessibilityRole="header">Your future</Text>
+      </View>
         <Text style={styles.freedomText}>Your current financial position is rebuilding.</Text>
         <Text style={styles.body}>
           Your future projection will unlock once {brand.name} has enough positive net-wealth data to work with.
@@ -127,7 +147,13 @@ export function YourFutureCard() {
 
   return (
     <SectionCard style={styles.card}>
-      <Text style={styles.title}>Your Future</Text>
+      {/* Wave 7 correction B — a Design 5.1 identity row. */}
+      <View style={styles.identityRow}>
+        <View style={styles.identityTile}>
+          <Ionicons name="trending-up-outline" size={18} color={semantic.interactive} accessibilityElementsHidden importantForAccessibility="no" />
+        </View>
+        <Text style={styles.identityTitle} accessibilityRole="header">Your future</Text>
+      </View>
 
       {nextMilestone ? (
         <Text style={styles.freedomText}>
@@ -156,12 +182,35 @@ export function YourFutureCard() {
 
       {projections ? (
         <>
-          <Text style={styles.subheading}>{brand.name} estimates your future could look like this 👇 Tap for how this is calculated.</Text>
+          {/* Wave 7 correction B — the emoji pointer and its "tap for..."
+              instruction became a real, named 44pt control. The
+              destination is unchanged: the same per-age breakdown sheet the
+              cells already opened. */}
+          <View style={styles.projectionHead}>
+            <Text style={styles.subheading}>Estimated at these ages</Text>
+            <TouchableOpacity
+              style={styles.calcButton}
+              onPress={() => setBreakdownAge(projections[0])}
+              accessibilityRole="button"
+              accessibilityLabel="How this is calculated"
+              testID="future-how-calculated"
+            >
+              <Text style={styles.calcButtonText}>How this is calculated</Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.row}>
             {projections.map((p) => (
-              <TouchableOpacity key={p.age} style={styles.ageBlock} activeOpacity={0.7} onPress={() => setBreakdownAge(p)}>
+              <TouchableOpacity
+                key={p.age}
+                style={styles.ageBlock}
+                activeOpacity={0.7}
+                onPress={() => setBreakdownAge(p)}
+                accessibilityRole="button"
+                accessibilityLabel={`Age ${p.age}, ${formatWealthAmount(p.projectedNetWorth)}. How this is calculated.`}
+                testID={`future-projection-${p.age}`}
+              >
                 <Text style={styles.ageLabel}>Age {p.age}</Text>
-                <Text style={styles.ageValue}>{formatMoney(p.projectedNetWorth)}</Text>
+                <Text style={styles.ageValue}>{formatWealthAmount(p.projectedNetWorth)}</Text>
               </TouchableOpacity>
             ))}
           </View>

@@ -56,7 +56,7 @@ export const AddCreditCardModal = forwardRef<
 >(function AddCreditCardModal({ visible, onClose, editCard, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose }, ref) {
   const { addCreditCard, updateCreditCard, deleteCreditCard } = useAppState();
   const { celebrate } = useCelebration();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
   const [issuer, setIssuer] = useState('');
   const [limit, setLimit] = useState('');
   const [balance, setBalance] = useState('');
@@ -283,6 +283,11 @@ export const AddCreditCardModal = forwardRef<
         half: {
           flex: 1,
         },
+        /* Wave 7 correction D — Save is an INTERACTIVE action, not a
+           completed positive outcome. `Button`'s own `primary` variant uses
+           `colors.accent`, which is green in every theme. Scoped to this one
+           control; the global primitive is untouched. */
+        saveAction: { backgroundColor: semantic.interactive },
         footerButton: {
           flex: 1,
         },
@@ -401,7 +406,7 @@ export const AddCreditCardModal = forwardRef<
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave || saving} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave || saving} style={{ ...styles.footerButton, ...styles.saveAction }} />
         </>
       }
     >

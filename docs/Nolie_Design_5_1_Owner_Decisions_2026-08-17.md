@@ -863,3 +863,52 @@ TypeScript 0. Legacy **79 files / 5,840**. Rendered **31 suites / 248**, green t
 **Zero financial-engine changes:** all 27 protected files byte-identical, and the original 21-file Wave 5 baseline byte-identical too — every calculation engine, the occurrence-confirmation and repayment paths, both eligibility resolvers, the reminder selectors, and every navigation and Add transition controller. **Zero dependency or configuration changes**; lockfile diff empty. `git diff --check` clean.
 
 Two persistence additions are intentional and additive only: the snooze and dismiss occurrence maps described above. No destructive migration; old stored data remains valid.
+
+---
+
+# Change control — Wave 7 closure and checkpoint (21 August 2026)
+
+**Baseline** `04f1666` (Wave 6 checkpoint). Approved by the owner's full iOS device test. Earlier entries above are left exactly as written.
+
+## Device approval
+
+**iOS: approved.** The recording confirms the unified Net worth hero and its breakdown, the shared liability picker, the corrected date and tone semantics, and this exact sequence of net-worth transitions: everyday $25,000 → $25,000; savings $10,000 → $35,000; retirement $5,000 → $40,000; car loan $10,000 → $30,000; credit card $1,000 → $29,000; own $40,000 − owe $11,000 = $29,000; accessible $24,000 + retirement $5,000 = $29,000. Every step is reasserted as an executable fixture at checkpoint.
+
+**Android: export-tested only.** The automated Android export exits 0. Android has **not** been device-tested; cross-platform device verification remains deferred to Wave 11.
+
+## Final Wealth hierarchy
+
+Screen title `Wealth` → **one** hero shell on `semantic.ambient` with a theme-aware border, holding: a Net worth identity row and a 44pt Move money utility; the `figureHero` amount; `What you own minus what you owe`; an internal semantic divider; and the own/owe reconciliation with its proportion bar and a 44pt `View breakdown` control. The shell is deliberately not itself pressable — it carries two distinct actions, and nesting them inside a third button cannot be expressed to VoiceOver.
+
+`View breakdown` opens **one** canonical sheet showing what you own, what you owe, the net-worth reconciliation, accessible now, retirement savings and the definitions, with focus returning to the trigger. Retirement absence is distinguished from a genuine recorded `$0`: absence reads `Not recorded` and offers one compact `Add retirement savings` action on the existing asset route.
+
+Below the hero: **What you own** and **What you owe**, each previewing three rows in the established canonical order with an inline `View all … (N)` / `Show fewer …` control, announced through `accessibilityState.expanded`. A zero-balance row is never dropped. The preserved Money Engine, Your Future and guide cards follow, so the canonical order is uninterrupted.
+
+Positive net worth uses the Ocean interactive figure role, exact zero is neutral, and negative uses the warning family plus the text cue "You owe more than you own right now" — never destructive red, and never success green for an ordinary positive balance.
+
+## Shared liability picker
+
+The six wrapping debt chips were replaced by the same `InlineSelect` field-and-focused-picker the asset side already used. The six types, their order and their discriminators are unchanged; each row gained an icon from the existing shared map and concise helper text. The credit-card handoff is preserved branch for branch, including the Android fallback that exists because RN never fires `onDismiss` there. Switching type erases nothing — the form's existing discard guard remains the only place entered detail can be lost.
+
+## The unsupported wealth-change presentation, removed
+
+`Estimated wealth change this month` read `computeMoneyPlan(data).available`, which is
+`max(0, discretionaryPool − variableSpendSoFar + adHocIncomeThisMonth)`.
+
+`discretionaryPool` is a **full-month rate** (typical income minus typical obligations); the other two terms are **part-month actuals**. Three properties, proven as executable tests rather than asserted, establish that the result cannot be a period change:
+
+1. It is floored at zero, so it can never express a loss.
+2. It double-counts income — receiving the same amount it already forecasts inflates it.
+3. It is blind to what actually changes wealth: a debt repayment and a recorded $900,000 property both leave it unmoved.
+
+The owner's observed `$19,572` reconciled exactly as `$2,796` typical remainder + `$17,500` actual ad-hoc income − `$724` variable spend, with the `$201` discrepancy being spending recorded against a recurring item and therefore already inside the bills rate. No existing engine calculates forecast net wealth change by month end, and Typical Money Flow already owns the monthly remainder, so the row, its sheet, its trigger, its state and its styles were **removed rather than relabelled**. `computeMoneyPlan` itself is untouched.
+
+## Date semantics — an accepted data-contract limitation
+
+`Asset` carries **no** recorded or updated date field of any kind. Asset rows therefore show no date line: today is never substituted and no timestamp is fabricated. `Liability.createdAt` is a creation date, not a balance-recorded date, so it is labelled `Added [local date]` and only for the types whose creation path actually sets it. This limitation is accepted and documented; it is **not** authority for a schema change. The stale visual remains wired but its trigger ships off, so no age produces a caution tint.
+
+## Financial non-regression
+
+TypeScript 0. Legacy **80 files / 6,138**. Rendered **32 suites / 276**, green twice. Wave 7 hierarchy 298/298, Wave 7 rendered 28/28. Wave 6 hierarchy 242, reminder actions 101, reminder intents 135, account choice 125 + 13, AUP hero 78, nav shell 102 + 9, dock 66, date/timeline 84, Wave 5 hierarchy 353, income destinations 230, contrast 141 + 43 + 55, typography 59, iconography 65. Linked-repayment persistence 15, everyday-account integrity 61, phantom-credit 72, transfer-funds wiring 83, move-money architecture 122, everyday account 94 + 55 + 40, BNPL 169, add-asset 32 + 6. Doctor 17/18. Both exports exit 0.
+
+**All 39 protected files byte-identical to `04f1666`** — the net-worth and projection engines, transfer and repayment engines, card synchronisation and eligibility, `src/state`, `src/types`, storage, the navigation shell and both Add transition controllers. `wealthDefinitions.ts` was not edited at all, not even a label or comment. **Zero dependency, lockfile, configuration, schema, storage or migration change.**

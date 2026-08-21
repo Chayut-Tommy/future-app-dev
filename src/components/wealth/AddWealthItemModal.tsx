@@ -8,7 +8,7 @@ import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Chip } from '../shared/Chip';
 import { InlineSelect } from '../shared/fields/InlineSelect';
-import { assetTypeIcon } from '../../lib/addIcons';
+import { assetTypeIcon, liabilityTypeIcon } from '../../lib/addIcons';
 import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { DateTriggerField } from '../shared/fields/DateTriggerField';
 import { TextField } from '../shared/fields/TextField';
@@ -108,13 +108,26 @@ const ASSET_CARD_GROUPS: { value: AssetType; label: string; description: string 
   { value: 'other', label: 'Other assets', description: 'Everything else you own' },
 ];
 
-const LIABILITY_TYPES: { value: LiabilityType; label: string }[] = [
-  { value: 'mortgage', label: 'Mortgage' },
-  { value: 'credit_card', label: 'Credit card' },
-  { value: 'car_loan', label: 'Car loan' },
-  { value: 'personal_loan', label: 'Personal loan' },
-  { value: 'bnpl', label: 'Buy Now, Pay Later' },
-  { value: 'other', label: 'Other' },
+/**
+ * Wave 7 correction C — the six debt types.
+ *
+ * The list itself is UNCHANGED: same six values, same order, same
+ * discriminators. Only the presentation moved, from a wrapping chip row to
+ * the same InlineSelect field-and-focused-picker the asset side already
+ * uses. Chips forced six labels of wildly different widths onto two ragged
+ * lines, gave no helper text, and were ~30pt tall; the shared picker gives
+ * each type a full row, an icon, a description and a real target.
+ *
+ * `description` is new and presentational only — it never affects which
+ * form, controller or validation a type reaches.
+ */
+const LIABILITY_TYPES: { value: LiabilityType; label: string; description: string }[] = [
+  { value: 'mortgage', label: 'Mortgage', description: 'A home or investment property loan' },
+  { value: 'credit_card', label: 'Credit card', description: 'Has its own form for limit, due day and rate' },
+  { value: 'car_loan', label: 'Car loan', description: 'A loan secured against a vehicle' },
+  { value: 'personal_loan', label: 'Personal loan', description: 'An unsecured loan or line of credit' },
+  { value: 'bnpl', label: 'Buy now, pay later', description: 'An instalment plan you are still paying off' },
+  { value: 'other', label: 'Other debt', description: 'Anything else you owe' },
 ];
 
 const REPAYMENT_FREQUENCIES: { value: PayFrequency; label: string }[] = [
@@ -379,7 +392,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     updateLinkedRepaymentOnly,
     saveBnplPlan,
   } = useAppState();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
   // Dismissal-lifecycle correction — `kind` shadows the `kindProp` prop with
   // a local, frozen copy used by every render/title/form-identity decision
   // below (unchanged call sites — this is a rename of what `kind` refers
@@ -933,6 +946,40 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     setDismissAnimationType('slide');
   }
 
+  /**
+   * Wave 7 correction C — the debt-type handler.
+   *
+   * Every branch below is the chip handler's own, moved verbatim. The
+   * credit-card path in particular is untouched: embedded hands off
+   * synchronously to the host's route controller; standalone takes the
+   * first-accepted-tap-wins deferred handoff, skipping the animated
+   * dismissal in the same synchronous call as onClose(), with the Android
+   * fallback timer that exists because RN never fires onDismiss there.
+   *
+   * Dirty data is NOT silently erased. Switching type keeps whatever the
+   * customer has entered, exactly as the chips did — the form's own
+   * existing discard guard (`Discard this ...?`) still owns the one place
+   * where entered detail can be lost, and this pass does not weaken it.
+   */
+  function chooseLiabilityType(type: LiabilityType) {
+    if (type === 'credit_card') {
+      if (embedded) {
+        onRequestCreditCard?.();
+        return;
+      }
+      if (ccHandoffInProgressRef.current) return;
+      ccHandoffInProgressRef.current = true;
+      setDismissAnimationType('none');
+      onClose();
+      if (Platform.OS === 'android') {
+        if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
+        ccHandoffTimerRef.current = setTimeout(runPendingCreditCardHandoff, CREDIT_CARD_HANDOFF_DEFER_MS);
+      }
+      return;
+    }
+    setLiabilityType(type);
+  }
+
   function chooseAssetCategory(type: AssetType) {
     setAssetType(type);
     setIncludeInMoney(forcedIncludeInMoneyDefault ?? resolveIncludeInMoneyCalculations({ type, includeInMoneyCalculations: undefined }));
@@ -1389,6 +1436,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         typeChipTextActive: { color: colors.accentStrong, fontWeight: '600' },
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
         inputLocked: { opacity: 0.55 },
+        /* Wave 7 correction D — Save is an INTERACTIVE action, not a
+           completed positive outcome. `Button`'s own `primary` variant uses
+           `colors.accent`, which is green in every theme; on a Wealth form
+           that made "Save" look like a confirmation that had already
+           happened. Scoped to this one control — the global Button
+           primitive and every other screen are untouched. Green stays
+           reserved for money genuinely received. */
+        saveAction: { backgroundColor: semantic.interactive },
         footerButton: { flex: 1 },
         deleteButton: { marginTop: spacing.sm },
         deleteText: { ...typography.caption, color: colors.danger, textAlign: 'center', fontWeight: '600' },
@@ -1533,6 +1588,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   const assetTypeSelectOptions = (restrictToLiquid ? ASSET_CARD_GROUPS.filter((g) => LIQUID_BALANCE_TYPES.includes(g.value)) : ASSET_CARD_GROUPS).map(
     (g) => ({ value: g.value, label: g.label, supporting: g.description, icon: assetTypeIcon(g.value) })
   );
+  /* Wave 7 correction C — the debt side of the same shape. Built from the
+     unchanged LIABILITY_TYPES list, so a type can never appear here without
+     also existing as a real discriminator. */
+  const liabilityTypeSelectOptions = LIABILITY_TYPES.map((t) => ({
+    value: t.value,
+    label: t.label,
+    supporting: t.description,
+    icon: liabilityTypeIcon(t.value),
+  }));
 
   // Navigation Transitions, Option B pilot — the exact same field/section
   // JSX every standalone caller already renders, now also reused verbatim
@@ -1581,54 +1645,22 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         />
       ) : null}
       {showTypeChips && kind === 'liability' ? (
-        <View style={styles.typeRow}>
-          {LIABILITY_TYPES.map((t) => (
-            <Chip
-              key={t.value}
-              label={t.label}
-              selected={liabilityType === t.value}
-              onPress={() => {
-                if (t.value === 'credit_card') {
-                  // Full-workspace extension — embedded: no Modal to
-                  // dismiss, so no defer/timer dance at all. Directly and
-                  // synchronously hands off to the host's own route
-                  // controller (chooser<->liability<->creditCard, all
-                  // routes in the same persistent workspace).
-                  if (embedded) {
-                    onRequestCreditCard?.();
-                    return;
-                  }
-                  // Standalone — unchanged. First-accepted-tap-wins
-                  // deferred handoff (Stream D, D1, corrected) —
-                  // onSelectCreditCard is never called in the same tick
-                  // as onClose(): on iOS it's deferred to KeyboardSheet's
-                  // real onDismiss (wired below); only on Android — where
-                  // RN never calls onDismiss — is the
-                  // CREDIT_CARD_HANDOFF_DEFER_MS fallback timer scheduled.
-                  if (ccHandoffInProgressRef.current) return;
-                  ccHandoffInProgressRef.current = true;
-                  // Skip the animated dismissal for an accepted handoff
-                  // (Stream D, Option B) — flips animationType to 'none'
-                  // in the SAME synchronous call as onClose(), so React
-                  // 18's automatic batching lands both in one commit
-                  // (verified against RN's own Fabric
-                  // RCTModalHostViewComponentView.mm: updateProps applies
-                  // animationType before ensurePresentedOnlyIfNeeded
-                  // checks visible, within one synchronous native call
-                  // per commit).
-                  setDismissAnimationType('none');
-                  onClose();
-                  if (Platform.OS === 'android') {
-                    if (ccHandoffTimerRef.current) clearTimeout(ccHandoffTimerRef.current);
-                    ccHandoffTimerRef.current = setTimeout(runPendingCreditCardHandoff, CREDIT_CARD_HANDOFF_DEFER_MS);
-                  }
-                  return;
-                }
-                setLiabilityType(t.value);
-              }}
-            />
-          ))}
-        </View>
+        /* Wave 7 correction C — the SAME InlineSelect the asset side uses.
+           Choosing a type still routes through the identical branches: the
+           credit-card handoff below is byte-for-byte the chip handler's own
+           logic (embedded → onRequestCreditCard, standalone → deferred
+           handoff with the Android fallback), and every other type still
+           just sets `liabilityType`, the one discriminator the whole form
+           reads. No second Modal: InlineSelect owns its own focused list,
+           and it dismisses the keyboard before that list is interactive. */
+        <InlineSelect
+          label="What are you adding?"
+          placeholder="Choose a debt type"
+          value={liabilityType}
+          onChange={chooseLiabilityType}
+          options={liabilityTypeSelectOptions}
+          testID="add-liability-type"
+        />
       ) : null}
       {loanDetailsLocked ? (
         <View style={styles.lockedSummaryRow}>
@@ -2001,7 +2033,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={{ ...styles.footerButton, ...styles.saveAction }} />
         </>
       }
       onDismiss={Platform.OS === 'ios' ? runPendingCreditCardHandoff : undefined}

@@ -232,6 +232,11 @@ export const addTaskIcon = (kind: string) => resolveAddIcon(ADD_TASK_ICONS, kind
 export const billTypeIcon = (label: string) => resolveAddIcon(BILL_TYPE_ICONS, label);
 export const incomeSourceIcon = (categoryId: string) => resolveAddIcon(INCOME_SOURCE_ICONS, categoryId);
 export const assetTypeIcon = (type: string) => resolveAddIcon(ASSET_TYPE_ICONS, type);
+/** Wave 7 correction — the debt-type resolver. LIABILITY_TYPE_ICONS already
+ * existed and was already covered by the iconography gate; only this
+ * convenience accessor was missing, because nothing had yet rendered debt
+ * types as a picker. */
+export const liabilityTypeIcon = (type: string) => resolveAddIcon(LIABILITY_TYPE_ICONS, type);
 export const accountSourceIcon = (type: string) => resolveAddIcon(ACCOUNT_SOURCE_ICONS, type);
 export const goalPurposeIcon = (purpose: string) => resolveAddIcon(GOAL_PURPOSE_ICONS, purpose);
 

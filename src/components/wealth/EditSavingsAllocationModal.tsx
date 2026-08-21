@@ -21,7 +21,7 @@ import { SavingsAllocationPickerBody, isValidSetting } from './SavingsAllocation
  */
 export function EditSavingsAllocationModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { data, updateUser } = useAppState();
-  const { colors, spacing, typography } = useTheme();
+  const { colors, spacing, typography, semantic } = useTheme();
   const hasRecurringIncome = data.user.monthlyIncome > 0;
 
   const [draft, setDraft] = useState<SavingsAllocationSetting>(() => data.user.savingsAllocation ?? { mode: 'off' });
@@ -43,6 +43,14 @@ export function EditSavingsAllocationModal({ visible, onClose }: { visible: bool
     () =>
       StyleSheet.create({
         intro: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.md },
+        /* Wave 7 correction D — Save is an INTERACTIVE action, not a
+           completed positive outcome. `Button`'s own `primary` variant uses
+           `colors.accent`, which is green in every theme; on a Wealth form
+           that made "Save" look like a confirmation that had already
+           happened. Scoped to this one control — the global Button
+           primitive and every other screen are untouched. Green stays
+           reserved for money genuinely received. */
+        saveAction: { backgroundColor: semantic.interactive },
         footerButton: { flex: 1 },
       }),
     [colors, spacing, typography]
@@ -56,7 +64,7 @@ export function EditSavingsAllocationModal({ visible, onClose }: { visible: bool
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+          <Button label="Save" onPress={handleSave} disabled={!canSave} style={{ ...styles.footerButton, ...styles.saveAction }} />
         </>
       }
     >
