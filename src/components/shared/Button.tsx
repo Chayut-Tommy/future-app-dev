@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { fontFamilyForWeight, AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 /** Design 5.1 Wave 4 — `danger` added for destructive confirmations, which
  * previously each hand-rolled their own red TouchableOpacity. The three
@@ -34,6 +36,10 @@ export function Button({
 }) {
   const { colors, minTouchTarget, radius, spacing, typography } = useTheme();
   const isDisabled = disabled || loading;
+  // Design 5.1 Wave 9a — family-only migration (Wave 1B pattern): the
+  // existing heading size/weight stay verbatim; only the matching bundled
+  // face is declared so a button label never renders in the platform font.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const styles = useMemo(
     () =>
@@ -66,6 +72,7 @@ export function Button({
         label: {
           ...typography.heading,
           fontSize: 15,
+          fontFamily: fontFamilyForWeight(600, locale),
         },
         labelPrimary: {
           color: colors.onAccent,
@@ -83,7 +90,7 @@ export function Button({
           marginRight: spacing.sm,
         },
       }),
-    [colors, minTouchTarget, radius, spacing, typography]
+    [colors, minTouchTarget, radius, spacing, typography, locale]
   );
 
   return (

@@ -176,10 +176,21 @@ describe('Accessibility semantics — rendered coverage (Pass 2E)', () => {
     expect(within(tile).queryByRole('image')).toBeNull();
   });
 
+  // RECONCILIATION (Design 5.1 Wave 9a). OLD CLAUSE: the row label matched
+  // "24% utilised". REASON: Wave 9a's approved Cards correction states
+  // utilisation as a plain fact — "24% of limit used" — in both the visible
+  // row and its spoken label (the same change that removed
+  // "Credit health {n}/100"). PRESERVED INTENT: unchanged — one collapsed
+  // accessible label per card row carrying balance, utilisation and
+  // repayment, with exactly one focus stop. REPLACEMENT EVIDENCE: the
+  // pattern below, plus tests/rendered/design5-wave9a-calculators.render
+  // .test.tsx and tests/design5-wave9a-cards-calculators.test.ts, which
+  // prove the utilisation VALUE is unchanged and no score wording replaced
+  // it.
   test('Cards screen exposes a single collapsed accessible label per card row, including balance, utilisation, and repayment', async () => {
     await render(<CardsHarness />);
 
-    const cardRow = await screen.findByRole('button', { name: /Everyday Visa.*\$1,200 of \$5,000.*24% utilised.*repay \$/ });
+    const cardRow = await screen.findByRole('button', { name: /Everyday Visa.*\$1,200 of \$5,000.*24% of limit used.*repay \$/ });
     expect(cardRow).toBeOnTheScreen();
     // Exactly one focus stop for the row — the decorative chevron and
     // per-card ProgressBar must never be independently queryable.

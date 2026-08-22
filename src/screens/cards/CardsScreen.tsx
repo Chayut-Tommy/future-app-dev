@@ -7,7 +7,6 @@ import { useAppState } from '../../state/AppStateContext';
 import { AddCreditCardModal } from '../../components/credit/AddCreditCardModal';
 import {
   computeCreditAggregate,
-  computeBasicCreditHealthScore,
   computeCardPayoffInsight,
   computeCardUtilisationInsight,
   daysUntilDue,
@@ -22,20 +21,64 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Button } from '../../components/shared/Button';
 import { CreditCard } from '../../types/models';
 import { brand } from '../../lib/brand';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import { fontFamilyForWeight } from '../../theme/typography';
+import i18n from '../../i18n';
+
+/**
+ * Nolie Design 5.1 Wave 9a — Cards.
+ *
+ * WHAT CHANGED (presentation only):
+ * - "Credit health {n}/100" is REMOVED (approved copy row, plan §B.1 /
+ *   change 21). Nothing replaces it — no other score, grade, eligibility or
+ *   creditworthiness wording. The screen states the same utilisation the
+ *   engine already computes, as a fact: "{n}% of limit used".
+ * - Tone discipline: ordinary utilisation renders neutral/interactive —
+ *   success green is NOT awarded merely for a low percentage. Amber appears
+ *   only at the engine's existing caution thresholds, urgency only for a
+ *   genuinely imminent due date, and neither state is colour-only (each
+ *   pairs an icon with its words).
+ * - Typography and colour migrate to the Design 5.1 semantic roles;
+ *   financial figures are Figtree tabular via the figure roles.
+ *
+ * WHAT DID NOT CHANGE: every displayed number and its source
+ * (computeCreditAggregate, utilisationStatus, dueDateStatus,
+ * resolveExpectedMonthlyRepayment, the two insight lines), card-to-liability
+ * sync, repayment accounting and routes, the one-card free tier rule, the
+ * add/edit modal, and Cards' accepted dock/owner-tab behaviour.
+ */
+
+/** Presentation-only mapping from the engines' Tone to Design 5.1 roles.
+ * Deliberately maps 'success' to the NEUTRAL treatment for utilisation
+ * facts: a low utilisation is ordinary, not an achievement (mint is
+ * reserved for genuinely positive outcomes). Time-critical due dates keep
+ * their urgency via the urgent role. */
+function toneRoles(tone: Tone, semantic: { interactive: string; warning: string; warningAccent: string; urgent: string; textSecondary: string }) {
+  switch (tone) {
+    case 'warning':
+      return { text: semantic.warning, bar: semantic.warningAccent, icon: 'alert-circle-outline' as const };
+    case 'danger':
+      return { text: semantic.urgent, bar: semantic.urgent, icon: 'alert-circle' as const };
+    case 'success':
+    case 'neutral':
+    default:
+      return { text: semantic.textSecondary, bar: semantic.interactive, icon: null };
+  }
+}
 
 export function CardsScreen() {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
   const [visible, setVisible] = useState(false);
   const [editCard, setEditCard] = useState<CreditCard | null>(null);
-  const { colors, radius, spacing, typography, cardShadow } = useTheme();
-
-  const toneColor = (tone: Tone) =>
-    ({ success: colors.success, warning: colors.warning, danger: colors.danger, neutral: colors.textSecondary }[tone]);
+  const { semantic } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const aggregate = useMemo(() => computeCreditAggregate(data.creditCards), [data.creditCards]);
-  const healthScore = useMemo(() => computeBasicCreditHealthScore(data.creditCards), [data.creditCards]);
   const overallStatus = utilisationStatus(aggregate.utilisation);
+  const overallRoles = toneRoles(overallStatus.tone, semantic);
   const canAddCard = data.creditCards.length === 0; // free tier: 1 card
 
   function openAdd() {
@@ -52,53 +95,76 @@ export function CardsScreen() {
     () =>
       StyleSheet.create({
         emptyContainer: { flexGrow: 1, justifyContent: 'center' },
-        listContent: { paddingBottom: spacing.xxl * 2 },
-        aggregateCard: {
-          backgroundColor: colors.surface,
-          borderRadius: radius.card,
-          padding: spacing.lg,
-          marginBottom: spacing.md,
-          ...cardShadow,
+        listContent: { paddingBottom: designSpacing.huge * 2 },
+        surface: {
+          backgroundColor: semantic.bgSurface,
+          borderRadius: designRadius.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: semantic.border,
+          padding: designLayout.cardPadding,
+          marginBottom: designLayout.cardGap,
         },
-        aggregateRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md },
+        aggregateRow: { flexDirection: 'row', justifyContent: 'space-between', minHeight: 56, alignItems: 'center', marginBottom: designSpacing.sm },
         aggregateRight: { alignItems: 'flex-end' },
-        aggregateLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
-        aggregateValue: { ...typography.title, fontSize: 20, color: colors.textPrimary, marginTop: 2 },
+        aggregateLabel: { ...typeStyle('meta', locale), color: semantic.textSecondary },
+        aggregateValue: { ...typeStyle('figureLarge', locale), color: semantic.textFigure, marginTop: 2 },
         statusRow: {
           flexDirection: 'row',
-          justifyContent: 'space-between',
-          marginTop: spacing.sm,
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          marginTop: designSpacing.sm,
         },
-        statusBadge: { ...typography.micro, fontWeight: '600' },
-        healthScoreText: { ...typography.micro, color: colors.textSecondary },
-        card: {
-          backgroundColor: colors.surface,
-          borderRadius: radius.card,
-          padding: spacing.md,
-          marginBottom: spacing.sm,
-          ...cardShadow,
-        },
+        statusText: { ...typeStyle('meta', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600' },
         cardHeaderRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: 4,
+          gap: designSpacing.sm,
+          minHeight: designLayout.touchTargetMin,
         },
-        cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
-        cardTitle: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
-        dueBadge: { ...typography.micro, fontWeight: '600' },
-        cardSubtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.sm },
+        cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.sm, flex: 1 },
+        cardIconTile: {
+          width: 36,
+          height: 36,
+          borderRadius: designRadius.tile,
+          backgroundColor: semantic.interactiveTint,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        cardTitle: { ...typeStyle('titleCard', locale), color: semantic.textPrimary, flexShrink: 1 },
+        dueRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+        dueText: { ...typeStyle('meta', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600' },
+        balanceRow: {
+          flexDirection: 'row',
+          alignItems: 'baseline',
+          gap: designSpacing.xs,
+          minHeight: 32,
+          marginTop: designSpacing.xs,
+        },
+        balanceFigure: { ...typeStyle('figureRow', locale), color: semantic.textFigure },
+        balanceOf: { ...typeStyle('support', locale), color: semantic.textSecondary },
         cardFooterRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
-          marginTop: spacing.sm,
+          alignItems: 'center',
+          gap: designSpacing.sm,
+          marginTop: designSpacing.sm,
+          minHeight: 24,
         },
-        utilLabel: { ...typography.micro, fontWeight: '600' },
-        minPaymentText: { ...typography.micro, color: colors.textMuted },
-        insightBox: { flexDirection: 'row', gap: 6, backgroundColor: colors.marketSoft, borderRadius: radius.control, padding: spacing.sm, marginTop: spacing.sm },
-        insightText: { ...typography.micro, fontSize: 11, color: colors.textPrimary, flex: 1, lineHeight: 15 },
+        utilRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
+        utilText: { ...typeStyle('meta', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600' },
+        repayText: { ...typeStyle('meta', locale), color: semantic.textTertiary },
+        insightBox: {
+          flexDirection: 'row',
+          gap: designSpacing.sm,
+          backgroundColor: semantic.infoTint,
+          borderRadius: designRadius.control,
+          padding: designSpacing.md,
+          marginTop: designSpacing.sm,
+        },
+        insightText: { ...typeStyle('meta', locale), color: semantic.textPrimary, flex: 1 },
       }),
-    [colors, radius, spacing, typography, cardShadow]
+    [semantic, locale]
   );
 
   return (
@@ -109,23 +175,25 @@ export function CardsScreen() {
       headerRight={canAddCard ? <Button label="+ Add card" onPress={openAdd} /> : undefined}
     >
       {data.creditCards.length > 0 ? (
-        <View style={styles.aggregateCard}>
+        <View style={styles.surface}>
           <View style={styles.aggregateRow}>
             <View>
               <Text style={styles.aggregateLabel}>Total limit</Text>
-              <Text style={styles.aggregateValue}>${aggregate.totalLimit.toLocaleString()}</Text>
+              <Text style={styles.aggregateValue} maxFontSizeMultiplier={1.6}>${aggregate.totalLimit.toLocaleString()}</Text>
             </View>
             <View style={styles.aggregateRight}>
               <Text style={styles.aggregateLabel}>Available</Text>
-              <Text style={styles.aggregateValue}>${aggregate.availableCredit.toLocaleString()}</Text>
+              <Text style={styles.aggregateValue} maxFontSizeMultiplier={1.6}>${aggregate.availableCredit.toLocaleString()}</Text>
             </View>
           </View>
-          <ProgressBar progress={aggregate.utilisation} color={toneColor(overallStatus.tone)} height={8} />
+          <ProgressBar progress={aggregate.utilisation} color={overallRoles.bar} height={8} />
           <View style={styles.statusRow}>
-            <Text style={[styles.statusBadge, { color: toneColor(overallStatus.tone) }]}>
-              {Math.round(aggregate.utilisation * 100)}% utilised · {overallStatus.label}
+            {overallRoles.icon ? (
+              <Ionicons name={overallRoles.icon} size={14} color={overallRoles.text} importantForAccessibility="no" />
+            ) : null}
+            <Text style={[styles.statusText, { color: overallRoles.text }]}>
+              {Math.round(aggregate.utilisation * 100)}% of limit used · {overallStatus.label}
             </Text>
-            <Text style={styles.healthScoreText}>Credit health {healthScore}/100</Text>
           </View>
         </View>
       ) : null}
@@ -147,17 +215,19 @@ export function CardsScreen() {
         renderItem={({ item }) => {
           const days = daysUntilDue(item.dueDay);
           const due = dueDateStatus(days);
+          const dueRoles = toneRoles(due.tone, semantic);
           const util = item.creditLimit > 0 ? item.currentBalance / item.creditLimit : 0;
           const utilStatus = utilisationStatus(util);
+          const utilRoles = toneRoles(utilStatus.tone, semantic);
           const payoffInsight = computeCardPayoffInsight(item);
           const utilisationInsight = computeCardUtilisationInsight(item);
           const rowLabel =
             `${item.label}, due ${due.label}, $${item.currentBalance.toLocaleString()} of $${item.creditLimit.toLocaleString()}, ` +
-            `${Math.round(util * 100)}% utilised, ${utilStatus.label}, repay $${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()} per month` +
+            `${Math.round(util * 100)}% of limit used, ${utilStatus.label}, repay $${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()} per month` +
             `${utilisationInsight ? `. ${utilisationInsight}` : ''}${payoffInsight ? ` ${payoffInsight}` : ''}`;
           return (
             <TouchableOpacity
-              style={styles.card}
+              style={styles.surface}
               activeOpacity={0.7}
               onPress={() => {
                 setEditCard(item);
@@ -169,30 +239,40 @@ export function CardsScreen() {
             >
               <View style={styles.cardHeaderRow}>
                 <View style={styles.cardHeaderLeft}>
+                  <View style={styles.cardIconTile}>
+                    <Ionicons name="card-outline" size={18} color={semantic.interactive} importantForAccessibility="no" />
+                  </View>
                   <Text style={styles.cardTitle}>{item.label}</Text>
                 </View>
-                <Text style={[styles.dueBadge, { color: toneColor(due.tone) }]}>{due.label}</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} style={{ marginLeft: 6 }} importantForAccessibility="no" />
+                <View style={styles.dueRow}>
+                  {dueRoles.icon ? <Ionicons name={dueRoles.icon} size={14} color={dueRoles.text} importantForAccessibility="no" /> : null}
+                  <Text style={[styles.dueText, { color: dueRoles.text }]}>{due.label}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={semantic.textTertiary} importantForAccessibility="no" />
               </View>
-              <Text style={styles.cardSubtitle}>
-                ${item.currentBalance.toLocaleString()} of ${item.creditLimit.toLocaleString()}
-              </Text>
-              <ProgressBar progress={util} color={toneColor(utilStatus.tone)} />
+              <View style={styles.balanceRow}>
+                <Text style={styles.balanceFigure}>${item.currentBalance.toLocaleString()}</Text>
+                <Text style={styles.balanceOf}>of ${item.creditLimit.toLocaleString()} limit</Text>
+              </View>
+              <ProgressBar progress={util} color={utilRoles.bar} />
               <View style={styles.cardFooterRow}>
-                <Text style={[styles.utilLabel, { color: toneColor(utilStatus.tone) }]}>
-                  {Math.round(util * 100)}% · {utilStatus.label}
-                </Text>
-                <Text style={styles.minPaymentText}>repay ${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()}/mo</Text>
+                <View style={styles.utilRow}>
+                  {utilRoles.icon ? <Ionicons name={utilRoles.icon} size={14} color={utilRoles.text} importantForAccessibility="no" /> : null}
+                  <Text style={[styles.utilText, { color: utilRoles.text }]}>
+                    {Math.round(util * 100)}% of limit used · {utilStatus.label}
+                  </Text>
+                </View>
+                <Text style={styles.repayText}>repay ${Math.round(resolveExpectedMonthlyRepayment(item)).toLocaleString()}/mo</Text>
               </View>
               {utilisationInsight ? (
                 <View style={styles.insightBox}>
-                  <Ionicons name="sparkles" size={13} color={colors.market} importantForAccessibility="no" />
+                  <Ionicons name="bulb-outline" size={14} color={semantic.infoText} importantForAccessibility="no" />
                   <Text style={styles.insightText}>{utilisationInsight}</Text>
                 </View>
               ) : null}
               {payoffInsight ? (
                 <View style={styles.insightBox}>
-                  <Ionicons name="trending-up" size={13} color={colors.market} importantForAccessibility="no" />
+                  <Ionicons name="trending-up" size={14} color={semantic.infoText} importantForAccessibility="no" />
                   <Text style={styles.insightText}>{payoffInsight}</Text>
                 </View>
               ) : null}

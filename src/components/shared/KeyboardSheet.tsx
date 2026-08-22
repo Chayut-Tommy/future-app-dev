@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { fontFamilyForWeight, AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import {
   computeKeyboardAdjustedHeight,
@@ -158,6 +160,7 @@ export function KeyboardSheet({
 }) {
   const insets = useSafeAreaInsets();
   const { colors, semantic, radius, spacing, typography } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const translateY = useRef(new Animated.Value(0)).current;
   const windowHeight = useWindowDimensions().height;
   // Pass 2E — Reduce Motion: no native Modal slide, zero-duration dismissal,
@@ -462,6 +465,9 @@ export function KeyboardSheet({
         breadcrumbRow: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
         title: {
           ...typography.heading,
+          // Design 5.1 Wave 9a — family-only migration (Wave 1B pattern):
+          // size and weight verbatim, bundled face declared alongside.
+          fontFamily: fontFamilyForWeight(600, locale),
           color: colors.textPrimary,
           flex: 1,
         },
@@ -479,7 +485,7 @@ export function KeyboardSheet({
           flexShrink: 0,
         },
       }),
-    [colors, semantic, radius, spacing, typography]
+    [colors, semantic, radius, spacing, typography, locale]
   );
 
   return (
