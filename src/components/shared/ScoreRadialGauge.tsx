@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useTheme } from '../../theme/ThemeContext';
+import { FIGTREE_FAMILY, MONEY_TYPOGRAPHY, TYPE_ROLES } from '../../theme/typography';
 import { ScoreGaugePresentation } from '../../lib/calculations/scoreGaugePresentation';
 
 /**
@@ -76,8 +77,25 @@ export function ScoreRadialGauge({
       StyleSheet.create({
         wrap: { width: size, height: size, alignItems: 'center', justifyContent: 'center' },
         valueRow: { position: 'absolute', alignItems: 'center' },
-        value: { fontSize: size * 0.28, fontWeight: '800', color: colors.textPrimary },
-        max: { fontSize: size * 0.11, color: colors.textSecondary, marginTop: -2 },
+        /* Wave 8 closure correction C — these two carried NO fontFamily,
+           so the Score figure rendered in the platform default while every
+           other figure in the app is Figtree. The SIZE stays proportional
+           to the gauge (it is drawn inside the ring, so it cannot take a
+           fixed role size), but the family, weight and tabular numerals now
+           come from the same tokens every other figure uses. */
+        value: {
+          fontSize: size * 0.28,
+          fontFamily: FIGTREE_FAMILY[TYPE_ROLES.figureHero.weight],
+          fontVariant: [...MONEY_TYPOGRAPHY.fontVariant],
+          color: colors.textPrimary,
+        },
+        max: {
+          fontSize: size * 0.11,
+          fontFamily: FIGTREE_FAMILY[TYPE_ROLES.meta.weight],
+          fontVariant: [...MONEY_TYPOGRAPHY.fontVariant],
+          color: colors.textSecondary,
+          marginTop: -2,
+        },
       }),
     [colors, size]
   );

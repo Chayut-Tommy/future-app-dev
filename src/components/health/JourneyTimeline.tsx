@@ -2,6 +2,9 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { Achievement } from '../../lib/calculations/achievements';
 import { ProgressBar } from '../shared/ProgressBar';
 
@@ -41,7 +44,10 @@ export function JourneyTimeline({
   expanded: boolean;
   onToggleExpanded: () => void;
 }) {
-  const { colors, radius, spacing, typography, glow, naviloPalette } = useTheme();
+  const { colors, radius, spacing, typography, glow, naviloPalette, semantic } = useTheme();
+  // Wave 8 correction — the shipped semantic role resolver, so Grow's
+  // sections stop being the last surfaces on the legacy scale.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const nextIndex = achievements.findIndex((a) => !a.unlocked);
 
   const visibleCount = expanded ? achievements.length : Math.min(achievements.length, Math.max(INITIAL_VISIBLE, nextIndex + 1));
@@ -62,8 +68,8 @@ export function JourneyTimeline({
           justifyContent: 'center',
         },
         textCol: { flex: 1, paddingBottom: spacing.lg, paddingLeft: spacing.sm },
-        title: { ...typography.body, fontSize: 14, fontWeight: '700' },
-        subtitle: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+        title: { ...typeStyle('body', locale), fontWeight: '700' },
+        subtitle: { ...typeStyle('support', locale), color: colors.textSecondary, marginTop: 2 },
         nextBadge: {
           alignSelf: 'flex-start',
           backgroundColor: naviloPalette.secondaryAccentSoft,
@@ -72,12 +78,12 @@ export function JourneyTimeline({
           borderRadius: radius.pill,
           marginTop: 6,
         },
-        nextBadgeText: { ...typography.micro, fontSize: 10, color: naviloPalette.secondaryAccent, fontWeight: '700' },
+        nextBadgeText: { ...typeStyle('meta', locale), fontSize: 10, color: naviloPalette.secondaryAccent, fontWeight: '700' },
         progressWrap: { marginTop: spacing.sm, width: '80%' },
         expandButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingTop: spacing.xs },
-        expandText: { ...typography.caption, fontSize: 13, color: naviloPalette.secondaryAccent, fontWeight: '700' },
+        expandText: { ...typeStyle('support', locale), color: naviloPalette.secondaryAccent, fontWeight: '700' },
       }),
-    [colors, radius, spacing, typography, expanded, naviloPalette]
+    [colors, radius, spacing, typography, expanded, naviloPalette, semantic, locale]
   );
 
   return (

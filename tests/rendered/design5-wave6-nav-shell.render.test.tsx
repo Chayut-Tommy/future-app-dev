@@ -1,3 +1,9 @@
+/* RECONCILED — Design 5.1 Wave 8: Grow's section titles are now
+ * consistently sentence case, so the Journey header reads "Your journey".
+ * Every clause below is otherwise unchanged — the property each one
+ * protects (local state retention, pushed-destination context, dock
+ * continuity) is untouched by a title's casing. */
+
 // RNTL unmounts every root after each test by default; this suite mounts
 // ONE root and drives every journey through it, because the harness also
 // stops mounting new roots from the third render() in a file.
@@ -181,7 +187,7 @@ describe('Design 5.1 Wave 6 Correction A — the dock survives every eligible pu
 
     // Cross-tab, straight from a pushed route.
     fireEvent.press(screen.getByRole('button', { name: /^Grow, tab,/ }));
-    await screen.findByRole('header', { name: 'Your Journey' });
+    await screen.findByRole('header', { name: 'Your journey' });
 
     expect(dockTabs()).toHaveLength(4);
     expect(selectedTabName()).toBe('Grow');

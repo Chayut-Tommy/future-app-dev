@@ -19,6 +19,7 @@ import { EmergencyFundScreen } from '../screens/discover/EmergencyFundScreen';
 import { HomeLoanCalculatorScreen } from '../screens/discover/HomeLoanCalculatorScreen';
 import { FloatingAddButton } from '../components/navigation/FloatingAddButton';
 import { GlobalNavDock } from '../components/navigation/GlobalNavDock';
+import { GlobalSettingsButton } from '../components/navigation/GlobalSettingsButton';
 import { resolveRootNavAssembly, resolveTabPress } from './rootNavAssembly';
 import { TabName } from './tabDefinitions';
 import { tabScrollRefs } from './tabScrollRefs';
@@ -26,6 +27,7 @@ import { useKeyboardVisible } from '../hooks/useKeyboardVisible';
 import { getActiveTab, subscribeActiveTab } from './activeTabStore';
 import { WelcomeFlow } from '../screens/welcome/WelcomeFlow';
 import { isDockVisibleForRouteName } from './dockVisibility';
+import { resolveEffectiveRootRoute, isClosingSignalStale } from './shellTransition';
 
 const RootStack = createNativeStackNavigator();
 
@@ -62,12 +64,24 @@ export function RootNavigator() {
   // less than a global container ref.
   const rootNavigationRef = useRef<any>(null);
   const keyboardVisible = useKeyboardVisible();
+  const [closingRoute, setClosingRoute] = useState<string | undefined>(undefined);
+  const previousRootRouteRef = useRef<string | undefined>(undefined);
+
+  /* ONE route for the whole shell. While a route is closing, this is the
+     route beneath it — so the dock, the "+" and the Settings action are all
+     already correct on the first frame the page beneath becomes visible,
+     and all three flip in the same commit. */
+  const effectiveRootRoute = resolveEffectiveRootRoute({
+    committed: activeRootRoute,
+    previous: previousRootRouteRef.current,
+    closing: closingRoute,
+  });
 
   // ONE projection for the whole assembly. The dock and the "+" both read
   // it, so a route classified visible can never render one without the
   // other — which is exactly the defect this correction fixes.
   const assembly = resolveRootNavAssembly({
-    rootRoute: activeRootRoute,
+    rootRoute: effectiveRootRoute,
     nestedTab: activeTabRoute,
     keyboardVisible,
     overlay: 'none',
@@ -104,7 +118,21 @@ export function RootNavigator() {
   return (
     <View style={{ flex: 1 }}>
       <RootStack.Navigator
-        screenListeners={({ navigation }) => ({
+        screenListeners={({ navigation, route }) => ({
+          /* Wave 8 closure — the shell learns about a DISMISSAL when it
+             starts, not when React Navigation commits the removal.
+             For a push, `state` fires first and this adds nothing. For a
+             modal dismissal, `state` fires only once the native animation
+             has finished, which is why a fully visible page sat without its
+             dock for half a second. `closing` is the same event React
+             Navigation already emits; no timer, no debounce, no second
+             authority — the result feeds the SAME assembly projection. */
+          transitionStart: (e) => {
+            if ((e.data as { closing?: boolean } | undefined)?.closing) setClosingRoute(route.name);
+          },
+          transitionEnd: () => {
+            setClosingRoute((current) => (current === route.name ? undefined : current));
+          },
           state: (e) => {
             rootNavigationRef.current = navigation;
             const st = e.data?.state as
@@ -117,7 +145,17 @@ export function RootNavigator() {
             // two writers for one value, and this event can fire AFTER the
             // tab event carrying a stale snapshot, clobbering the correct
             // one. One writer, one value.
-            setActiveRootRoute(st.routes[st.index]?.name);
+            const nextRoute = st.routes[st.index]?.name;
+            setActiveRootRoute((prev) => {
+              // Retain what the previous root was, so a dismissal can
+              // project for the route it is about to reveal.
+              if (prev !== nextRoute) previousRootRouteRef.current = prev;
+              return nextRoute;
+            });
+            // A closing signal for a route that is no longer committed has
+            // been superseded by this very event. Cleared on that basis,
+            // never on a timer.
+            setClosingRoute((current) => (isClosingSignalStale(current, nextRoute) ? undefined : current));
           },
         })} screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="Main" component={MainTabNavigator} />
@@ -179,6 +217,17 @@ export function RootNavigator() {
           projection so the "+" can never appear orphaned. */}
       <GlobalNavDock assembly={assembly} onTabPress={handleTabPress} />
       <FloatingAddButton routeHidden={fabRouteHidden} />
+      {/* Wave 8 correction E — the ONE Settings action, driven by the SAME
+          `assembly` projection the dock and the "+" read. It cannot
+          disagree with them about whether the persistent shell exists, and
+          it introduces no second route list, no navigation ref and no
+          additional writer for selected-tab state. Navigating is a plain
+          root-stack push, so Back returns to the originating route with the
+          owner tab intact. */}
+      <GlobalSettingsButton
+        visible={assembly.visible}
+        onPress={() => rootNavigationRef.current?.navigate('Settings')}
+      />
     </View>
   );
 }

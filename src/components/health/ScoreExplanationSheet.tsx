@@ -3,6 +3,9 @@ import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import {
   LuluScoreResult,
@@ -40,6 +43,10 @@ function statusColor(colors: ReturnType<typeof useTheme>['colors'], status: Fact
  */
 export function ScoreExplanationSheet({ visible, onClose, result }: { visible: boolean; onClose: () => void; result: LuluScoreResult }) {
   const { colors, semantic, radius, spacing, typography } = useTheme();
+  // Wave 8 closure correction C — the shipped semantic role resolver, so
+  // every text node in this sheet renders Figtree rather than the
+  // platform default.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const insets = useSafeAreaInsets();
   const { data } = useAppState();
   const movement = useMemo(() => (visible ? computeScoreMovement(data, result) : null), [visible, data, result]);
@@ -49,48 +56,52 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
     () =>
       StyleSheet.create({
         backdrop: { flex: 1, backgroundColor: semantic.scrim, justifyContent: 'flex-end' },
+        sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.sm },
+        headerClose: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -spacing.sm },
+        body: { flexShrink: 1 },
+        bodyContent: { paddingBottom: Math.max(insets.bottom, spacing.lg) },
         sheet: {
           backgroundColor: colors.surface,
           borderTopLeftRadius: radius.card,
           borderTopRightRadius: radius.card,
           paddingHorizontal: spacing.lg,
           paddingTop: spacing.sm,
+          // The sheet still caps its height; the BODY inside it scrolls,
+          // so a tall sheet no longer means a frozen one.
           maxHeight: '88%',
         },
         grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
-        title: { ...typography.heading, fontSize: 18, color: colors.textPrimary, marginBottom: 2 },
-        subtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.md },
+        title: { ...typeStyle('titleSection', locale), color: colors.textPrimary, flex: 1, marginBottom: 2 },
+        subtitle: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.md },
         totalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: spacing.sm },
-        totalValue: { ...typography.title, fontSize: 32, color: colors.textPrimary },
-        totalMax: { ...typography.caption, color: colors.textSecondary },
+        totalValue: { ...typeStyle('titleSection', locale), color: colors.textPrimary },
+        totalMax: { ...typeStyle('support', locale), color: colors.textSecondary },
         metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.lg },
         metaChip: { backgroundColor: colors.surfaceMuted, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md },
-        metaChipLabel: { ...typography.micro, fontSize: 10, color: colors.textSecondary },
-        metaChipValue: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '700' },
+        metaChipLabel: { ...typeStyle('meta', locale), color: colors.textSecondary },
+        metaChipValue: { ...typeStyle('support', locale), color: colors.textPrimary, fontWeight: '700' },
         movementCard: { backgroundColor: colors.accentSoft, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.lg },
         movementHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
-        movementHeaderText: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        movementLine: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 3, lineHeight: 17 },
+        movementHeaderText: { ...typeStyle('titleCard', locale), color: colors.textPrimary },
+        movementLine: { ...typeStyle('support', locale), color: colors.textSecondary, marginTop: 3, lineHeight: 17 },
         category: { marginBottom: spacing.lg, backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md },
         categoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xs },
-        categoryLabel: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
-        categoryScore: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
+        categoryLabel: { ...typeStyle('titleCard', locale), color: colors.textPrimary },
+        categoryScore: { ...typeStyle('titleCard', locale), color: colors.textPrimary },
         factorRow: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
         factorHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-        factorGlyph: { ...typography.caption, fontSize: 13, fontWeight: '700', width: 18, textAlign: 'center' },
-        factorLabel: { ...typography.body, fontSize: 13, color: colors.textPrimary, fontWeight: '600', flex: 1 },
-        factorPoints: { ...typography.caption, fontSize: 12, color: colors.textSecondary },
-        factorCurrent: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginLeft: 24, lineHeight: 15 },
-        factorTarget: { ...typography.micro, fontSize: 11, color: colors.textSecondary, marginLeft: 24, marginTop: 2, lineHeight: 15 },
+        factorGlyph: { ...typeStyle('support', locale), fontWeight: '700', width: 18, textAlign: 'center' },
+        factorLabel: { ...typeStyle('body', locale), color: colors.textPrimary, fontWeight: '600', flex: 1 },
+        factorPoints: { ...typeStyle('support', locale), color: colors.textSecondary },
+        factorCurrent: { ...typeStyle('meta', locale), color: colors.textSecondary, marginLeft: 24, lineHeight: 15 },
+        factorTarget: { ...typeStyle('meta', locale), color: colors.textSecondary, marginLeft: 24, marginTop: 2, lineHeight: 15 },
         factorActionRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 24, marginTop: spacing.xs },
-        factorPotential: { ...typography.micro, fontSize: 11, color: colors.gold, fontWeight: '700' },
+        factorPotential: { ...typeStyle('meta', locale), color: colors.gold, fontWeight: '700' },
         factorActionChip: { backgroundColor: colors.surface, borderRadius: radius.pill, paddingVertical: 4, paddingHorizontal: spacing.sm },
-        factorActionText: { ...typography.micro, fontSize: 10, color: colors.accentStrong, fontWeight: '700' },
-        disclosure: { ...typography.micro, fontSize: 10, color: colors.textSecondary, textAlign: 'center', lineHeight: 14, marginTop: spacing.sm },
-        closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginBottom: Math.max(insets.bottom, spacing.md) },
-        closeText: { color: colors.textSecondary, fontWeight: '600' },
+        factorActionText: { ...typeStyle('meta', locale), color: colors.accentStrong, fontWeight: '700' },
+        disclosure: { ...typeStyle('meta', locale), color: colors.textSecondary, textAlign: 'center', lineHeight: 14, marginTop: spacing.sm },
       }),
-    [colors, semantic, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, typography, insets.bottom, locale]
   );
 
   return (
@@ -98,7 +109,40 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.grabber} />
-          <Text style={styles.title}>How {brand.name} calculates your score</Text>
+          {/* Wave 8 closure correction B — a COMPACT header: the title, and
+              one 44pt Close. Everything else moved into the single
+              scrolling body below.
+
+              Before this, only the categories list was inside a ScrollView:
+              the title, subtitle, score figure, stage/money-picture/
+              confidence chips, Nolie's view and the recent-change panel
+              were all fixed above it, and a large disclaimer plus Close
+              were fixed below. Roughly three quarters of a long
+              educational sheet could not move, and a swipe that began over
+              any of it did nothing. */}
+          <View style={styles.sheetHeader}>
+            <Text style={styles.title}>How {brand.name} calculates your score</Text>
+            <TouchableOpacity
+              style={styles.headerClose}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              testID="score-sheet-close"
+            >
+              <Ionicons name="close" size={22} color={colors.textSecondary} accessibilityElementsHidden importantForAccessibility="no" />
+            </TouchableOpacity>
+          </View>
+
+          {/* THE one vertical scroll owner. Every panel below is its
+              descendant, so a swipe starting anywhere — the score summary,
+              Nolie's view, the recent-change panel, a factor card — moves
+              the same body, and nothing is trapped in a second region. */}
+          <ScrollView
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
+            showsVerticalScrollIndicator={false}
+            testID="score-sheet-scroll"
+          >
           <Text style={styles.subtitle}>Five weighted areas of real financial health — always the same formula, nothing hidden.</Text>
 
           {!result.locked ? (
@@ -154,7 +198,6 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
             </>
           ) : null}
 
-          <ScrollView showsVerticalScrollIndicator={false}>
             {result.categories.map((category) => (
               <View key={category.key} style={styles.category}>
                 <View style={styles.categoryHeader}>
@@ -192,16 +235,13 @@ export function ScoreExplanationSheet({ visible, onClose, result }: { visible: b
                 ))}
               </View>
             ))}
-          </ScrollView>
 
           <Text style={styles.disclosure}>
             {brand.scoreName} is an educational indicator based on the information entered. It is not a credit score, financial-product
             recommendation or personal financial advice.
           </Text>
 
-          <TouchableOpacity style={styles.closeButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close">
-            <Text style={styles.closeText}>Close</Text>
-          </TouchableOpacity>
+          </ScrollView>
         </View>
       </View>
     </Modal>

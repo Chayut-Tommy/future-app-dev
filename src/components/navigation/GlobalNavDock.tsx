@@ -39,12 +39,18 @@ export function GlobalNavDock({
     []
   );
 
-  // Hidden means genuinely not rendered — the same posture the "+" already
-  // takes, so the two can never disagree about whether the assembly exists.
-  if (!assembly.visible) return null;
-
+  /* Wave 8 closure — the dock stays MOUNTED and hides visually.
+   *
+   * Returning null unmounted it, so every reveal re-created
+   * FloatingNavBar's `pillPosition` Animated.Value and replayed its entry
+   * choreography — the pop-in the owner saw after dismissing Settings, and
+   * the reason the pill could show a stale tab on its first frame. The "+"
+   * never had this problem because it only ever gated itself visually
+   * (`hideDock`), which is exactly why the two appeared at different times.
+   * Both now take the same posture, so they reveal in one commit. */
   return (
     <FloatingNavBar
+      hidden={!assembly.visible}
       tabs={tabs}
       activeIndex={assembly.activeIndex}
       onSelectTab={(tab) => onTabPress(tab.name as TabName)}

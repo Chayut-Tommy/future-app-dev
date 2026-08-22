@@ -1,3 +1,17 @@
+// ---------------------------------------------------------------------------
+// RECONCILED — Design 5.1 Wave 8 closure.
+//
+// OLD CLAUSES: EmergencyFund was classified dock-VISIBLE (a "passive
+// review"), so the counts were 10 visible / 7 hidden.
+//
+// SUPERSEDED BECAUSE the owner's recording showed the global shell bleeding
+// onto Emergency Fund. Wave 2 classified it before it became one of Grow's
+// four CALCULATOR tiles; the other three were always hidden. The closure
+// brief requires that the shell reach none of the four. PRESERVED INTENT:
+// the matrix is exhaustive, fails closed, and every route is classified
+// exactly once — all still asserted, with the corrected counts.
+// ---------------------------------------------------------------------------
+
 // Nolie Design 5.1 Wave 2 — dock/"+" visibility matrix, exhaustively.
 //
 // CLASSIFICATION (per tests/README.md):
@@ -60,21 +74,23 @@ console.log('=== 1. The matrix is exhaustive: every route x keyboard x overlay =
   }
   assert(`1b. all ${evaluated} combinations resolve to a boolean plus a reason`, evaluated === combos);
   // Visible only when: route is one of the 10, keyboard down, overlay none.
-  assert('1c. exactly 10 combinations are visible (10 routes x keyboard-down x overlay-none)', visibleCount === 10);
+  assert('1c. exactly 9 combinations are visible (9 routes x keyboard-down x overlay-none)', visibleCount === 9);
 }
 
 console.log('\n=== 2. Route classification matches the design exactly ===');
 {
-  assert('2a. 10 visible routes', DOCK_VISIBLE_ROUTES.length === 10);
-  assert('2b. 7 hidden routes', DOCK_HIDDEN_ROUTES.length === 7);
+  assert('2a. 9 visible routes', DOCK_VISIBLE_ROUTES.length === 9);
+  assert('2b. 8 hidden routes', DOCK_HIDDEN_ROUTES.length === 8);
   assert('2c. the two sets do not overlap', DOCK_VISIBLE_ROUTES.every((r) => !DOCK_HIDDEN_ROUTES.includes(r)));
 
   for (const r of ['Today', 'Money', 'Wealth', 'Grow'] as DockRoute[]) {
     assert(`2d. ${r} root is visible`, isDockVisible({ route: r, keyboardVisible: false, overlay: 'none' }));
   }
-  for (const r of ['MoneyDetail', 'GrowDetail', 'Goals', 'Cards', 'Transactions', 'EmergencyFund'] as DockRoute[]) {
+  for (const r of ['MoneyDetail', 'GrowDetail', 'Goals', 'Cards', 'Transactions'] as DockRoute[]) {
     assert(`2e. ${r} (passive review) is visible`, isDockVisible({ route: r, keyboardVisible: false, overlay: 'none' }));
   }
+  assert('2e-i. EmergencyFund is HIDDEN — it is a calculator, not a passive review', !isDockVisible({ route: 'EmergencyFund', keyboardVisible: false, overlay: 'none' }));
+  assert('2e-ii. and all four calculators are now classified identically', (['CompoundCalculator', 'HomeLoanCalculator', 'SavingsComparison', 'EmergencyFund'] as DockRoute[]).every((r) => !isDockVisible({ route: r, keyboardVisible: false, overlay: 'none' })));
   for (const r of ['Settings', 'Language', 'ResetLulu'] as DockRoute[]) {
     assert(`2f. ${r} (administrative) is hidden`, !isDockVisible({ route: r, keyboardVisible: false, overlay: 'none' }));
   }

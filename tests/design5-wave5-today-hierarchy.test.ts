@@ -331,7 +331,20 @@ console.log('\n=== 9. The visible page 7 anatomy (Class C) ===');
   assert('9u. the goal is one compact row, not a card with a stacked block', /styles\.goalRow/.test(TODAY) && /goalIconTile/.test(TODAY));
   assert('9v. the Score footnote is still not a card, surface or tint', !/scoreFootnoteRow: \{[^}]*backgroundColor/.test(TODAY) && !/scoreFootnoteRow: \{[^}]*borderRadius/.test(TODAY));
   assert('9w. the header shows a local date eyebrow before the greeting', TODAY.indexOf('today-date-eyebrow') < TODAY.indexOf('today-greeting'));
-  assert('9x. the Settings control meets the touch minimum on its own', /const SETTINGS_CONTROL_SIZE = 44;/.test(TODAY));
+  // RECONCILED — Wave 8 correction E. OLD CLAUSE measured Today's own
+  // `SETTINGS_CONTROL_SIZE`. SUPERSEDED BECAUSE Today no longer owns a
+  // Settings control: it was the app's ONLY route to Settings, so Money,
+  // Wealth and Grow had none, and it floated over Today's own scrolling
+  // content. PRESERVED INTENT verbatim — the Settings control meets the
+  // touch minimum on its own — asserted against the ONE control that now
+  // exists, plus the reserved header width Today still keeps for it, now
+  // read from the SAME shared constant rather than a second local number.
+  assert(
+    '9x. the Settings control meets the touch minimum on its own',
+    /width: SETTINGS_ACTION_SIZE/.test(read('src/components/navigation/GlobalSettingsButton.tsx')) &&
+      /export const SETTINGS_ACTION_SIZE = 44;/.test(read('src/navigation/globalSettingsGeometry.ts')) &&
+      /paddingRight: SETTINGS_HEADER_INSET/.test(TODAY)
+  );
 }
 
 console.log('\n=== 10. Responsive geometry, exhaustively (Class A) ===');

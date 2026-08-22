@@ -4,6 +4,7 @@ import type { FlatListProps, NativeScrollEvent, NativeSyntheticEvent } from 'rea
 import type { RefObject } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { SETTINGS_HEADER_INSET } from '../../navigation/globalSettingsGeometry';
 import { screenBottomClearance } from '../../navigation/floatingNavGeometry';
 import { designLayout } from '../../theme/semanticTokens';
 import { resolveTextStyle } from '../../theme/typography';
@@ -175,6 +176,12 @@ export function Screen({
           alignItems: 'center',
           paddingTop: spacing.sm,
           paddingBottom: spacing.lg,
+          /* Wave 8 correction E — reserved width for the ONE global
+             Settings action, which is a root-level singleton sitting at
+             this same top-right corner. Both read SETTINGS_HEADER_INSET, so
+             a long title can never run underneath it the way Today's
+             screen-owned gear used to overlap its greeting. */
+          paddingRight: SETTINGS_HEADER_INSET,
         },
         titleRow: {
           flexDirection: 'row',

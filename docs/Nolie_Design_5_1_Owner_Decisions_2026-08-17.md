@@ -912,3 +912,43 @@ The owner's observed `$19,572` reconciled exactly as `$2,796` typical remainder 
 TypeScript 0. Legacy **80 files / 6,138**. Rendered **32 suites / 276**, green twice. Wave 7 hierarchy 298/298, Wave 7 rendered 28/28. Wave 6 hierarchy 242, reminder actions 101, reminder intents 135, account choice 125 + 13, AUP hero 78, nav shell 102 + 9, dock 66, date/timeline 84, Wave 5 hierarchy 353, income destinations 230, contrast 141 + 43 + 55, typography 59, iconography 65. Linked-repayment persistence 15, everyday-account integrity 61, phantom-credit 72, transfer-funds wiring 83, move-money architecture 122, everyday account 94 + 55 + 40, BNPL 169, add-asset 32 + 6. Doctor 17/18. Both exports exit 0.
 
 **All 39 protected files byte-identical to `04f1666`** — the net-worth and projection engines, transfer and repayment engines, card synchronisation and eligibility, `src/state`, `src/types`, storage, the navigation shell and both Add transition controllers. `wealthDefinitions.ts` was not edited at all, not even a label or comment. **Zero dependency, lockfile, configuration, schema, storage or migration change.**
+
+---
+
+# Change control — Wave 8 closure and checkpoint (22 August 2026)
+
+**Baseline** `645be50` (Wave 7 checkpoint). Approved by the owner's iOS device testing across three correction rounds. Earlier entries above are left exactly as written.
+
+## Final Grow hierarchy and owner decisions
+
+Grow is now exactly six sections — **Nolie Score, Your goals, Your journey, Tools, Learn, standing disclaimer** — replacing a page that opened with a disclaimer, buried Score beneath a competing Journey hero, and hid four calculators inside six collapsible category accordions. The owner locked Score as the single lead surface and Journey as a highlighted supporting section, superseding the implementation plan's Journey-first ordering.
+
+**Nolie Pick and the opportunity slot are removed from Grow** and deferred to a future AI-agent specification. `MoneyOpportunitiesHero`, `OpportunityCard`, `DebtCoachSheet`, `MarketPulsePreview`, `ExploreCategorySection` and `FutureYouCard` are all **retained byte-unchanged** and simply unwired; nothing was deleted. Market Pulse and the category stacks are absent. Three standalone Learn rows — "How retirement accounts work", "Why contributing early matters", "Keep records year-round" — are filtered out by ID, with their definitions retained in `learningCards.ts`.
+
+## Global Settings accessibility
+
+Settings was reachable only from Today, through a screen-owned gear that also floated over Today's own scrolling content — Money, Wealth and Grow had no route to Settings at all. It is now **one root-level singleton** reading the same `assembly` projection the dock and the "+" already share, so it can never disagree with them about whether the shell exists. Verified across the full 17 routes × 2 keyboard × 6 overlay matrix.
+
+`EmergencyFund` was reclassified from dock-visible to dock-hidden: Wave 2 had categorised it as a passive review before it became one of Grow's four calculator tiles, and the recording showed the shell bleeding onto it. All four calculators are now classified identically.
+
+## Navigation-shell restoration correction
+
+The dock returned 0.5–0.9 seconds after the page when dismissing Settings. Three distinct causes, all now fixed: `screenListeners.state` commits a modal dismissal only when the native animation **finishes**; `GlobalNavDock` returned `null` when hidden, so every reveal re-created `FloatingNavBar`'s pill `Animated.Value` and replayed its entry choreography; and the "+" gated itself visually while the dock unmounted, so the two appeared at different moments.
+
+The shell now stays **always mounted** and gates visually, and a transition-aware projection (`resolveEffectiveRootRoute`) reads React Navigation's own `transitionStart{closing}` so the shell resolves the route it is about to be on. Page, dock, "+", gear and the correct pill restore in one commit. No timer, no debounce, no second route matrix, no second selected-tab writer, no navigation container ref.
+
+## Score typography and Score Explanation scrolling
+
+`ScoreRadialGauge`'s figure carried **no `fontFamily` at all** — a defect a source grep could not have caught, and the reason the Score number rendered in the platform font. Both gauge nodes now use `FIGTREE_FAMILY` with tabular numerals. `ScoreExplanationSheet` had 18 legacy consumers and, more seriously, only its categories list inside a `ScrollView`: roughly three quarters of a long educational sheet was frozen, with a fixed disclaimer and Close footer eating further viewport. It is now **one continuous scroll owner** with a compact header carrying the single 44pt Close.
+
+A full-width gradient introduced to mask content beneath the gear produced a grey seam across every root tab and clipped headings; it was removed entirely in favour of the opaque self-contained chip plus the existing reserved header inset.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **82 files / 6,309**. Rendered **34 suites / 306**, green twice. Wave 8 hierarchy 118, Wave 8 rendered 25, Settings shell 79 pure + 5 rendered. Wave 7 298/28, Wave 6 242, Wave 5 353. Navigation shell 104 + 9, dock matrix 67. Contrast 141 + 43 + 55, typography 59, iconography 65, goal integrity 57. Score suites 39/89/38/73. Doctor 17/18. Both exports exit 0.
+
+**Zero financial-engine, Score-engine, state, type, storage or dependency change.** Two protected navigation files changed by explicit authorisation and are documented above: `dockVisibility.ts` (EmergencyFund reclassified) and `FloatingNavBar.tsx` (the `hidden` visual gate).
+
+**iOS: device-approved by the owner.** **Android: export-tested only — not device-tested.** Cross-platform device verification remains deferred.
+
+**Mandatory Wave 9 carry-over:** complete semantic/Figtree typography and visual migration for Settings and all four calculator screens, verified against their actual rendered Text and TextInput trees.

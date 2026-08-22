@@ -86,6 +86,13 @@ async function seedEmptyData() {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
+/* RECONCILED — Design 5.1 Wave 8. OLD CLAUSE looked for the header
+ * "Your Journey". SUPERSEDED BECAUSE the owner-locked hierarchy gives every
+ * section one consistent sentence-case title, so it now reads "Your
+ * journey". PRESERVED INTENT verbatim: this suite proves DiscoverScreen's
+ * canonical content renders on every navigation path — the header it looks
+ * for is still the Journey section's own, and still found by ROLE. */
+
 /** Asserts DiscoverScreen's own canonical, always-rendered content is
  * present — the screen's own title (Screen component) and the "Your
  * Journey" section header (present regardless of achievement state, per
@@ -104,7 +111,7 @@ async function expectCanonicalGrowContent() {
   // to Grow's section heading specifically; Today's Journey is now a named
   // row, not a header, so the two can no longer be confused.
   expect((await screen.findAllByText('Grow')).length).toBeGreaterThan(0);
-  expect(await screen.findByRole('header', { name: 'Your Journey' })).toBeOnTheScreen();
+  expect(await screen.findByRole('header', { name: 'Your journey' })).toBeOnTheScreen();
 }
 
 describe('Grow tab navigation — rendered regression coverage (Pass 2E correction)', () => {

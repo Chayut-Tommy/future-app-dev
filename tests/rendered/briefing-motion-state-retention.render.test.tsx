@@ -1,3 +1,9 @@
+/* RECONCILED — Design 5.1 Wave 8: Grow's section titles are now
+ * consistently sentence case, so the Journey header reads "Your journey".
+ * Every clause below is otherwise unchanged — the property each one
+ * protects (local state retention, pushed-destination context, dock
+ * continuity) is untouched by a title's casing. */
+
 import React from 'react';
 import { AccessibilityInfo } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -154,7 +160,7 @@ describe('Motion reconciliation — MainTabNavigator render-callback state reten
     await render(<Harness />);
 
     await user.press(await screen.findByRole('button', { name: /^Grow,/ }));
-    await screen.findByText('Your Journey');
+    await screen.findByText('Your journey');
     await user.press(await screen.findByRole('button', { name: 'View full journey' }));
     await screen.findByRole('button', { name: 'Show less' });
 

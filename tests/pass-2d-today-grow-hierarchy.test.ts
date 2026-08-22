@@ -1,3 +1,32 @@
+  // ---------------------------------------------------------------------
+  // RECONCILED — Design 5.1 Wave 8 (owner-locked hierarchy).
+  //
+  // OLD CLAUSES: this block asserted the Pass-2C/2D Grow ordering — Score,
+  // then a combined "Your Journey" section, then Your goals, Navilo Picks,
+  // Future You and Safety Net, the six-category Explore Money Moves
+  // accordion, and Market Pulse last — together with the placement of
+  // Savings Coach, Money Fact and the markets card inside specific
+  // accordion categories.
+  //
+  // SUPERSEDED BECAUSE the product owner locked a new hierarchy: Score,
+  // Goals, Journey, Tools, Learn, disclaimer. Score leads as the single
+  // hero and Journey becomes a supporting section; Nolie Pick and the
+  // opportunity slot are deferred to the future AI-agent specification;
+  // Market Pulse, the category accordion, Future You, Savings Coach and
+  // Money Fact are unwired. Every one of those component files is RETAINED
+  // AND BYTE-UNCHANGED.
+  //
+  // PRESERVED INTENT: Grow must have ONE deterministic top-level order, and
+  // each landmark must appear exactly once. That is asserted in full — for
+  // the new order — in tests/design5-wave8-grow-hierarchy.test.ts §1–§2 and
+  // tests/rendered/design5-wave8-grow.render.test.tsx, which additionally
+  // prove the retired surfaces are genuinely absent from the rendered page
+  // rather than merely unimported.
+  //
+  // NOTHING about the Score formula, its gates, its categories, its
+  // history, goal calculation, milestone logic or any financial expectation
+  // is changed by this reconciliation.
+  // ---------------------------------------------------------------------
 /**
  * Pass 2D — Today & Grow hierarchy cleanup: Money Fact, Market Pulse and
  * remaining hierarchy relocation.
@@ -295,54 +324,15 @@ console.log('\n=== GROW HIERARCHY (Structural) ===');
   const exploreIdx = DISCOVER_SCREEN_SRC.indexOf('Explore Money Moves\n      </Text>');
   const marketsIdx = DISCOVER_SCREEN_SRC.indexOf('>Markets</Text>', exploreIdx);
 
-  assert('all seven Grow landmarks are found in source (fixture sanity)', [scoreIdx, journeyIdx, goalsIdx, picksIdx, safetyNetIdx, exploreIdx, marketsIdx].every((i) => i !== -1));
-  assert('Grow sections appear in the approved order: Score -> Journey -> Your goals -> Navilo Picks -> Future You and Safety Net -> Explore Money Moves -> Market Pulse', scoreIdx < journeyIdx && journeyIdx < goalsIdx && goalsIdx < picksIdx && picksIdx < safetyNetIdx && safetyNetIdx < exploreIdx && exploreIdx < marketsIdx);
   assert('Full Score and combined Journey (Milestones/Money Path tabs) remain unchanged this pass — no Pass 2D marker inside either section\'s own JSX block', !DISCOVER_SCREEN_SRC.slice(scoreIdx, journeyIdx + 200).includes('Pass 2D'));
-  assert('Your goals precedes Navilo Picks', goalsIdx < picksIdx);
-  assert('Navilo Picks precedes Future You and Safety Net', picksIdx < safetyNetIdx);
-  assert('Future You and Safety Net precede Explore Money Moves', safetyNetIdx < exploreIdx);
-  assert('Market Pulse appears below Explore Money Moves (lowest priority, lower page)', exploreIdx < marketsIdx);
-  assert(
-    'Explore groups appear as Saving, Investing, Debt-free, Home, Retirement, Learning, in that exact order',
-    (() => {
-      const order = ['title="Saving"', 'title="Investing"', 'title="Debt-free"', 'title="Home"', 'title="Retirement"', 'title="Learning"'];
-      const indices = order.map((m) => DISCOVER_SCREEN_SRC.indexOf(m));
-      return indices.every((i) => i !== -1) && indices.every((v, i) => i === 0 || v > indices[i - 1]);
-    })()
-  );
-  assert('Market Pulse never appears as premium upper-page content — MarketPulsePreview is mounted exactly once, and only after the Explore Money Moves accordion', (DISCOVER_SCREEN_SRC.match(/<MarketPulsePreview \/>/g) || []).length === 1 && DISCOVER_SCREEN_SRC.indexOf('<MarketPulsePreview') > exploreIdx);
 }
 
 console.log('\n=== RELOCATIONS (Structural + real import) ===');
 {
-  assert('Savings Coach appears exactly once in Grow — inside the Saving category, nowhere else', (DISCOVER_SCREEN_SRC.match(/<SavingsCoachCard \/>/g) || []).length === 1);
-  assert('Savings Coach sits inside the Saving ExploreCategorySection specifically (between its opening and the next category)', (() => {
-    const savingStart = DISCOVER_SCREEN_SRC.indexOf('title="Saving"');
-    const investingStart = DISCOVER_SCREEN_SRC.indexOf('title="Investing"');
-    const coachIdx = DISCOVER_SCREEN_SRC.indexOf('<SavingsCoachCard');
-    return coachIdx > savingStart && coachIdx < investingStart;
-  })());
   assert('Savings Coach\'s own component file is untouched by this pass — same calculations/actions/persistence, no Pass 2D marker inside it', !/Pass 2D/.test(readFileSync('src/components/health/SavingsCoachCard.tsx', 'utf8')));
-  assert('Money Fact (SavingFactsCard) appears exactly once in Grow — inside the Learning category, nowhere else', (DISCOVER_SCREEN_SRC.match(/<SavingFactsCard \/>/g) || []).length === 1);
-  assert('Money Fact sits inside the Learning ExploreCategorySection specifically', (() => {
-    const learningStart = DISCOVER_SCREEN_SRC.indexOf('title="Learning"');
-    const factIdx = DISCOVER_SCREEN_SRC.indexOf('<SavingFactsCard');
-    return factIdx > learningStart;
-  })());
   assert('Money Fact\'s own component file is untouched by this pass — same calculation source/inputs/calculator action, no Pass 2D marker inside it', !/Pass 2D/.test(readFileSync('src/components/today/SavingFactsCard.tsx', 'utf8')));
   assert('the standalone lower-page "Your Money Path"-style duplicate pattern is not repeated for Money Path/Savings Coach — no second WealthJourneyCard mount either (regression guard, unrelated relocation)', (DISCOVER_SCREEN_SRC.match(/<WealthJourneyCard /g) || []).length === 1);
   assert('Market Pulse\'s own component file (MarketPulsePreview.tsx) is untouched — still shows "Live data coming soon" and "—" placeholders, never a fabricated live value', /Live data coming soon/.test(readFileSync('src/components/discover/MarketPulsePreview.tsx', 'utf8')) && />—</.test(readFileSync('src/components/discover/MarketPulsePreview.tsx', 'utf8')));
-  assert(
-    '"What moved markets this week?" travels with Market Pulse (both in the same unavailable-market-content lower-page area), and is explicitly excluded from the ordinary Learning category content',
-    (() => {
-      const marketsHeaderIdx = DISCOVER_SCREEN_SRC.indexOf('>Markets</Text>', DISCOVER_SCREEN_SRC.indexOf('Explore Money Moves\n      </Text>'));
-      const learningStart = DISCOVER_SCREEN_SRC.indexOf('title="Learning"');
-      const learningEnd = DISCOVER_SCREEN_SRC.indexOf('</ExploreCategorySection>', learningStart);
-      const learningBlock = DISCOVER_SCREEN_SRC.slice(learningStart, learningEnd);
-      const marketsBlock = DISCOVER_SCREEN_SRC.slice(marketsHeaderIdx);
-      return /markets-this-week/.test(marketsBlock) && /card\.id !== 'markets-this-week'/.test(learningBlock);
-    })()
-  );
 }
 
 console.log('\n=== MARKET PULSE (real import + Structural) ===');
@@ -393,7 +383,6 @@ console.log('\n=== FOCUS NAVIGATION (real import) ===');
       return firstResult.fulfilled === true && secondResult.fulfilled === true && first.requestId !== second.requestId;
     })()
   );
-  assert('DiscoverScreen.tsx opens the target Explore category (saving/learning) before fulfilling focus — a local expand-state write keyed off the pending target, not a persisted change', /if \(target === 'saving' && !exploreExpanded\.saving\) setExploreExpanded/.test(DISCOVER_SCREEN_SRC) && /if \(target === 'learning' && !exploreExpanded\.learning\) setExploreExpanded/.test(DISCOVER_SCREEN_SRC));
   assert('no hard-coded pixel scrolling was introduced for any new target — scrollTo still uses the measured result.scrollY from computeSectionFocusFulfillment', !/scrollTo\(\{ y: \d+/.test(DISCOVER_SCREEN_SRC));
   assert('missing destination data (an unmeasured new target) shows its established safe state — the pending ref is left untouched, never cleared with a fabricated scroll position (same NO_FULFILLMENT contract every existing target already used)', /if \(!result\.fulfilled\) return;/.test(DISCOVER_SCREEN_SRC));
 

@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { SectionCard } from '../shared/SectionCard';
 import { InfoSheet } from '../shared/InfoSheet';
 import { LearningCard } from '../../lib/learningCards';
@@ -13,7 +16,10 @@ import { LearningCard } from '../../lib/learningCards';
  * tapped.
  */
 export function LearningCardItem({ card, onOpen }: { card: LearningCard; onOpen?: () => void }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
+  // Wave 8 correction — the shipped semantic role resolver, so Grow's
+  // sections stop being the last surfaces on the legacy scale.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [visible, setVisible] = useState(false);
 
   const styles = useMemo(
@@ -21,12 +27,12 @@ export function LearningCardItem({ card, onOpen }: { card: LearningCard; onOpen?
       StyleSheet.create({
         row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         textBlock: { flex: 1 },
-        title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
-        hook: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        body: { ...typography.body, fontSize: 14, color: colors.textPrimary, lineHeight: 21, marginBottom: spacing.sm },
-        readTime: { ...typography.micro, color: colors.textSecondary },
+        title: { ...typeStyle('titleCard', locale), color: colors.textPrimary, marginBottom: 2 },
+        hook: { ...typeStyle('support', locale), color: colors.textSecondary },
+        body: { ...typeStyle('body', locale), color: colors.textPrimary, lineHeight: 21, marginBottom: spacing.sm },
+        readTime: { ...typeStyle('meta', locale), color: colors.textSecondary },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic, locale]
   );
 
   return (

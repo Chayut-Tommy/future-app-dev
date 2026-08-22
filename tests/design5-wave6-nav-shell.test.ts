@@ -22,6 +22,7 @@ import {
   ALL_DOCK_ROUTES,
   DockOverlayState,
   DockRoute,
+  isDockVisibleForRouteName,
 } from '../src/navigation/dockVisibility';
 import {
   INITIAL_TAB,
@@ -135,7 +136,16 @@ console.log('\n=== 4. Route-to-owner-tab mapping (Class A) ===');
   // Every owned route must be one the matrix already calls visible, so the
   // map can never light a pill where the assembly is hidden.
   const owned = Object.keys(ROUTE_OWNER_TAB) as DockRoute[];
-  assert('4g. every owned route is a route the matrix classifies visible', owned.every((r) => resolveRootNavAssembly({ rootRoute: r, nestedTab: undefined, keyboardVisible: false, overlay: 'none' }).visible));
+  // RECONCILED — Wave 8 closure. OLD CLAUSE required every OWNED route to
+  // be dock-visible. SUPERSEDED BECAUSE EmergencyFund is owned by Grow AND
+  // is a calculator: the owner's recording showed the shell bleeding onto
+  // it, and all four calculators must now be shell-hidden. Ownership and
+  // visibility are genuinely different questions — a calculator still
+  // belongs to Grow for Back purposes while showing no dock. PRESERVED
+  // INTENT: no owned route is unclassified, and every visible owned route
+  // resolves visible.
+  assert('4g. every owned route the matrix classifies visible does resolve visible', owned.filter((r) => isDockVisibleForRouteName(r, false, 'none')).every((r) => resolveRootNavAssembly({ rootRoute: r, nestedTab: undefined, keyboardVisible: false, overlay: 'none' }).visible));
+  assert('4g-i. and an owned calculator keeps its owner while showing no shell', ROUTE_OWNER_TAB['EmergencyFund'] === 'Money' && !resolveRootNavAssembly({ rootRoute: 'EmergencyFund', nestedTab: undefined, keyboardVisible: false, overlay: 'none' }).visible);
   assert('4h. and every owner is a real tab', owned.every((r) => isTabName(ROUTE_OWNER_TAB[r]!)));
   assert('4i. tabIndex is the pill position, and -1 when nothing is lit', tabIndex('Today') === 0 && tabIndex('Grow') === 3 && tabIndex(null) === -1);
 }
@@ -164,10 +174,20 @@ console.log('\n=== 5. Dock and "+" can never disagree (Class A) ===');
   assert(`5a. all ${evaluated} route x keyboard x overlay combinations resolve one coherent assembly`, disagreements === 0);
   assert('5b. RootNavigator derives the "+" from the SAME projection the dock uses', /const fabRouteHidden = !assembly\.visible;/.test(strip(ROOT_NAV)));
   assert('5c. and passes that one projection to the dock', /<GlobalNavDock assembly=\{assembly\}/.test(strip(ROOT_NAV)));
-  assert('5d. the adapter renders nothing when the assembly is hidden — the same posture the "+" takes', /if \(!assembly\.visible\) return null;/.test(strip(ADAPTER)));
+  // RECONCILED — Wave 8 closure. OLD CLAUSE required the adapter to RETURN
+  // NULL when hidden. SUPERSEDED BECAUSE unmounting re-created
+  // FloatingNavBar's pill Animated.Value on every reveal, replaying its
+  // entry choreography — the pop-in after dismissing Settings — and letting
+  // the pill show a stale tab on its first frame. The "+" never had this
+  // because it only ever gated itself visually, which is exactly why the
+  // two appeared at different times. PRESERVED INTENT verbatim: the dock
+  // takes the SAME posture as the "+", so the two can never disagree —
+  // now by both gating visually rather than one unmounting.
+  assert('5d. the adapter gates visually, the same posture the "+" takes', /hidden=\{!assembly\.visible\}/.test(strip(ADAPTER)) && !/return null;/.test(strip(ADAPTER)));
+  assert('5d-i. and while hidden it takes no touches and leaves the accessibility tree', /pointerEvents=\{hidden \? 'none' : 'box-none'\}/.test(strip(read('src/components/navigation/FloatingNavBar.tsx'))) && /accessibilityElementsHidden=\{hidden\}/.test(strip(read('src/components/navigation/FloatingNavBar.tsx'))));
 
   // The accepted matrix is unchanged.
-  for (const route of ['Today', 'Money', 'Wealth', 'Grow', 'MoneyDetail', 'GrowDetail', 'Goals', 'Cards', 'Transactions', 'EmergencyFund']) {
+  for (const route of ['Today', 'Money', 'Wealth', 'Grow', 'MoneyDetail', 'GrowDetail', 'Goals', 'Cards', 'Transactions']) {
     assert(`5e. ${route} shows the assembly`, resolveRootNavAssembly({ rootRoute: route, nestedTab: 'Today', keyboardVisible: false, overlay: 'none' }).visible);
   }
   for (const route of ['Settings', 'Language', 'ResetLulu', 'CompoundCalculator', 'HomeLoanCalculator', 'SavingsComparison', 'Onboarding']) {
@@ -204,10 +224,22 @@ console.log('\n=== 6. Tab-press semantics (Class A) ===');
   const NAV = strip(ROOT_NAV);
   assert('6j. scrollToTop scrolls and returns without navigating', /if \(outcome\.kind === 'scrollToTop'\) \{[\s\S]{0,240}return;\s*\n\s*\}/.test(NAV));
   assert('6k. it uses the SAME ref map the tab listener used, not a duplicate behaviour', /tabScrollRefs\[tab\]\.current\?\.scrollTo\(\{ y: 0, animated: true \}\)/.test(NAV));
-  assert('6l. every other outcome is exactly one navigate into Main', (NAV.match(/rootNavigationRef\.current\?\.navigate\(/g) || []).length === 1 && /navigate\('Main', \{ screen: tab \}\)/.test(NAV));
+  // RECONCILED — Wave 8 correction E. OLD CLAUSE counted every use of the
+  // existing screen-supplied ref and expected exactly one, because a tab
+  // press was its only consumer. SUPERSEDED BECAUSE the one global Settings
+  // action now dispatches through that SAME ref — deliberately reusing the
+  // existing mechanism rather than adding a navigation container ref, which
+  // 6n still forbids and still passes. PRESERVED INTENT: a TAB press is
+  // exactly one navigate into Main, asserted directly below.
+  assert('6l. a tab press is exactly one navigate into Main', (NAV.match(/rootNavigationRef\.current\?\.navigate\('Main', \{ screen: tab \}\)/g) || []).length === 1);
+  assert('6l-i. and the only other dispatch through that ref is the one global Settings action', (NAV.match(/rootNavigationRef\.current\?\.navigate\(/g) || []).length === 2 && /rootNavigationRef\.current\?\.navigate\('Settings'\)/.test(NAV));
   assert('6m. which reveals that tab\'s root rather than layering it under the detail route', /navigate\('Main', \{ screen: tab \}\)/.test(NAV));
   assert('6n. no global navigation container ref was introduced', !/createNavigationContainerRef/.test(NAV));
-  assert('6o. the navigation object comes from React Navigation\'s own screenListeners', /screenListeners=\{\(\{ navigation \}\) => \(\{/.test(NAV) && /rootNavigationRef\.current = navigation;/.test(NAV));
+  // RECONCILED — Wave 8 closure: the listener factory now also destructures
+  // `route`, because transitionStart/transitionEnd need to know WHICH route
+  // is closing. Intent unchanged: the navigation object still comes from
+  // React Navigation's own screenListeners, never a container ref.
+  assert('6o. the navigation object comes from React Navigation\'s own screenListeners', /screenListeners=\{\(\{ navigation, route \}\) => \(\{/.test(NAV) && /rootNavigationRef\.current = navigation;/.test(NAV));
 }
 
 console.log('\n=== 7. Nothing protected moved (Class C) ===');
@@ -229,9 +261,15 @@ console.log('\n=== 8. Correction A safeguards (Class A + C) ===');
   // route must light that route's owner tab, not the initial tab. The
   // projection takes the route as an argument, so a restored MoneyDetail is
   // indistinguishable from a pushed one and resolves identically.
+  // RECONCILED — Wave 8 closure: EmergencyFund still RESOLVES its owner
+  // (ownership is unchanged, so Back still returns correctly), but it is no
+  // longer dock-visible, so `a.visible` is legitimately false for it. The
+  // ownership half of the clause is asserted for every route; the
+  // visibility half only for the routes the matrix still classifies visible.
   for (const [route, owner] of [['MoneyDetail', 'Money'], ['Transactions', 'Money'], ['GrowDetail', 'Grow'], ['Goals', 'Grow'], ['Cards', 'Money'], ['EmergencyFund', 'Money']] as const) {
     const a = resolveRootNavAssembly({ rootRoute: route, nestedTab: undefined, keyboardVisible: false, overlay: 'none' });
-    assert(`8a. a restored ${route} lights ${owner}, with no nested-tab information at all`, a.activeTab === owner && a.visible);
+    const shouldBeVisible = isDockVisibleForRouteName(route, false, 'none');
+    assert(`8a. a restored ${route} lights ${owner}, with no nested-tab information at all`, a.activeTab === owner && a.visible === shouldBeVisible);
   }
   assert('8b. and never falls back to the initial tab on a detail route', ['MoneyDetail', 'GrowDetail', 'Goals', 'Cards', 'Transactions', 'EmergencyFund'].every((r) => resolveRootNavAssembly({ rootRoute: r, nestedTab: undefined, keyboardVisible: false, overlay: 'none' }).activeTab !== INITIAL_TAB || r.startsWith('Money') === false));
   assert('8c. the initial-tab default applies ONLY to Main, where it is genuinely the selected route', (() => {

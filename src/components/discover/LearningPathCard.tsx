@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { SectionCard } from '../shared/SectionCard';
 import { ProgressBar } from '../shared/ProgressBar';
@@ -15,7 +18,10 @@ import { LearningCardItem } from './LearningCardItem';
  * learning cards, just one level up.
  */
 export function LearningPathCard({ path, startExpanded = false }: { path: LearningPath; startExpanded?: boolean }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
+  // Wave 8 correction — the shipped semantic role resolver, so Grow's
+  // sections stop being the last surfaces on the legacy scale.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const { data, markLearningCardCompleted } = useAppState();
   const [expanded, setExpanded] = useState(startExpanded);
   const cards = useMemo(() => learningPathCards(path), [path]);
@@ -35,13 +41,13 @@ export function LearningPathCard({ path, startExpanded = false }: { path: Learni
         },
         emoji: { fontSize: 22 },
         textBlock: { flex: 1 },
-        title: { ...typography.heading, fontSize: 15, color: colors.textPrimary, marginBottom: 4 },
+        title: { ...typeStyle('titleCard', locale), color: colors.textPrimary, marginBottom: 4 },
         progressRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         progressBarWrap: { flex: 1 },
-        progressLabel: { ...typography.micro, color: colors.textSecondary, fontWeight: '600' },
+        progressLabel: { ...typeStyle('meta', locale), color: colors.textSecondary, fontWeight: '600' },
         lessonList: { marginTop: spacing.md },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic, locale]
   );
 
   return (
@@ -54,8 +60,12 @@ export function LearningPathCard({ path, startExpanded = false }: { path: Learni
         accessibilityState={{ expanded }}
       >
         <View style={styles.header}>
+          {/* Wave 8 correction D — the journey's own structured `icon`
+              (an Ionicons name that already existed on this data type)
+              replaces the platform emoji, which rendered differently on
+              every OS version and never read as one designed system. */}
           <View style={styles.emojiBadge}>
-            <Text style={styles.emoji}>{path.emoji}</Text>
+            <Ionicons name={path.icon} size={18} color={semantic.interactive} accessibilityElementsHidden importantForAccessibility="no" />
           </View>
           <View style={styles.textBlock}>
             <Text style={styles.title}>{path.title}</Text>

@@ -1,3 +1,9 @@
+/* RECONCILED — Design 5.1 Wave 8: Grow's section titles are now
+ * consistently sentence case, so the Journey header reads "Your journey".
+ * Every clause below is otherwise unchanged — the property each one
+ * protects (local state retention, pushed-destination context, dock
+ * continuity) is untouched by a title's casing. */
+
 import React from 'react';
 import { AccessibilityInfo, ScrollView } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -170,7 +176,7 @@ describe('Pass 2E final correction — pushed Briefing destinations (MoneyDetail
     await user.press(await screen.findByRole('button', { name: /^Your Journey\.|not available yet/ }));
     expect(await screen.findByRole('button', { name: 'Back' })).toBeOnTheScreen();
     expect((await screen.findAllByText('Grow')).length).toBeGreaterThan(0);
-    expect(await screen.findByText('Your Journey')).toBeOnTheScreen();
+    expect(await screen.findByText('Your journey')).toBeOnTheScreen();
   });
 
   test('4. the accessible Back control returns to the same Today flow, and 5. Today content is present and correct after the round trip', async () => {

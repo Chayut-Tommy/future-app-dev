@@ -46,6 +46,7 @@ import { sendFocusEvent } from '../../lib/accessibilityFocus';
 import { TodayAmbientField } from '../../components/today/TodayAmbientField';
 import { formatHeroTimeframe } from '../../lib/calculations/briefingPriorityRows';
 import { formatTodayDateEyebrow, goalPercentageIsTrailing, isAccessibilityText, isMonthSectionEligible, ROW_ICON_TILE_SIZE } from '../../lib/calculations/todayComposition';
+import { SETTINGS_HEADER_INSET } from '../../navigation/globalSettingsGeometry';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -58,7 +59,6 @@ const BIG_TIER_ACHIEVEMENT_IDS = new Set(['first_investment', 'emergency_fund', 
 
 /** The circular Settings control in the header. 44pt so it meets the
  * minimum touch target on its own, without relying on hitSlop. */
-const SETTINGS_CONTROL_SIZE = 44;
 
 /** Design 5.1 — the no-goal invitation is a taller row than an ordinary
  * one because it carries a title and a full sentence of supporting copy.
@@ -470,25 +470,13 @@ export function TodayScreen() {
         dateEyebrow: { ...typeStyle('eyebrow', locale), color: semantic.textTertiary },
         // Reserves the Settings control's own width so a long greeting
         // reflows beside it instead of running underneath it.
-        headerBlock: { paddingRight: SETTINGS_CONTROL_SIZE + designSpacing.md },
+        /* Wave 8 correction E — the reserved width now comes from the
+           SHARED geometry the root-level Settings singleton reads, so the
+           control and the space kept for it can never drift apart the way
+           Today's own two hardcoded numbers did. */
+        headerBlock: { paddingRight: SETTINGS_HEADER_INSET },
         // Fixed, not part of the scroll content (PRD bug report: on a long
         // Today page, an in-content settings button scrolls out of reach).
-        floatingSettings: {
-          position: 'absolute',
-          // Screen's root View pads by insets.top for its scroll content,
-          // but RN's absolute positioning is measured from the parent's
-          // border box, not its padding box — so this needs its own
-          // insets.top or it lands under the status bar / Dynamic Island.
-          top: insets.top + spacing.sm,
-          right: screenMargin,
-          width: SETTINGS_CONTROL_SIZE,
-          height: SETTINGS_CONTROL_SIZE,
-          borderRadius: SETTINGS_CONTROL_SIZE / 2,
-          backgroundColor: semantic.bgSurface,
-          alignItems: 'center',
-          justifyContent: 'center',
-          ...cardShadow,
-        },
         greeting: { ...typeStyle('titleScreen', locale), color: semantic.textTitle, marginTop: designSpacing.xs, marginBottom: designLayout.sectionGap },
         sectionHeader: {
           flexDirection: 'row',
@@ -598,22 +586,15 @@ export function TodayScreen() {
       contentPadding
       scrollRef={tabScrollRefs.Today}
       ambient={<TodayAmbientField />}
-      overlay={
-        <TouchableOpacity
-          style={styles.floatingSettings}
-          onPress={() => navigation.navigate('Settings')}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          accessibilityRole="button"
-          accessibilityLabel="Settings"
-        >
-          <Ionicons name="settings-outline" size={20} color={semantic.textSecondary} importantForAccessibility="no" />
-        </TouchableOpacity>
-      }
     >
 
       {/* 1. Greeting and settings — the emotional handshake, kept outside
           the card so it doesn't read like dashboard content (PRD ask).
-          Settings access is the floating overlay button above; the global
+          Wave 8 correction E — Today no longer owns a Settings control.
+          It was the app's ONLY route to Settings, so Money, Wealth and Grow
+          had none at all, and it floated over this screen's own scrolling
+          content. It is replaced by ONE root-level singleton driven by the
+          same visibility authority as the dock and the "+", which are also
           "+"/quick-actions FAB (which now also owns Ask Nolie's fallback
           entry point, see quickActions.ts) is mounted at the navigator
           level, not owned by this screen. No financial-health claim is

@@ -69,10 +69,15 @@ export const DOCK_VISIBLE_ROUTES: readonly DockRoute[] = [
   'Goals',
   'Cards',
   'Transactions',
-  'EmergencyFund',
 ];
 
 export const DOCK_HIDDEN_ROUTES: readonly DockRoute[] = [
+  // Wave 8 closure — EmergencyFund moves here from the visible set. Wave 2
+  // classified it as a passive review; it is in fact one of Grow's four
+  // CALCULATOR tiles, and the owner's recording showed the dock bleeding
+  // onto it. Every calculator is now classified the same way, so no
+  // calculator can expose the global shell.
+  'EmergencyFund',
   'Settings',
   'Language',
   'ResetLulu',

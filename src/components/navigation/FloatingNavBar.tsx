@@ -52,12 +52,16 @@ export function FloatingNavBar({
   activeIndex,
   onSelectTab,
   reduceMotion,
+  hidden = false,
 }: {
   tabs: readonly DockTab[];
   /** -1 when no tab should be lit. */
   activeIndex: number;
   onSelectTab: (tab: DockTab, index: number) => void;
   reduceMotion: boolean;
+  /** Wave 8 closure — visual gate only. The bar stays mounted so its
+   * pill animation is never re-created and its entry never replays. */
+  hidden?: boolean;
 }) {
   const { colors, semantic, scheme, spacing, radius, typography, cardShadow } = useTheme();
   const insets = useSafeAreaInsets();
@@ -89,6 +93,7 @@ export function FloatingNavBar({
   const styles = useMemo(
     () =>
       StyleSheet.create({
+        capsuleHidden: { opacity: 0 },
         capsule: {
           position: 'absolute',
           // Tablet: the assembly is capped and centred, so the capsule's own
@@ -148,7 +153,17 @@ export function FloatingNavBar({
   if (keyboardVisible) return null;
 
   return (
-    <View style={styles.capsule} pointerEvents="box-none">
+    /* Wave 8 closure — a VISUAL gate. The bar keeps its mount, its
+       Animated.Value and its pill position; while hidden it is fully
+       transparent, takes no touches and is removed from the accessibility
+       tree, so it can never be reached on Settings or a calculator. */
+    <View
+      style={[styles.capsule, hidden ? styles.capsuleHidden : null]}
+      pointerEvents={hidden ? 'none' : 'box-none'}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      testID="floating-nav-bar"
+    >
       {/* iOS only. Declared FIRST so it paints beneath the tabs, and it is
           inside the capsule (which sets overflow:'hidden') so the pill
           radius clips it. Android SDK 54 takes the documented solid

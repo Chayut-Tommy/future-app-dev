@@ -244,11 +244,15 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
       // glyph size dropped from 17 to 15. The GLYPH, which is what this
       // assertion is about, is unchanged.
       const journeySnapshotIcon = JOURNEY_SNAPSHOT_SRC.match(/Ionicons name="([\w-]+)" size=\{15\}/)?.[1];
-      const growScoreRowIcon = DISCOVER_SCREEN_SRC.match(/Ionicons name="([\w-]+)" size=\{20\} color=\{colors\.accent\} \/>/)?.[1];
+      // RECONCILED — Design 5.1 Wave 8: the Grow action row's icon moved
+      // onto the semantic interactive token and a 18pt glyph as part of the
+      // ratchet. The GLYPH — which is the whole point of this assertion —
+      // is unchanged, and is still asserted to be speedometer-outline.
+      const growScoreRowIcon = DISCOVER_SCREEN_SRC.match(/Ionicons name="([\w-]+)" size=\{18\} color=\{semantic\.interactive\}/)?.[1];
       return scoreChipIcon === 'speedometer-outline' && journeySnapshotIcon === 'compass-outline' && growScoreRowIcon === 'speedometer-outline';
     })()
   );
-  assert("Grow's Score launcher row icon is no longer the gold trophy — matches ScoreChip.tsx's own icon/colour for cross-surface consistency", !/name="trophy" size=\{20\} color=\{colors\.gold\}/.test(DISCOVER_SCREEN_SRC));
+  assert("Grow's Score launcher row icon is no longer the gold trophy — matches ScoreChip.tsx's own icon for cross-surface consistency", !/name="trophy"/.test(DISCOVER_SCREEN_SRC));
 
   // --- Briefing hero: naviloPalette-driven ambient gradient wraps title/date/chip/tiles as one composition ---
   // Pass 2B, layout/colour correction §4/§5 — the hard-coded

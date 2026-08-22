@@ -110,18 +110,38 @@ console.log('\n=== Section 4: numeric and accessibility behaviour for each inval
     /const scoreGaugePresentation = useMemo\(\s*\(\) => toScoreGaugePresentation\(scoreChipPresentation\.state === 'available', scoreChipPresentation\.scoreValue\),/.test(DISCOVER_SCREEN_SRC)
   );
   assert('ScoreRadialGauge is driven by that one scoreGaugePresentation value (presentation prop) — not by a separately-passed raw score/authoritative pair that could diverge from it', /<ScoreRadialGauge presentation=\{scoreGaugePresentation\}/.test(DISCOVER_SCREEN_SRC));
+  // RECONCILED — Design 5.1 Wave 8.
+  // OLD CLAUSE: the label read `scoreGaugePresentation.value` directly and
+  // the muted branch reused scoreChipPresentation's label/supportingText.
+  // SUPERSEDED BECAUSE Wave 8 routes both branches through
+  // `scoreNumberOrNull` / `scoreSupportingText` in growComposition.ts —
+  // `.value` exists only on the 'available' arm of the union, so the
+  // accessor is type-narrowed rather than an unchecked read, and the muted
+  // wording is now the single shared constant.
+  // PRESERVED INTENT, verbatim: the announced value comes from the SAME
+  // resolved presentation the gauge draws, so the two cannot diverge; and
+  // an unavailable score announces no number.
   assert(
-    'the accessibility label is derived from the SAME scoreGaugePresentation.state/.value — never from a separately-computed number, so the announced value and the drawn value cannot diverge even under an invalid-score edge case',
-    /scoreGaugePresentation\.state === 'available'\s*\?\s*`\$\{brand\.scoreName\} \$\{scoreGaugePresentation\.value\} out of 100, based on what you've recorded\.`/.test(DISCOVER_SCREEN_SRC)
+    'the accessibility label is derived from the SAME scoreGaugePresentation — never from a separately-computed number, so the announced value and the drawn value cannot diverge even under an invalid-score edge case',
+    /scoreMayShowNumber\(scoreGaugePresentation\.state\)\s*\n?\s*\? `\$\{brand\.scoreName\} \$\{scoreNumberOrNull\(scoreGaugePresentation\)\} out of 100\./.test(DISCOVER_SCREEN_SRC) &&
+      !/scoreGaugePresentation\.value/.test(DISCOVER_SCREEN_SRC)
   );
   assert(
-    'when scoreGaugePresentation is unavailable, the accessibility label falls back to scoreChipPresentation\'s own established muted-state label/supportingText — never a numeric label, never "undefined"/"NaN" text',
-    /: `\$\{scoreChipPresentation\.label\}\. \$\{scoreChipPresentation\.supportingText\}`/.test(DISCOVER_SCREEN_SRC)
+    'when scoreGaugePresentation is unavailable, the accessibility label falls back to the established muted-state wording — never a numeric label, never "undefined"/"NaN" text',
+    /: `\$\{brand\.scoreName\}\. \$\{SCORE_UNAVAILABLE_TEXT\}`/.test(DISCOVER_SCREEN_SRC) &&
+      /export const SCORE_UNAVAILABLE_TEXT = 'Not enough recorded yet';/.test(readFileSync('src/lib/calculations/growComposition.ts', 'utf8'))
   );
   assert(
     'life stage, completeness, strongest area, and opportunity are ALL gated on scoreGaugePresentation.state === \'available\' (the doubly-validated state), not the looser scoreChipPresentation.state === \'available\' — so none of these are ever exposed as authoritative when the score itself failed the validity contract',
-    (DISCOVER_SCREEN_SRC.match(/scoreGaugePresentation\.state === 'available'/g) || []).length >= 3 &&
-      !/luluScore\.lifeStage \? \(\s*<Text style=\{styles\.scoreLifeStage\}[^]*?scoreChipPresentation\.state === 'available' && luluScore\.lifeStage/.test(DISCOVER_SCREEN_SRC)
+    // RECONCILED — Design 5.1 Wave 8: the literal comparison is now the
+    // named `scoreMayShowNumber(scoreGaugePresentation.state)`, which IS
+    // that comparison (growComposition.ts: `state === 'available'`) and is
+    // a deliberate whitelist of one, so a state added later cannot start
+    // showing a figure. The gate is still the doubly-validated gauge
+    // state, never the looser chip state — asserted below unchanged.
+    (DISCOVER_SCREEN_SRC.match(/scoreMayShowNumber\(scoreGaugePresentation\.state\)/g) || []).length >= 3 &&
+      /export function scoreMayShowNumber\(state: string\): boolean \{\s*\n\s*return state === 'available';/.test(readFileSync('src/lib/calculations/growComposition.ts', 'utf8')) &&
+      !/scoreChipPresentation\.state === 'available' && luluScore\.lifeStage/.test(DISCOVER_SCREEN_SRC)
   );
   assert(
     'ScoreRadialGauge.tsx performs NO clamping anywhere (no Math.max/Math.min on the score) — the presentation.value it draws is only ever reached through the already-validated toScoreGaugePresentation contract',

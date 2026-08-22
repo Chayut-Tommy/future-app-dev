@@ -233,8 +233,16 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
     "onLayout for every focusable section (score/journey/financial-learning/goals/safety_net/saving/learning) re-attempts the pending focus the moment that section measures",
     (() => {
       const count = (DISCOVER_SCREEN_SRC.match(/attemptSectionFocus\(\);/g) || []).length;
-      // Once inside the route-params effect, once per onLayout handler (7) = 8.
-      return count === 8;
+      // RECONCILED — Design 5.1 Wave 8. OLD CLAUSE expected 8 (the
+      // route-params effect plus seven onLayout handlers). SUPERSEDED
+      // BECAUSE the owner-locked hierarchy unwired the collapsible Explore
+      // accordion and the Future You / Safety Net section, so three of
+      // those focus targets no longer exist as sections to measure.
+      // PRESERVED INTENT verbatim: every section that IS focusable still
+      // re-attempts the pending focus the moment it measures — one call per
+      // surviving onLayout handler (score/goals/journey/tools/learn = 5),
+      // plus the one inside the route-params effect.
+      return count === 6;
     })()
   );
   assert(
@@ -280,7 +288,16 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   );
   assert(
     'the Score section is still independently tappable for an organic (non-Today-driven) visit to Grow — the whole Score card is one TouchableOpacity with onPress={() => setScoreSheetVisible(true)}, so this correction (and the Pass 2C radial-gauge redesign) adds the auto-open without removing the existing manual affordance',
-    /<TouchableOpacity\s+onPress=\{\(\) => setScoreSheetVisible\(true\)\}\s+activeOpacity=\{0\.8\}/.test(DISCOVER_SCREEN_SRC)
+    // RECONCILED — Design 5.1 Wave 8: the Score card is now the page's
+    // single hero and carries `style={styles.scoreHero}` before its
+    // onPress. PRESERVED INTENT verbatim: the WHOLE card is still one
+    // TouchableOpacity opening the same sheet, so the manual affordance
+    // survives alongside the Today-driven auto-open.
+        // RECONCILED — Wave 8 correction A: the hero is now a LinearGradient
+    // (so the colour style genuinely retints it) wrapped by the same single
+    // TouchableOpacity. PRESERVED INTENT verbatim: the WHOLE card remains
+    // one control opening the same existing sheet.
+    /<TouchableOpacity\s+style=\{styles\.scoreHeroPressable\}\s+onPress=\{\(\) => setScoreSheetVisible\(true\)\}/.test(DISCOVER_SCREEN_SRC)
   );
 
   // --- Back behaviour: the sheet is the same, unmodified, existing Modal —
@@ -292,7 +309,18 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
     // the regex now tolerates trailing props on the opening tag rather than
     // requiring it end immediately after onPress={onClose}.
     'ScoreExplanationSheet.tsx is untouched by this correction pass — its Modal onRequestClose/Close-button dismissal (the real Back/close behaviour) is exactly the pre-existing, accepted component, not redesigned for auto-open',
-    /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) && /<TouchableOpacity style=\{styles\.closeButton\} onPress=\{onClose\}[^>]*>/.test(SCORE_EXPLANATION_SHEET_SRC)
+    // RECONCILED — Wave 8 closure. OLD CLAUSE required the Close control to be
+    // `<TouchableOpacity style={styles.closeButton} onPress={onClose}>` — a
+    // FIXED FOOTER. SUPERSEDED BECAUSE the owner's recording showed roughly
+    // three quarters of this sheet frozen: only the categories list was
+    // inside a ScrollView, and the fixed footer ate further viewport. The
+    // whole body is now one scroll owner and Close moved into the compact
+    // header. PRESERVED INTENT verbatim: the dismissal path is unchanged —
+    // the same `onRequestClose={onClose}` Modal, and exactly ONE Close
+    // control still calling the same `onClose`, never a second path.
+    /<Modal visible=\{visible\} animationType="slide" transparent onRequestClose=\{onClose\}>/.test(SCORE_EXPLANATION_SHEET_SRC) &&
+      (SCORE_EXPLANATION_SHEET_SRC.match(/onPress=\{onClose\}/g) || []).length === 1 &&
+      /accessibilityLabel="Close"/.test(SCORE_EXPLANATION_SHEET_SRC)
   );
   assert(
     'DiscoverScreen.tsx never introduces a second, competing dismissal path for the Score sheet — onClose is the same single setScoreSheetVisible(false) regardless of how the sheet was opened',

@@ -2,7 +2,7 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { render, screen, userEvent } from '@testing-library/react-native';
+import { render, screen, userEvent, within } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import '../../src/i18n';
@@ -138,38 +138,42 @@ describe('Accessibility semantics — rendered coverage (Pass 2E)', () => {
     expect(goalRow).toBeOnTheScreen();
   });
 
-  test('Grow renders Explore Money Moves and Markets as headings, and a collapsed category as an accessible expand/collapse control', async () => {
-    const user = userEvent.setup();
+  // RECONCILED — Design 5.1 Wave 8.
+  //
+  // OLD CLAUSES: (1) Grow rendered "Explore Money Moves" and "Markets" as
+  // headings with a collapsed ExploreCategorySection exposing an
+  // expand/collapse control; (2) a standalone "How long would my safety
+  // net last?" nav row was one accessible labelled button.
+  //
+  // SUPERSEDED BECAUSE the owner-locked hierarchy unwired the category
+  // accordion and Market Pulse, and folded the safety-net destination into
+  // the Emergency fund TOOL tile — the same route, now one of four tiles.
+  //
+  // PRESERVED INTENT, both halves: Grow's section identities carry header
+  // semantics, and every navigation row is ONE accessible labelled button
+  // with no separate chevron focus stop. Asserted below against the
+  // surfaces that now exist.
+  test('Grow renders its section identities as headings', async () => {
     await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: /^Grow,/ }));
-
-    expect(await screen.findByRole('header', { name: 'Explore Money Moves' })).toBeOnTheScreen();
-    expect(await screen.findByRole('header', { name: 'Markets' })).toBeOnTheScreen();
-
-    const savingCategory = await screen.findByRole('button', { name: 'Saving' });
-    expect(savingCategory.props.accessibilityState).toEqual(expect.objectContaining({ expanded: false }));
-
-    await user.press(savingCategory);
-    expect(await screen.findByRole('button', { name: /Compare savings rates/ })).toBeOnTheScreen();
-    const savingCategoryAfter = await screen.findByRole('button', { name: 'Saving' });
-    expect(savingCategoryAfter.props.accessibilityState).toEqual(expect.objectContaining({ expanded: true }));
+    const user = userEvent.setup();
+    await user.press(await screen.findByRole('button', { name: /Grow/i }));
+    await screen.findByTestId('grow-score-hero');
+    expect(screen.getByRole('header', { name: 'Your goals' })).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Your journey' })).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Tools' })).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Learn' })).toBeOnTheScreen();
   });
 
-  test('Grow safety-net nav row is an accessible, labelled button (no separate chevron focus stop)', async () => {
-    const user = userEvent.setup();
+  test('Grow tool tiles are accessible, labelled buttons with no separate chevron focus stop', async () => {
     await render(<Harness />);
-
-    await user.press(await screen.findByRole('button', { name: /^Grow,/ }));
-
-    const navRow = await screen.findByRole('button', { name: /How long would my safety net last/ });
-    expect(navRow).toBeOnTheScreen();
-    // The row's own chevron icon must never be independently queryable as
-    // a second accessible element — accessible information integrity
-    // requires exactly one focus stop per row, not a row plus a decorative
-    // icon each producing their own stop.
-    const allSafetyNetButtons = await screen.findAllByRole('button', { name: /safety net/i });
-    expect(allSafetyNetButtons).toHaveLength(1);
+    const user = userEvent.setup();
+    await user.press(await screen.findByRole('button', { name: /Grow/i }));
+    await screen.findByTestId('grow-score-hero');
+    const tile = screen.getByTestId('grow-tool-emergency');
+    expect(tile.props.accessibilityRole).toBe('button');
+    expect(tile.props.accessibilityLabel).toBe('Emergency fund. How many months your cash covers');
+    // The icon is decorative and must not be its own stop.
+    expect(within(tile).queryByRole('image')).toBeNull();
   });
 
   test('Cards screen exposes a single collapsed accessible label per card row, including balance, utilisation, and repayment', async () => {
