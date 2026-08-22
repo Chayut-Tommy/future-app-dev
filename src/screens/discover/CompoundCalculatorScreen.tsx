@@ -1,14 +1,27 @@
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../../theme/ThemeContext';
 import { Screen } from '../../components/shared/Screen';
-import { SectionCard } from '../../components/shared/SectionCard';
+import { CurrencyField } from '../../components/shared/fields/CurrencyField';
+import { TextField } from '../../components/shared/fields/TextField';
+import { FieldShell } from '../../components/shared/fields/FieldShell';
+import {
+  CalculatorBreakdownRow,
+  CalculatorDisclaimer,
+  CalculatorGuidance,
+  CalculatorIntro,
+  CalculatorResult,
+  CalculatorSection,
+  FrequencyChips,
+  useBlurFieldMessage,
+} from '../../components/discover/calculator/CalculatorSurfaces';
 import { computeCompoundGrowth, ContributionFrequency } from '../../lib/calculations/compoundCalculator';
-import { brand } from '../../lib/brand';
-import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
+import {
+  calculatorGuidance,
+  classifyMoneyInput,
+  classifyNumberInput,
+  combineCalculatorFields,
+  describeNumberInput,
+} from '../../lib/calculations/calculatorInputPresentation';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -21,15 +34,20 @@ const FREQUENCIES: { value: ContributionFrequency; label: string }[] = [
 ];
 
 /**
- * Compound Calculator — a real interactive tool (Discover's "Financial
- * Tools" section, and where Saving Facts' "Try calculator" button lands).
- * Everything here is the user's own hypothetical inputs plugged into a
- * standard compounding formula — no fabricated rates or numbers.
+ * Compound growth — Design 5.1 Wave 9a.
+ *
+ * The engine (computeCompoundGrowth) is untouched: same formula, same
+ * results, same display rounding. What changed is presentation only:
+ * inputs lead, the ONE result surface exists only while every input is
+ * genuinely readable (the old `parseFloat(x) || 0` fabricated a $0
+ * projection out of malformed input), contributions are distinguished from
+ * estimated growth, and the screen speaks the semantic type and colour
+ * roles. Cadence selection and the Saving Facts "Try calculator" prefill
+ * (route params) are preserved exactly.
  */
 export function CompoundCalculatorScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { colors, radius, spacing, typography, glow } = useTheme();
   const params = route.params ?? {};
 
   const [initial, setInitial] = useState(params.initial ? String(params.initial) : '0');
@@ -38,109 +56,91 @@ export function CompoundCalculatorScreen() {
   const [ratePct, setRatePct] = useState(params.annualRatePct ? String(params.annualRatePct) : '5');
   const [years, setYears] = useState(params.years ? String(params.years) : '10');
 
+  // Structured classification — never parseFloat, never a fabricated zero.
+  // A zero starting amount or contribution is a genuinely valid scenario;
+  // a 0% assumed return is one the engine supports explicitly; a 0-year
+  // term has nothing meaningful to estimate, so years must be positive.
+  const initialState = classifyMoneyInput(initial, { allowZero: true });
+  const contributionState = classifyMoneyInput(contribution, { allowZero: true });
+  const rateState = classifyNumberInput(ratePct, { allowZero: true });
+  const yearsState = classifyNumberInput(years);
+  const readiness = combineCalculatorFields([initialState, contributionState, rateState, yearsState]);
+  const guidance = calculatorGuidance(readiness);
+
+  const rateMessage = useBlurFieldMessage(() => describeNumberInput({ raw: ratePct, allowZero: true, required: true, unit: 'rate' }));
+  const yearsMessage = useBlurFieldMessage(() => describeNumberInput({ raw: years, required: true, unit: 'number of years' }));
+
   const result = useMemo(
     () =>
-      computeCompoundGrowth({
-        initial: parseFloat(initial) || 0,
-        contribution: parseFloat(contribution) || 0,
-        frequency,
-        annualRatePct: parseFloat(ratePct) || 0,
-        years: parseFloat(years) || 0,
-      }),
+      initialState.status === 'valid' && contributionState.status === 'valid' && rateState.status === 'valid' && yearsState.status === 'valid'
+        ? computeCompoundGrowth({
+            initial: initialState.value,
+            contribution: contributionState.value,
+            frequency,
+            annualRatePct: rateState.value,
+            years: yearsState.value,
+          })
+        : null,
+    // Raw strings are the honest inputs — every field state derives from them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [initial, contribution, frequency, ratePct, years]
   );
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        disclaimer: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          padding: spacing.md,
-          marginBottom: spacing.lg,
-        },
-        disclaimerText: { ...typography.micro, color: colors.textSecondary, flex: 1 },
-        resultCard: { borderRadius: radius.card, alignItems: 'center', paddingVertical: spacing.xl, marginBottom: spacing.lg, ...glow(colors.accent) },
-        resultLabel: { ...typography.micro, color: onFeaturedAlpha(0.75), marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
-        resultTagline: { ...typography.body, fontSize: 13, fontStyle: 'italic', color: onFeaturedAlpha(0.9), marginBottom: spacing.sm },
-        resultValue: { ...typography.title, fontSize: 34, color: ON_FEATURED },
-        resultCaption: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.75), marginTop: 2 },
-        resultSubRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
-        resultSubBlock: { alignItems: 'center' },
-        resultSubLabel: { ...typography.micro, color: onFeaturedAlpha(0.7), marginBottom: 2 },
-        resultSubValue: { ...typography.heading, fontSize: 14, color: ON_FEATURED },
-        label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: colors.textPrimary,
-        },
-        freqRow: { flexDirection: 'row', gap: spacing.sm },
-        freqChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: radius.control, backgroundColor: colors.surfaceMuted },
-        freqChipActive: { backgroundColor: colors.accentSoft },
-        freqText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
-        freqTextActive: { color: colors.accentStrong },
-      }),
-    [colors, radius, spacing, typography, glow]
-  );
-
   return (
-    <Screen title="Compound Calculator" onBack={() => navigation.goBack()}>
-      <View style={styles.disclaimer}>
-        <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
-        <Text style={styles.disclaimerText}>Illustrative only — plug in your own numbers, not a guarantee of real returns.</Text>
-      </View>
+    <Screen title="Compound growth" onBack={() => navigation.goBack()}>
+      <CalculatorIntro text="See how regular contributions could grow over time, using a rate and timeframe you choose." />
 
-      <LinearGradient colors={colors.heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.resultCard}>
-        <Text style={styles.resultLabel}>💡 {brand.name.toUpperCase()} PROJECTION</Text>
-        <Text style={styles.resultTagline}>Small habits create big results.</Text>
-        <Text style={styles.resultValue}>{formatMoney(result.futureValue)}</Text>
-        <Text style={styles.resultCaption}>
-          in {years || '0'} year{years === '1' ? '' : 's'}
-        </Text>
-        <View style={styles.resultSubRow}>
-          <View style={styles.resultSubBlock}>
-            <Text style={styles.resultSubLabel}>You put in</Text>
-            <Text style={styles.resultSubValue}>{formatMoney(result.totalContributed)}</Text>
-          </View>
-          <View style={styles.resultSubBlock}>
-            <Text style={styles.resultSubLabel}>Growth</Text>
-            <Text style={styles.resultSubValue}>{formatMoney(result.totalGrowth)}</Text>
-          </View>
-        </View>
-      </LinearGradient>
+      <CalculatorSection title="Your numbers">
+        <CurrencyField label="Starting amount" value={initial} onChangeText={setInitial} allowZero required accessibilityLabel="Starting amount in dollars" />
+        <CurrencyField label="Contribution amount" value={contribution} onChangeText={setContribution} allowZero required accessibilityLabel="Contribution amount in dollars" />
+        <FieldShell label="How often">
+          <FrequencyChips options={FREQUENCIES} value={frequency} onChange={setFrequency} />
+        </FieldShell>
+        <TextField
+          label="Assumed annual return (%)"
+          value={ratePct}
+          onChangeText={(next) => {
+            setRatePct(next);
+            rateMessage.onChangeClear();
+          }}
+          onBlur={rateMessage.onBlur}
+          figures
+          keyboardType="decimal-pad"
+          message={rateMessage.message}
+          accessibilityLabel="Assumed annual return in percent per year"
+        />
+        <TextField
+          label="Years"
+          value={years}
+          onChangeText={(next) => {
+            setYears(next);
+            yearsMessage.onChangeClear();
+          }}
+          onBlur={yearsMessage.onBlur}
+          figures
+          keyboardType="decimal-pad"
+          returnKeyType="done"
+          message={yearsMessage.message}
+          accessibilityLabel="Number of years"
+        />
+      </CalculatorSection>
 
-      <SectionCard>
-        <Text style={styles.label}>Starting amount</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={initial} onChangeText={setInitial} placeholderTextColor={colors.textMuted} />
+      {result ? (
+        <CalculatorResult
+          eyebrow="Estimated value"
+          figure={formatMoney(result.futureValue)}
+          caption={`in ${yearsState.status === 'valid' ? yearsState.value : ''} year${yearsState.status === 'valid' && yearsState.value === 1 ? '' : 's'}`}
+          accessibilityLabel={`Estimated value ${formatMoney(result.futureValue)} in ${yearsState.status === 'valid' ? yearsState.value : ''} years`}
+          testID="compound-result"
+        >
+          <CalculatorBreakdownRow label="Your contributions" value={formatMoney(result.totalContributed)} testID="compound-contributions" />
+          <CalculatorBreakdownRow label="Estimated growth" value={formatMoney(result.totalGrowth)} testID="compound-growth" />
+        </CalculatorResult>
+      ) : guidance ? (
+        <CalculatorGuidance text={guidance} testID="compound-guidance" />
+      ) : null}
 
-        <Text style={styles.label}>Contribution amount</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={contribution} onChangeText={setContribution} placeholderTextColor={colors.textMuted} />
-
-        <Text style={styles.label}>How often</Text>
-        <View style={styles.freqRow}>
-          {FREQUENCIES.map((f) => {
-            const active = frequency === f.value;
-            return (
-              <TouchableOpacity key={f.value} style={[styles.freqChip, active ? styles.freqChipActive : null]} onPress={() => setFrequency(f.value)}>
-                <Text style={[styles.freqText, active ? styles.freqTextActive : null]}>{f.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <Text style={styles.label}>Assumed annual return (%)</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={ratePct} onChangeText={setRatePct} placeholderTextColor={colors.textMuted} />
-
-        <Text style={styles.label}>Years</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={years} onChangeText={setYears} placeholderTextColor={colors.textMuted} />
-      </SectionCard>
+      <CalculatorDisclaimer text="Illustrative only — plug in your own numbers, not a guarantee of real returns." />
     </Screen>
   );
 }

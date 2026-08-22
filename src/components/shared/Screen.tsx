@@ -7,7 +7,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { SETTINGS_HEADER_INSET } from '../../navigation/globalSettingsGeometry';
 import { screenBottomClearance } from '../../navigation/floatingNavGeometry';
 import { designLayout } from '../../theme/semanticTokens';
-import { resolveTextStyle } from '../../theme/typography';
+import { fontFamilyForWeight, resolveTextStyle } from '../../theme/typography';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
@@ -195,6 +195,9 @@ export function Screen({
         backChevron: {
           fontSize: 30,
           fontWeight: '400',
+          // Design 5.1 Wave 9a — family-only: the chevron glyph was the one
+          // header character still rendering in the platform font.
+          fontFamily: fontFamilyForWeight(400, locale),
           color: colors.accent,
           marginTop: -2,
         },

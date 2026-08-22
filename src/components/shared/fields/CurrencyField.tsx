@@ -15,6 +15,7 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, TextInput, TextInputProps, ViewStyle } from 'react-native';
 import { useTheme } from '../../../theme/ThemeContext';
+import { moneyFontFamily, MONEY_TYPOGRAPHY } from '../../../theme/typography';
 import { FieldShell } from './FieldShell';
 import { describeMoneyInput } from './moneyFieldMessage';
 
@@ -66,8 +67,14 @@ export function CurrencyField({
           paddingVertical: spacing.sm,
           color: colors.textPrimary,
           ...typography.body,
+          // Design 5.1 Wave 9a — family-only migration, existing size and
+          // weight verbatim. A typed amount is a financial figure, so it is
+          // Figtree tabular in BOTH locales (typography.ts money grammar),
+          // never the platform default and never the Thai prose face.
+          fontFamily: moneyFontFamily(400),
+          fontVariant: [...MONEY_TYPOGRAPHY.fontVariant],
         },
-        large: { ...typography.title, minHeight: minTouchTarget + 12, paddingVertical: spacing.md },
+        large: { ...typography.title, minHeight: minTouchTarget + 12, paddingVertical: spacing.md, fontFamily: moneyFontFamily(700) },
         focused: { borderColor: colors.accent, borderWidth: 1 },
         errored: { borderColor: colors.danger, borderWidth: 1 },
         disabled: { opacity: 0.5 },

@@ -1,13 +1,27 @@
 import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../../theme/ThemeContext';
 import { Screen } from '../../components/shared/Screen';
-import { SectionCard } from '../../components/shared/SectionCard';
+import { CurrencyField } from '../../components/shared/fields/CurrencyField';
+import { TextField } from '../../components/shared/fields/TextField';
+import { FieldShell } from '../../components/shared/fields/FieldShell';
+import {
+  CalculatorBreakdownRow,
+  CalculatorDisclaimer,
+  CalculatorGuidance,
+  CalculatorIntro,
+  CalculatorResult,
+  CalculatorSection,
+  FrequencyChips,
+  useBlurFieldMessage,
+} from '../../components/discover/calculator/CalculatorSurfaces';
 import { computeHomeLoanRepayment, RepaymentFrequency } from '../../lib/calculations/homeLoanCalculator';
-import { ON_FEATURED, onFeaturedAlpha } from '../../theme/semanticTokens';
+import {
+  calculatorGuidance,
+  classifyMoneyInput,
+  classifyNumberInput,
+  combineCalculatorFields,
+  describeNumberInput,
+} from '../../lib/calculations/calculatorInputPresentation';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -19,117 +33,113 @@ const FREQUENCIES: { value: RepaymentFrequency; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
 ];
 
+const PERIOD_WORD: Record<RepaymentFrequency, string> = { monthly: 'month', fortnightly: 'fortnight', weekly: 'week' };
+
 /**
- * Home Loan Calculator — a real amortisation calculation against the
- * user's own numbers (loan amount, rate, term), never a bank's actual
- * offer (illustrative only, per the disclaimer).
+ * Home loan repayments — Design 5.1 Wave 9a.
+ *
+ * The customer-facing name is "Home loan repayments" (approved change 20 —
+ * the old "Can I buy a home?" implied an eligibility answer the app cannot
+ * give; the Grow entry label already changed in Wave 8). This calculator
+ * estimates repayments ONLY: nothing here speaks about affordability,
+ * borrowing capacity, lender approval or eligibility.
+ *
+ * The engine (computeHomeLoanRepayment) is untouched: frequency, term,
+ * rate, principal handling and display rounding are exactly as before.
+ * Presentation changed: inputs lead, and the one result surface exists
+ * only while every input is genuinely readable — the old
+ * `parseFloat(x) || 0` fabricated results out of malformed input (a
+ * 0-year term even presented the whole principal as one "repayment").
  */
 export function HomeLoanCalculatorScreen() {
   const navigation = useNavigation<any>();
-  const { colors, radius, spacing, typography, glow } = useTheme();
 
   const [loanAmount, setLoanAmount] = useState('600000');
   const [ratePct, setRatePct] = useState('6');
   const [years, setYears] = useState('30');
   const [frequency, setFrequency] = useState<RepaymentFrequency>('monthly');
 
+  // Structured classification — a loan needs a positive amount and a
+  // positive term; a genuinely 0% rate is a real scenario the engine
+  // supports explicitly.
+  const loanState = classifyMoneyInput(loanAmount);
+  const rateState = classifyNumberInput(ratePct, { allowZero: true });
+  const yearsState = classifyNumberInput(years);
+  const readiness = combineCalculatorFields([loanState, rateState, yearsState]);
+  const guidance = calculatorGuidance(readiness);
+
+  const rateMessage = useBlurFieldMessage(() => describeNumberInput({ raw: ratePct, allowZero: true, required: true, unit: 'rate' }));
+  const yearsMessage = useBlurFieldMessage(() => describeNumberInput({ raw: years, required: true, unit: 'number of years' }));
+
   const result = useMemo(
     () =>
-      computeHomeLoanRepayment({
-        loanAmount: parseFloat(loanAmount) || 0,
-        annualRatePct: parseFloat(ratePct) || 0,
-        years: parseFloat(years) || 0,
-        frequency,
-      }),
+      loanState.status === 'valid' && rateState.status === 'valid' && yearsState.status === 'valid'
+        ? computeHomeLoanRepayment({
+            loanAmount: loanState.value,
+            annualRatePct: rateState.value,
+            years: yearsState.value,
+            frequency,
+          })
+        : null,
+    // Raw strings are the honest inputs — every field state derives from them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [loanAmount, ratePct, years, frequency]
   );
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        disclaimer: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          padding: spacing.md,
-          marginBottom: spacing.lg,
-        },
-        disclaimerText: { ...typography.micro, color: colors.textSecondary, flex: 1 },
-        resultCard: { borderRadius: radius.card, alignItems: 'center', paddingVertical: spacing.xl, marginBottom: spacing.lg, ...glow(colors.navy) },
-        resultLabel: { ...typography.micro, color: onFeaturedAlpha(0.75), marginBottom: 4, fontWeight: '700', letterSpacing: 0.5 },
-        resultValue: { ...typography.title, fontSize: 30, color: ON_FEATURED },
-        resultCaption: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.75), marginTop: 2 },
-        resultSubRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.md },
-        resultSubBlock: { alignItems: 'center' },
-        resultSubLabel: { ...typography.micro, color: onFeaturedAlpha(0.7), marginBottom: 2 },
-        resultSubValue: { ...typography.heading, fontSize: 14, color: ON_FEATURED },
-        label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
-        input: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 12,
-          fontSize: 15,
-          color: colors.textPrimary,
-        },
-        freqRow: { flexDirection: 'row', gap: spacing.sm },
-        freqChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: radius.control, backgroundColor: colors.surfaceMuted },
-        freqChipActive: { backgroundColor: colors.accentSoft },
-        freqText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
-        freqTextActive: { color: colors.accentStrong },
-      }),
-    [colors, radius, spacing, typography, glow]
-  );
-
   return (
-    <Screen title="Home Loan Calculator" onBack={() => navigation.goBack()}>
-      <View style={styles.disclaimer}>
-        <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
-        <Text style={styles.disclaimerText}>Educational only — plug in your own numbers, not a lending offer or advice.</Text>
-      </View>
+    <Screen title="Home loan repayments" onBack={() => navigation.goBack()}>
+      <CalculatorIntro text="Estimate repayments on a loan amount, rate and term you enter yourself." />
 
-      <LinearGradient colors={colors.navyGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.resultCard}>
-        <Text style={styles.resultLabel}>🏠 ESTIMATED REPAYMENT</Text>
-        <Text style={styles.resultValue}>
-          {formatMoney(result.repaymentPerPeriod)} / {frequency === 'monthly' ? 'month' : frequency === 'fortnightly' ? 'fortnight' : 'week'}
-        </Text>
-        <Text style={styles.resultCaption}>over {years || '0'} years</Text>
-        <View style={styles.resultSubRow}>
-          <View style={styles.resultSubBlock}>
-            <Text style={styles.resultSubLabel}>Total interest</Text>
-            <Text style={styles.resultSubValue}>{formatMoney(result.totalInterest)}</Text>
-          </View>
-          <View style={styles.resultSubBlock}>
-            <Text style={styles.resultSubLabel}>Total loan cost</Text>
-            <Text style={styles.resultSubValue}>{formatMoney(result.totalCost)}</Text>
-          </View>
-        </View>
-      </LinearGradient>
+      <CalculatorSection title="Your numbers">
+        <CurrencyField label="Loan amount" value={loanAmount} onChangeText={setLoanAmount} required accessibilityLabel="Loan amount in dollars" />
+        <TextField
+          label="Interest rate (%)"
+          value={ratePct}
+          onChangeText={(next) => {
+            setRatePct(next);
+            rateMessage.onChangeClear();
+          }}
+          onBlur={rateMessage.onBlur}
+          figures
+          keyboardType="decimal-pad"
+          message={rateMessage.message}
+          accessibilityLabel="Interest rate in percent per year"
+        />
+        <TextField
+          label="Loan term (years)"
+          value={years}
+          onChangeText={(next) => {
+            setYears(next);
+            yearsMessage.onChangeClear();
+          }}
+          onBlur={yearsMessage.onBlur}
+          figures
+          keyboardType="decimal-pad"
+          returnKeyType="done"
+          message={yearsMessage.message}
+          accessibilityLabel="Loan term in years"
+        />
+        <FieldShell label="Repayment frequency">
+          <FrequencyChips options={FREQUENCIES} value={frequency} onChange={setFrequency} />
+        </FieldShell>
+      </CalculatorSection>
 
-      <SectionCard>
-        <Text style={styles.label}>Loan amount</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={loanAmount} onChangeText={setLoanAmount} placeholderTextColor={colors.textMuted} />
+      {result ? (
+        <CalculatorResult
+          eyebrow="Estimated repayment"
+          figure={`${formatMoney(result.repaymentPerPeriod)} / ${PERIOD_WORD[frequency]}`}
+          caption={`over ${yearsState.status === 'valid' ? yearsState.value : ''} years`}
+          accessibilityLabel={`Estimated repayment ${formatMoney(result.repaymentPerPeriod)} per ${PERIOD_WORD[frequency]}, over ${yearsState.status === 'valid' ? yearsState.value : ''} years`}
+          testID="homeloan-result"
+        >
+          <CalculatorBreakdownRow label="Estimated interest" value={formatMoney(result.totalInterest)} testID="homeloan-interest" />
+          <CalculatorBreakdownRow label="Estimated total cost" value={formatMoney(result.totalCost)} testID="homeloan-total" />
+        </CalculatorResult>
+      ) : guidance ? (
+        <CalculatorGuidance text={guidance} testID="homeloan-guidance" />
+      ) : null}
 
-        <Text style={styles.label}>Interest rate (%)</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={ratePct} onChangeText={setRatePct} placeholderTextColor={colors.textMuted} />
-
-        <Text style={styles.label}>Loan term (years)</Text>
-        <TextInput style={styles.input} keyboardType="decimal-pad" value={years} onChangeText={setYears} placeholderTextColor={colors.textMuted} />
-
-        <Text style={styles.label}>Repayment frequency</Text>
-        <View style={styles.freqRow}>
-          {FREQUENCIES.map((f) => {
-            const active = frequency === f.value;
-            return (
-              <TouchableOpacity key={f.value} style={[styles.freqChip, active ? styles.freqChipActive : null]} onPress={() => setFrequency(f.value)}>
-                <Text style={[styles.freqText, active ? styles.freqTextActive : null]}>{f.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </SectionCard>
+      <CalculatorDisclaimer text="Educational only — plug in your own numbers, not a lending offer or advice." />
     </Screen>
   );
 }
