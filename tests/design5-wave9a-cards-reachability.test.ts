@@ -29,11 +29,11 @@
 // Run with: ./node_modules/.bin/tsx tests/design5-wave9a-cards-reachability.test.ts
 
 import { readFileSync } from 'fs';
-import { execSync } from 'child_process';
 import * as path from 'path';
 import { isDockVisible } from '../src/navigation/dockVisibility';
 import { ROUTE_OWNER_TAB, resolveOwnerTab } from '../src/navigation/tabDefinitions';
 import { computeDebtCoachSummary, computeHasAnyDebt } from '../src/lib/calculations/debtCoach';
+import { resolveTransactionAggregateSpendingAmount, resolveTransactionCashflowAmount } from '../src/lib/calculations/repaymentAccounting';
 import { computeRankedReminder } from '../src/lib/calculations/reminders';
 import { occurrenceKeyOf } from '../src/lib/calculations/reminderInteractionLifecycle';
 import { createSuppressionPredicate, toLocalDateString, addLocalDays } from '../src/lib/calculations/reminderSuppression';
@@ -331,7 +331,46 @@ console.log('\n=== 12. A $0 card is NOT debt, and is still a card (Class A) ==='
   assert('12h. …and no cards, so no action may render', nothing.creditCards.length === 0);
 
   // The engine that decides this is byte-unchanged.
-  assert('12i. computeHasAnyDebt was not modified', execSync('git diff --stat -- src/lib/calculations/debtCoach.ts', { cwd: REPO_ROOT }).toString().trim() === '');
+  // -------------------------------------------------------------------
+  // RECONCILED — Wave 9a checkpoint readiness.
+  //
+  // SUPERSEDED ASSERTION: `12i. computeHasAnyDebt was not modified`, via
+  // `git diff --stat [origin/main] -- debtCoach.ts` returning empty.
+  //
+  // WHY THE GIT BASELINE WAS UNSTABLE: it asserted a relationship to a
+  // MOVING reference rather than a property of the engine. It empties as
+  // soon as the work is committed (working-tree form) or as soon as Wave 9a
+  // is checkpointed into main (origin/main form), at which point it passes
+  // while proving nothing — and it cannot run without a git repo, a
+  // specific history and a fetched remote.
+  //
+  // PRESERVED INTENT: `computeHasAnyDebt` — the predicate that decides
+  // which branch the debt sheet renders, and therefore whether a $0 card is
+  // called debt — still behaves exactly as accepted.
+  //
+  // REPLACEMENT EVIDENCE: run the REAL function over the boundary cases it
+  // must distinguish. Behavioural, hermetic, and strictly stronger than a
+  // byte comparison, which could not have caught a same-length edit.
+  // -------------------------------------------------------------------
+  {
+    const noDebt = createEmptyAppData();
+    assert('12i. empty data is not debt', computeHasAnyDebt(noDebt) === false);
+    const zeroCards = createEmptyAppData();
+    zeroCards.creditCards = [zeroCard('z1'), zeroCard('z2')];
+    assert('12i-i. cards at $0 are not debt', computeHasAnyDebt(zeroCards) === false);
+    const oneCent = createEmptyAppData();
+    oneCent.creditCards = [{ ...zeroCard('z1'), currentBalance: 0.01 }];
+    assert('12i-ii. one cent on a card IS debt', computeHasAnyDebt(oneCent) === true);
+    const zeroLiab = createEmptyAppData();
+    zeroLiab.liabilities = [{ id: 'l', type: 'car_loan', label: 'L', currentBalance: 0 }];
+    assert('12i-iii. a $0 liability is not debt', computeHasAnyDebt(zeroLiab) === false);
+    const liab = createEmptyAppData();
+    liab.liabilities = [{ id: 'l', type: 'car_loan', label: 'L', currentBalance: 1 }];
+    assert('12i-iv. a positive liability IS debt', computeHasAnyDebt(liab) === true);
+    const negative = createEmptyAppData();
+    negative.creditCards = [{ ...zeroCard('z1'), currentBalance: -50 }];
+    assert('12i-v. a card in credit is not debt', computeHasAnyDebt(negative) === false);
+  }
   // RECONCILED — Wave 9a closure, Correction C.
   // OLD CLAUSE: creditHealth.ts AND repaymentAccounting.ts both byte-unchanged.
   // SUPERSEDED for creditHealth.ts ONLY, because inspection proved a separate
@@ -340,7 +379,27 @@ console.log('\n=== 12. A $0 card is NOT debt, and is still a card (Class A) ==='
   // interest on an interest-free card and mislabelling its provenance.
   // PRESERVED INTENT: no FORMULA, threshold or accounting rule may move.
   // Asserted directly below instead of by a byte comparison.
-  assert('12j. repayment accounting is still byte-unchanged', execSync('git diff --stat -- src/lib/calculations/repaymentAccounting.ts', { cwd: REPO_ROOT }).toString().trim() === '');
+  // RECONCILED — same root cause as 12i. SUPERSEDED: `repaymentAccounting
+  // is byte-unchanged` via git diff. PRESERVED INTENT: repayment treatment
+  // keys on the structured `isRepayment` / `isLoanRepayment` flags and NEVER
+  // on `categoryId` — the invariant the whole accounting boundary rests on.
+  // REPLACEMENT EVIDENCE: run the REAL resolvers over a transaction that
+  // carries the debt CATEGORY but is not a repayment, and vice versa.
+  {
+    const d = createEmptyAppData();
+    const base = { id: 't', type: 'expense' as const, amount: 100, date: '2026-09-15' };
+    // Carries cat-debt but is an ordinary expense: must count as spending.
+    const looksLikeDebt = { ...base, categoryId: 'cat-debt' };
+    assert('12j. a cat-debt transaction that is NOT a repayment still counts as spending', resolveTransactionAggregateSpendingAmount(d, looksLikeDebt as never) === 100);
+    assert('12j-i. …and as cashflow', resolveTransactionCashflowAmount(d, looksLikeDebt as never) === 100);
+    // The real marker is the flag, not the category.
+    const realRepayment = { ...base, categoryId: 'cat-debt', isRepayment: true, creditCardId: 'c1' };
+    assert('12j-ii. a flagged repayment is treated differently from the same category', resolveTransactionAggregateSpendingAmount(d, realRepayment as never) !== 100);
+    // An ordinary bill carrying a NON-debt category behaves as ordinary spending.
+    const ordinaryBill = { ...base, categoryId: 'cat-transport' };
+    assert('12j-iii. an ordinary cat-transport bill counts as spending exactly once', resolveTransactionAggregateSpendingAmount(d, ordinaryBill as never) === 100);
+    assert('12j-iv. the category cannot select the accounting path', resolveTransactionAggregateSpendingAmount(d, looksLikeDebt as never) === resolveTransactionAggregateSpendingAmount(d, ordinaryBill as never));
+  }
   const CH = read('src/lib/calculations/creditHealth.ts');
   assert('12j-i. the interest formula is unchanged', CH.includes('const dailyInterest = balanceUsed * (rateUsed / 365);'));
   assert('12j-ii. the cycle projection is unchanged', CH.includes('const estimatedCycleInterest = dailyInterest * cycleDays;'));

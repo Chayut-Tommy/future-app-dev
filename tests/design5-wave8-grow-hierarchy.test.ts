@@ -158,9 +158,42 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
     'src/components/discover/ExploreCategorySection.tsx',
     'src/components/discover/FutureYouCard.tsx',
   ];
+  // -------------------------------------------------------------------
+  // RECONCILED — Wave 9a checkpoint readiness.
+  //
+  // SUPERSEDED ASSERTION: `5i. <file> is byte-unchanged`, implemented as
+  // `git diff --stat [origin/main] -- <file>` returning empty.
+  //
+  // WHY THE GIT BASELINE WAS UNSTABLE: a diff proves nothing about the code
+  // under test — only about this checkout's relationship to a reference
+  // that MOVES. Against the working tree it goes empty the moment the work
+  // is committed; against `origin/main` it goes empty the moment Wave 9a is
+  // checkpointed INTO main. Either way the assertion stops failing because
+  // it stopped asking anything, which is worse than deleting it: it reads
+  // green while proving nothing. It also needs a git repo, a specific
+  // history and a fetched remote to run at all.
+  //
+  // PRESERVED INTENT: the opportunity/market components Wave 8 unwired must
+  // still EXIST and must still be UNWIRED — retained for the future
+  // AI-agent workstream, not quietly deleted and not quietly re-mounted.
+  //
+  // REPLACEMENT EVIDENCE: assert both halves directly against the source
+  // currently under test — the file exists, still exports its component,
+  // and no Grow surface imports or renders it. Hermetic: no git, no remote,
+  // no history.
+  // -------------------------------------------------------------------
+  const RETAINED_EXPORT: Readonly<Record<string, string>> = {
+    'src/components/discover/MoneyOpportunitiesHero.tsx': 'MoneyOpportunitiesHero',
+    'src/components/health/OpportunityCard.tsx': 'OpportunityCard',
+    'src/components/discover/MarketPulsePreview.tsx': 'MarketPulsePreview',
+    'src/components/discover/ExploreCategorySection.tsx': 'ExploreCategorySection',
+    'src/components/discover/FutureYouCard.tsx': 'FutureYouCard',
+  };
   for (const rel of RETAINED) {
-    assert(`5h. ${rel.split('/').pop()} is retained`, fs.existsSync(path.join(ROOT, rel)));
-    assert(`5i. ${rel.split('/').pop()} is byte-unchanged`, execSync(`git diff --stat -- ${rel}`, { cwd: ROOT }).toString().trim() === '');
+    const name = RETAINED_EXPORT[rel];
+    assert(`5h. ${rel.split('/').pop()} is retained on disk`, fs.existsSync(path.join(ROOT, rel)));
+    assert(`5i. ${rel.split('/').pop()} still exports ${name}`, new RegExp(`export function ${name}\\b`).test(read(rel)));
+    assert(`5i-unwired. ${rel.split('/').pop()} is not imported by Grow`, !new RegExp(`\\b${name}\\b`).test(GROW_RAW));
   }
 
   // -------------------------------------------------------------------
@@ -186,8 +219,18 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
   // -------------------------------------------------------------------
   const DEBT_SHEET = 'src/components/debt/DebtCoachSheet.tsx';
   const DEBT_RAW = read(DEBT_SHEET);
+  const DEBT_SHEET_CODE = DEBT_RAW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   assert('5i-a. DebtCoachSheet.tsx is retained', fs.existsSync(path.join(ROOT, DEBT_SHEET)));
-  assert('5i-b. its own engine is still byte-unchanged', execSync('git diff --stat -- src/lib/calculations/debtCoach.ts', { cwd: ROOT }).toString().trim() === '');
+  // RECONCILED (same root cause as 5i above): `git diff --stat` on
+  // debtCoach.ts proved only a moving git relationship. PRESERVED INTENT —
+  // the debt engine's own rules are unchanged — is now asserted against the
+  // engine's actual invariants.
+  const DEBT_ENGINE = read('src/lib/calculations/debtCoach.ts');
+  assert('5i-b. the engine still makes ONE pass over liabilities (no card double-count)', /for \(const l of data\.liabilities\)/.test(DEBT_ENGINE) && !/for \(const c of data\.creditCards\)/.test(DEBT_ENGINE));
+  assert('5i-b-i. zero-balance liabilities are still skipped', DEBT_ENGINE.includes('if (l.currentBalance <= 0) continue;'));
+  assert('5i-b-ii. the credit-card discriminator is still structural', DEBT_ENGINE.includes("kind: linkedCard ? 'credit_card' : l.type"));
+  assert('5i-b-iii. hasAnyDebt still spans liabilities AND cards', DEBT_ENGINE.includes('data.liabilities.some((l) => l.currentBalance > 0) || data.creditCards.some((c) => c.currentBalance > 0)'));
+  assert('5i-b-iv. the BNPL repayment cap is still applied', DEBT_ENGINE.includes('Math.min(toMonthlyAmount(linkedRecurringItem.amount, linkedRecurringItem.frequency), l.currentBalance)'));
   // The coaching surface Wave 8 retained is all still there, verbatim.
   for (const kept of [
     'Your debt overview',
@@ -203,31 +246,35 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
   ]) {
     assert(`5i-c. coaching content retained: ${kept}`, DEBT_RAW.includes(kept));
   }
-  // Nothing was REMOVED to make room for the action: the diff deletes only
-  // the two lines the addition necessarily rewrites (the React import, and
-  // the memo dependency array that now also depends on locale).
-  const deletions = execSync(`git diff -U0 -- ${DEBT_SHEET}`, { cwd: ROOT })
-    .toString()
-    .split('\n')
-    .filter((l) => l.startsWith('-') && !l.startsWith('---'));
-  // RECONCILED — Wave 9a closure, Correction B. The count was 2 (the React
-  // import and the memo dependency array). Correction B additionally
-  // replaces one line of COPY — "…can show real payoff scenarios here." —
-  // which overstated what the recorded inputs support. PRESERVED INTENT:
-  // nothing is removed to make room; every deletion must still be one this
-  // correction is authorised to make, and each is named individually.
-  // The retired claim was a three-line <Text> element, so 2 + 3 = 5.
-  assert('5i-d. every deletion is a named, authorised rewrite', deletions.length === 5);
-  assert('5i-e. …the React import', deletions.some((l) => l.includes("from 'react'")));
-  assert('5i-f. …the memo dependency array', deletions.some((l) => l.includes('insets.bottom]')));
-  assert('5i-f-i. …and the retired "real payoff scenarios" claim', deletions.some((l) => l.includes('real payoff scenarios')));
-  assert('5i-f-ii. no coaching or debt content was deleted', !deletions.some((l) => /payoffAcceleration|highestInterestDebt|debtToIncomeRatio|no debt/.test(l)));
+  // RECONCILED — same root cause as 5i. The superseded assertion counted
+  // DELETED LINES in `git diff -U0 [origin/main] -- DebtCoachSheet.tsx` and
+  // required each deletion to be a named, authorised rewrite. That count is
+  // a property of a git range, not of the file: it reads 5 mid-wave, 0 once
+  // checkpointed, and is meaningless in a fresh clone.
+  //
+  // PRESERVED INTENT: nothing was removed to make room for the Cards route
+  // — the debt-coach behaviour Wave 8 retained must all still be there, and
+  // the only copy that left must be the claim Correction B retired.
+  //
+  // REPLACEMENT EVIDENCE: the coaching content is asserted present above
+  // (5i-c, ten strings). Here we assert the retired claim is gone, its
+  // approved replacement is present, and the no-debt branch survives intact
+  // — all read from the file under test.
+  assert('5i-d. the retired "real payoff scenarios" claim is gone', !DEBT_SHEET_CODE.includes('real payoff scenarios'));
+  assert('5i-e. its approved replacement is rendered from the shared constant', DEBT_RAW.includes('DEBT_SCENARIO_PROMPT'));
+  assert('5i-f. the no-debt branch survives intact', ["Let's understand your debt first", 'Do you currently have any debt?', 'I have no debt', 'handleNoDebt'].every((k) => DEBT_RAW.includes(k)));
+  assert('5i-f-i. every debt-type option the customer could pick is still offered', ['credit_card', 'mortgage', 'car_loan', 'personal_loan'].every((t) => DEBT_RAW.includes(`type: '${t}'`)));
+  assert('5i-f-ii. the educational disclosure still sits with the numbers', DEBT_RAW.includes('Educational estimate only.'));
   // And the addition is exactly one outbound route, to Cards.
-  const DEBT_CODE = DEBT_RAW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  assert('5i-g. exactly one navigate call was added', (DEBT_CODE.match(/navigation\.navigate\(/g) ?? []).length === 1);
-  assert('5i-h. and its destination is Cards', /navigation\.navigate\('Cards'\)/.test(DEBT_CODE));
+  assert('5i-g. exactly one navigate call was added', (DEBT_SHEET_CODE.match(/navigation\.navigate\(/g) ?? []).length === 1);
+  assert('5i-h. and its destination is Cards', /navigation\.navigate\('Cards'\)/.test(DEBT_SHEET_CODE));
   assert('5i-i. no opportunity or Nolie Pick wiring was introduced here', !/MoneyOpportunit|OpportunityCard|getUnlockStatus|Nolie Pick/.test(DEBT_RAW));
-  assert('5j. the opportunity engine itself is untouched', execSync('git diff --stat -- src/lib/calculations/moneyOpportunities.ts', { cwd: ROOT }).toString().trim() === '');
+  // RECONCILED (same root cause as 5i). PRESERVED INTENT: the opportunity
+  // engine is retained for the future workstream and is not called by Grow.
+  const OPP = read('src/lib/calculations/moneyOpportunities.ts');
+  assert('5j. the opportunity engine is retained with its API intact', /export function computeMoneyOpportunities\(data: AppData\): MoneyOpportunity\[\]/.test(OPP));
+  assert('5j-i. and its action union is unchanged', OPP.includes("export type MoneyOpportunityAction = 'compare_savings' | 'open_money' | 'open_investing_path' | 'debt_coach' | 'add_cash';"));
+  assert('5j-ii. Grow still does not call it', !/computeMoneyOpportunities/.test(GROW_RAW));
   assert('5k. and DebtCoachSheet stays reachable from Money, so nothing is stranded', /DebtCoachSheet/.test(read('src/screens/money/MoneyScreen.tsx')));
 }
 
@@ -260,7 +307,18 @@ console.log('\n=== 7. Tools — exactly four, on existing routes (Class A + C) =
   assert('7k. one column at 320pt', toolGridColumns(320, 1) === 1);
   assert('7l. and at large Dynamic Type, at every width', [320, 375, 390, 430].every((w) => toolGridColumns(w, 1.3) === 1 && toolGridColumns(w, 2) === 1));
   assert('7m. labels wrap rather than truncate', !/toolLabel[\s\S]{0,160}numberOfLines/.test(GROW));
-  assert('7n. calculator engines are untouched', ['compoundCalculator', 'homeLoanCalculator', 'emergencyFund'].every((e) => execSync(`git diff --stat -- src/lib/calculations/${e}.ts`, { cwd: ROOT }).toString().trim() === ''));
+  // RECONCILED — Wave 9a checkpoint readiness. SUPERSEDED: `git diff --stat
+  // -- <engine>` returning empty. WHY UNSTABLE: that compares the working
+  // tree to HEAD, so it empties — and silently stops asserting anything —
+  // the moment the wave is committed. PRESERVED INTENT: Grow's tool tiles
+  // are presentation only and must not have moved calculator maths into
+  // themselves, and each engine keeps its own formula.
+  assert('7n. the calculator engines keep their own formulas', [
+    ['compoundCalculator', 'Math.pow'],
+    ['homeLoanCalculator', 'Math.pow'],
+    ['emergencyFund', 'monthsCovered'],
+  ].every(([e, marker]) => read(`src/lib/calculations/${e}.ts`).includes(marker as string)));
+  assert('7n-i. and Grow reproduces none of that maths', !/Math\.pow|monthsCovered|amortis/i.test(GROW));
 }
 
 console.log('\n=== 8. Goals, Journey and Learn keep their sources (Class C) ===');
@@ -285,16 +343,18 @@ console.log('\n=== 8. Goals, Journey and Learn keep their sources (Class C) ==='
   // and it floated over Today's own scrolling content. PRESERVED INTENT:
   // Today's Score FOOTNOTE is what must not change. Asserted directly, and
   // the only Today diff is the gear's removal.
-  assert('8l. Today\'s own Score footnote is untouched', (() => {
-    const diff = execSync('git diff -- src/screens/today/TodayScreen.tsx', { cwd: ROOT }).toString();
-    const removed = diff.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---'));
-    return !/scoreChipPresentation|ScoreChip|luluScore/.test(removed.join('\n'));
-  })());
-  assert('8l-i. nothing financial, Score or Briefing was removed from Today', (() => {
-    const diff = execSync('git diff -- src/screens/today/TodayScreen.tsx', { cwd: ROOT }).toString();
-    const removed = diff.split('\n').filter((l) => l.startsWith('-') && !l.startsWith('---'));
-    return !/Score|Briefing|Reminder|safeToSpend|luluScore|compute[A-Z]|Journey|Goal|Month/.test(removed.join('\n'));
-  })());
+  // RECONCILED — Wave 9a checkpoint readiness. SUPERSEDED: both clauses
+  // inspected the REMOVED lines of `git diff -- TodayScreen.tsx`. WHY
+  // UNSTABLE: the diff is against HEAD, so once the wave is committed there
+  // are no removed lines at all and both assertions pass while proving
+  // nothing — and neither can run in a fresh clone. PRESERVED INTENT:
+  // Today's Score footnote and its financial/Briefing surfaces must still
+  // be present, and only the duplicate Settings gear may have gone.
+  // REPLACEMENT EVIDENCE: assert those surfaces are PRESENT in the file
+  // under test, which is what "not removed" actually means.
+  const TODAY = read('src/screens/today/TodayScreen.tsx');
+  assert('8l. Today still renders its Score surface', /scoreChipPresentation|ScoreChip/.test(TODAY));
+  assert('8l-i. and its financial/Briefing surfaces are all still present', ['Briefing', 'Reminder', 'safeToSpend'].every((k) => TODAY.includes(k)));
   assert('8l-ii. and Today\'s duplicate Settings control is genuinely gone', !/floatingSettings|SETTINGS_CONTROL_SIZE/.test(read('src/screens/today/TodayScreen.tsx')));
   assert('8l-iii. leaving exactly ONE Settings trigger in the app', (() => {
     const screens = execSync("grep -rl \"navigate('Settings')\" src --include=*.tsx || true", { cwd: ROOT }).toString().trim().split('\n').filter(Boolean);
