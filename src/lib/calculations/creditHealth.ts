@@ -13,8 +13,28 @@ export type Tone = 'success' | 'warning' | 'danger' | 'neutral';
 // assumption rather than presented as the user's real rate.
 export const ASSUMED_CREDIT_CARD_APR = 0.195;
 
+/**
+ * Wave 9a closure, Correction C — SEPARATE DEFECT, corrected here rather
+ * than worked around in a component.
+ *
+ * This previously tested `card.apr > 0`, so a customer who recorded 0% —
+ * a real answer on an interest-free or promotional card — was silently
+ * given the 19.5% ASSUMPTION and told it was assumed. The estimate was both
+ * numerically wrong (non-zero interest on a 0% card) and provenance-wrong.
+ *
+ * The FORMULA is unchanged. Only the question "did the customer record a
+ * rate?" is answered correctly: any finite, non-negative number is a
+ * recorded rate. A negative or non-finite value is neither recorded nor
+ * assumable — callers must present no estimate rather than a fabricated one
+ * (see `resolveInterestRate` in lib/creditCardPresentation.ts, which is the
+ * shared resolver every surface reads).
+ */
+export function isRecordedAnnualRate(rate: number | undefined | null): rate is number {
+  return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0;
+}
+
 export function effectiveApr(card: CreditCard): { rate: number; isAssumed: boolean } {
-  return typeof card.apr === 'number' && card.apr > 0 ? { rate: card.apr, isAssumed: false } : { rate: ASSUMED_CREDIT_CARD_APR, isAssumed: true };
+  return isRecordedAnnualRate(card.apr) ? { rate: card.apr, isAssumed: false } : { rate: ASSUMED_CREDIT_CARD_APR, isAssumed: true };
 }
 
 // Utilisation is a behavioural/status metric, not a time-sensitive one — per
@@ -245,6 +265,10 @@ export interface CreditCardInsight {
   text: string;
   tone: Tone;
   usingAssumedApr: boolean;
+  /** Wave 9a closure, Correction C — the second visible line stating where
+   * the rate came from plus the short issuer qualification. Null when the
+   * insight carries no interest illustration (a pure utilisation row). */
+  sourceLine?: string | null;
 }
 
 export interface CreditCardInterestEstimateInput {
@@ -290,7 +314,10 @@ export interface CreditCardInterestEstimate {
  */
 export function computeCreditCardInterestEstimate(input: CreditCardInterestEstimateInput): CreditCardInterestEstimate {
   const fallbackAnnualRate = input.fallbackAnnualRate ?? ASSUMED_CREDIT_CARD_APR;
-  const isAssumedRate = !(typeof input.annualRate === 'number' && input.annualRate > 0);
+  // Wave 9a closure, Correction C — see isRecordedAnnualRate above. A
+  // recorded 0% is a recorded rate, not a missing one; the formula below is
+  // unchanged.
+  const isAssumedRate = !isRecordedAnnualRate(input.annualRate);
   const rateUsed = isAssumedRate ? fallbackAnnualRate : (input.annualRate as number);
   const balanceSource: 'statement' | 'current' = typeof input.statementBalance === 'number' && input.statementBalance > 0 ? 'statement' : 'current';
   const balanceUsed = balanceSource === 'statement' ? (input.statementBalance as number) : input.balance;
@@ -327,15 +354,27 @@ export function creditCardLiabilityInsight(card: CreditCard, today: Date = new D
   if (days <= 7 && card.currentBalance > 0) {
     const due = dueDateStatus(days);
     const est = computeCreditCardInterestEstimateForCard(card, today);
-    const interestText =
-      est.estimatedCycleInterest >= 1 ? ` ~$${Math.round(est.estimatedCycleInterest).toLocaleString()} interest over 30 days if unpaid.` : '';
-    return { text: `${due.label}.${interestText}`, tone: due.tone, usingAssumedApr: est.isAssumedRate && est.estimatedCycleInterest >= 1 };
+    // Wave 9a closure, Correction C — two visible lines. Line 1 says what
+    // the number IS (an estimate, over a fixed window, on the recorded
+    // balance if it stayed unpaid); line 2 says where the rate CAME FROM.
+    // Never a penalty, a charge, a forecast, or the issuer's own figure.
+    const showsInterest = est.estimatedCycleInterest >= 1;
+    const interestText = showsInterest
+      ? ` · estimated ~$${Math.round(est.estimatedCycleInterest).toLocaleString()} interest over ${est.cycleDays} days if the recorded balance stayed unpaid`
+      : '';
+    const rate = `${Number.isInteger(est.rateUsed * 100) ? est.rateUsed * 100 : Math.round(est.rateUsed * 10000) / 100}%`;
+    const sourceLine = showsInterest
+      ? est.isAssumedRate
+        ? `Using an assumed ${rate} p.a. · issuer terms may differ`
+        : `Using your recorded ${rate} p.a. · issuer terms may differ`
+      : null;
+    return { text: `${due.label}${interestText}`, tone: due.tone, usingAssumedApr: est.isAssumedRate && showsInterest, sourceLine };
   }
   if (card.creditLimit > 0) {
     const util = card.currentBalance / card.creditLimit;
     if (util > 0.3) {
       const status = utilisationStatus(util);
-      return { text: `${Math.round(util * 100)}% used`, tone: status.tone, usingAssumedApr: false };
+      return { text: `${Math.round(util * 100)}% used`, tone: status.tone, usingAssumedApr: false, sourceLine: null };
     }
   }
   return null;

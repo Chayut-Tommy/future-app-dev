@@ -57,8 +57,18 @@ export interface RecurringItem {
   nextDueDate: string; // ISO date
   isFixed: boolean;
   active: boolean;
-  /** Ionicons name, chosen from a small bill-type preset — purely visual. */
+  /** Ionicons name, chosen from a small bill-type preset — purely visual.
+   * NEVER read as a category: see `categoryId` below, which exists because
+   * this field was the only trace a bill's purpose left behind. */
   icon?: string;
+  /** Wave 9a-D — the canonical expense `Category.id` this bill's purpose
+   * means (e.g. 'cat-rent'), persisted from the customer's own bill-type
+   * choice. ADDITIVE AND OPTIONAL: bills saved before this field existed
+   * simply do not have it, load unchanged, and resolve to
+   * 'cat-other-expense' through the explicit fallback in
+   * calculations/billCategory.ts until the customer picks a type and saves.
+   * A leftover `icon` is never promoted into this field on their behalf. */
+  categoryId?: string;
   /** Present when this bill was auto-created by the smart loan flow (a
    * mortgage/car/personal loan repayment) — the foundation for future Lulu
    * intelligence that understands this expense also reduces a liability

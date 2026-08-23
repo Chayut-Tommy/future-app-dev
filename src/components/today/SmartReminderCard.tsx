@@ -844,6 +844,13 @@ export function SmartReminderCard({
         cycleDays: estimate.cycleDays,
       }),
       provenance: cardReminderRateProvenance(estimate.rateUsed, estimate.isAssumedRate),
+      // Wave 9a closure, Correction C — a material assumption must never be
+      // sight-only. The composed label carries the amount, the RATE SOURCE
+      // and the issuer qualification together, so VoiceOver reads them as
+      // one statement rather than three unrelated fragments.
+      estimateAccessibilityLabel: `Illustrative interest over ${estimate.cycleDays} days if the recorded balance stayed unpaid. ~$${Math.round(
+        estimate.estimatedCycleInterest
+      ).toLocaleString()}. ${cardReminderRateProvenance(estimate.rateUsed, estimate.isAssumedRate)} ${CARD_REMINDER_CAUTION}`,
     };
   }, [reminder, reminderCard]);
 
@@ -946,7 +953,12 @@ export function SmartReminderCard({
                estimate came from. */
             <View style={styles.factList}>
               {cardFacts.facts.map((fact) => (
-                <View key={fact.label} style={styles.factRow}>
+                <View
+                  key={fact.label}
+                  style={styles.factRow}
+                  accessible={fact.estimated ? true : undefined}
+                  accessibilityLabel={fact.estimated ? cardFacts.estimateAccessibilityLabel : undefined}
+                >
                   <Text style={styles.factLabel} numberOfLines={2}>{fact.label}</Text>
                   <Text style={[styles.factValue, fact.estimated ? styles.factValueEstimated : null]}>{fact.value}</Text>
                 </View>

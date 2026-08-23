@@ -27,11 +27,24 @@
 // Run with: npx tsx tests/everyday-account-phantom-credit-correction.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { applyNewTransaction, applyTransactionUpdate, applyTransactionDelete } from '../src/state/AppStateContext';
 import { computeSafeToSpend } from '../src/lib/calculations/safeToSpend';
 import { computeMoneyPlan } from '../src/lib/calculations/moneyPlan';
 import type { AppData, Asset } from '../src/types/models';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -41,8 +54,8 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const APP_STATE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/state/AppStateContext.tsx', 'utf-8');
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
+const APP_STATE_SRC = readFileSync(srcPath('src/state/AppStateContext.tsx'), 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
 
 function baseData(cash: number, everyday: number): AppData {
   const data = createEmptyAppData();
@@ -260,7 +273,7 @@ console.log('\n=== 11. Money Plan $2,000 reconciliation — the authorized scena
   assert('11j. Available Until Payday correctly drops to exactly $950 once', stsAfter.cycleRemainingPool === 950);
   assert(
     '11k. CONCLUSION: the $2,000 in the prior report came from an undisclosed test-fixture monthlyIncome the prior report added for a different purpose, not from double-counting the $1,000 in assets — Money Plan.available never reads asset balances at all, only monthlyIncome/fixedCosts/goals/savings',
-    !/available:.*=.*includedMoneyBalance/.test(readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/moneyPlan.ts', 'utf-8'))
+    !/available:.*=.*includedMoneyBalance/.test(readFileSync(srcPath('src/lib/calculations/moneyPlan.ts'), 'utf-8'))
   );
 }
 

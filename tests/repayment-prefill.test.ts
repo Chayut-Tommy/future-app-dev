@@ -56,6 +56,19 @@
 // Run with: npx tsx tests/repayment-prefill.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -65,7 +78,7 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const WEALTH_MODAL_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
+const WEALTH_MODAL_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
 
 // ---------------------------------------------------------------------
 // Mirrored production logic (verbatim copy of the findLinkedRepayment /

@@ -47,6 +47,7 @@
 // Run with: npx tsx tests/everyday-account.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { applyNewTransaction } from '../src/state/AppStateContext';
 import {
@@ -63,6 +64,18 @@ import { parseMoneyInput, parseMoneyInputAllowZero } from '../src/lib/calculatio
 import { LIQUID_BALANCE_TYPES, isEligibleLiquidBalance } from '../src/lib/calculations/moveMoneyEligibility';
 import type { AppData, Asset } from '../src/types/models';
 
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
+
 let failures = 0;
 let total = 0;
 function assert(label: string, pass: boolean) {
@@ -71,14 +84,14 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
-const SHEET_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const WEALTH_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/wealth/WealthScreen.tsx', 'utf-8');
-const SELECT_BALANCES_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/SelectBalancesSheet.tsx', 'utf-8');
-const TRANSFER_FORM_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferForm.tsx', 'utf-8');
-const APP_STATE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/state/AppStateContext.tsx', 'utf-8');
-const STORAGE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/storage.ts', 'utf-8');
-const MODELS_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/types/models.ts', 'utf-8');
+const WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
+const SHEET_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const WEALTH_SCREEN_SRC = readFileSync(srcPath('src/screens/wealth/WealthScreen.tsx'), 'utf-8');
+const SELECT_BALANCES_SRC = readFileSync(srcPath('src/components/money/SelectBalancesSheet.tsx'), 'utf-8');
+const TRANSFER_FORM_SRC = readFileSync(srcPath('src/components/wealth/TransferForm.tsx'), 'utf-8');
+const APP_STATE_SRC = readFileSync(srcPath('src/state/AppStateContext.tsx'), 'utf-8');
+const STORAGE_SRC = readFileSync(srcPath('src/lib/storage.ts'), 'utf-8');
+const MODELS_SRC = readFileSync(srcPath('src/types/models.ts'), 'utf-8');
 
 function everydayAsset(patch: Partial<Asset> = {}): Asset {
   return { id: 'everyday-1', type: 'everyday', label: 'Main everyday account', currentValue: 900, ...patch };
@@ -339,7 +352,7 @@ console.log('\n=== 25. Existing Nolie Score, achievements, milestones and opport
   assert(
     '25d. structural: DO NOT EXTEND requirement — computeLiquidCash\'s own filter still reads exactly cash/savings, no "everyday" branch was added',
     /export function computeLiquidCash\(assets: Asset\[\]\): number \{\s*\n\s*return assets\.filter\(\(a\) => a\.type === 'cash' \|\| a\.type === 'savings'\)\.reduce/.test(
-      readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/liquidAssets.ts', 'utf-8')
+      readFileSync(srcPath('src/lib/calculations/liquidAssets.ts'), 'utf-8')
     )
   );
 }

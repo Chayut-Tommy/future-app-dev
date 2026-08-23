@@ -36,6 +36,7 @@
 // Run with: npx tsx tests/everyday-account-move-money-and-expense-routing.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData, createAppDataSaver } from '../src/lib/storage';
 import { applyNewTransaction, applyTransactionUpdate, applyTransactionDelete } from '../src/state/AppStateContext';
 import { computeMoneyAvailableBalances } from '../src/lib/calculations/liquidAssets';
@@ -43,6 +44,18 @@ import { computeAccessibleNetWorth } from '../src/lib/calculations/wealthDefinit
 import { computeAchievements } from '../src/lib/calculations/achievements';
 import { listEligibleLiquidBalances, listEligibleLiquidDestinations } from '../src/lib/calculations/moveMoneyEligibility';
 import type { AppData, Asset, Transaction } from '../src/types/models';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -52,8 +65,8 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const TRANSFER_FORM_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferForm.tsx', 'utf-8');
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
+const TRANSFER_FORM_SRC = readFileSync(srcPath('src/components/wealth/TransferForm.tsx'), 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
 
 function everydayAsset(patch: Partial<Asset> = {}): Asset {
   return { id: 'everyday-1', type: 'everyday', label: 'Main everyday account', currentValue: 900, ...patch };

@@ -44,6 +44,19 @@
 // Run with: npx tsx tests/add-anything-sheet-full-workspace.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 // DESIGN 5.1 WAVE 3 — signatures widened, behaviour NOT changed.
 // enterRoute/reselectOrEnter/chooseAssetTile now take an explicit
@@ -64,20 +77,20 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const ADD_ANYTHING_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const FLOATING_ADD_BUTTON_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/FloatingAddButton.tsx', 'utf-8');
-const CONTROLLER_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/addWorkspaceTransitionController.ts', 'utf-8');
-const TRANSFER_FORM_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferForm.tsx', 'utf-8');
-const TRANSFER_MODAL_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferModal.tsx', 'utf-8');
-const ADD_WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
-const ADD_RECURRING_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/AddRecurringItemModal.tsx', 'utf-8');
-const ADD_INCOME_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/income/AddIncomeModal.tsx', 'utf-8');
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
-const ADD_CREDIT_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/credit/AddCreditCardModal.tsx', 'utf-8');
-const ADD_GOAL_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/goals/AddGoalModal.tsx', 'utf-8');
-const TODAY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/today/TodayScreen.tsx', 'utf-8');
-const TRANSACTIONS_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/transactions/TransactionsScreen.tsx', 'utf-8');
-const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
+const ADD_ANYTHING_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const FLOATING_ADD_BUTTON_SRC = readFileSync(srcPath('src/components/navigation/FloatingAddButton.tsx'), 'utf-8');
+const CONTROLLER_SRC = readFileSync(srcPath('src/components/navigation/addWorkspaceTransitionController.ts'), 'utf-8');
+const TRANSFER_FORM_SRC = readFileSync(srcPath('src/components/wealth/TransferForm.tsx'), 'utf-8');
+const TRANSFER_MODAL_SRC = readFileSync(srcPath('src/components/wealth/TransferModal.tsx'), 'utf-8');
+const ADD_WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
+const ADD_RECURRING_SRC = readFileSync(srcPath('src/components/money/AddRecurringItemModal.tsx'), 'utf-8');
+const ADD_INCOME_SRC = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
+const ADD_CREDIT_CARD_SRC = readFileSync(srcPath('src/components/credit/AddCreditCardModal.tsx'), 'utf-8');
+const ADD_GOAL_SRC = readFileSync(srcPath('src/components/goals/AddGoalModal.tsx'), 'utf-8');
+const TODAY_SCREEN_SRC = readFileSync(srcPath('src/screens/today/TodayScreen.tsx'), 'utf-8');
+const TRANSACTIONS_SCREEN_SRC = readFileSync(srcPath('src/screens/transactions/TransactionsScreen.tsx'), 'utf-8');
+const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
 
 console.log('=== 1. The old dismiss-and-defer fallback is fully retired — no tile opens a second Modal (Class C) ===');
 {

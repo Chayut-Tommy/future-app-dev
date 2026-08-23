@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { RecurringItem, PayFrequency, LiabilityType } from '../../types/models';
+import { BillPresetLabel, categoryForBillPreset } from '../../lib/calculations/billCategory';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { parseMoneyInput } from '../../lib/calculations/money';
@@ -29,7 +30,12 @@ import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorksp
 // function"). Icons for Car Loan/Personal Loan match the icons
 // AddWealthItemModal itself already assigns those bill types, so the
 // picker and the eventual bill never visually disagree.
-const BILL_PRESETS: { label: string; icon: keyof typeof Ionicons.glyphMap; handoffLoanType?: LiabilityType }[] = [
+// Wave 9a-D — each preset now carries its SEMANTIC id (the canonical
+// expense category its purpose means) alongside its vector icon. The icon
+// stays decoration; `categoryId` is what classifies a transaction. The
+// mapping itself lives in calculations/billCategory.ts, so this table
+// cannot drift from the one the payment path reads.
+const BILL_PRESETS: { label: BillPresetLabel; icon: keyof typeof Ionicons.glyphMap; handoffLoanType?: LiabilityType }[] = [
   { label: 'Rent', icon: 'home-outline' },
   { label: 'Mortgage', icon: 'home', handoffLoanType: 'mortgage' },
   { label: 'Utilities', icon: 'flash-outline' },
@@ -159,6 +165,12 @@ export const AddRecurringItemModal = forwardRef<
   const { colors, radius, spacing, typography } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('home-outline');
   const [billTypeLabel, setBillTypeLabel] = useState<string | null>(null);
+  // Wave 9a-D — the canonical category this bill will persist. Seeded ONLY
+  // from a value already stored on the item; never derived from the item's
+  // icon, because an old bill's leftover icon is not a category the
+  // customer ever chose. It becomes defined for a legacy bill only when
+  // they explicitly pick a bill type in this session and save.
+  const [billCategoryId, setBillCategoryId] = useState<string | undefined>(undefined);
   const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
   const [frequency, setFrequency] = useState<PayFrequency>('monthly');
@@ -276,6 +288,10 @@ export const AddRecurringItemModal = forwardRef<
     if (editItem) {
       const itemFrequency = editItem.frequency === 'irregular' ? 'monthly' : editItem.frequency;
       setIcon((editItem.icon as keyof typeof Ionicons.glyphMap) ?? 'home-outline');
+      // Stored purpose only. `billTypeLabel` below is still recovered from
+      // the icon for display continuity, but that recovered label must
+      // never become a persisted category on its own.
+      setBillCategoryId(editItem.categoryId);
       setLabel(editItem.label);
       setAmount(String(editItem.amount));
       setFrequency(itemFrequency);
@@ -287,6 +303,7 @@ export const AddRecurringItemModal = forwardRef<
       initialSnapshot.current = { label: editItem.label, amount: String(editItem.amount), frequency: itemFrequency, dayOfMonth: day, nextDueDate: due };
     } else {
       setIcon('home-outline');
+      setBillCategoryId(undefined);
       setLabel('');
       setAmount('');
       setFrequency('monthly');
@@ -366,6 +383,8 @@ export const AddRecurringItemModal = forwardRef<
     }
     setBillTypeLabel(p.label);
     setIcon(p.icon);
+    // The explicit customer choice — the only thing that may set a purpose.
+    setBillCategoryId(categoryForBillPreset(p.label));
     // Unchanged: the preset's name replaces whatever is in the field. This
     // is exactly what the removed page's "Change" round-trip already did.
     setLabel(p.label);
@@ -409,6 +428,10 @@ export const AddRecurringItemModal = forwardRef<
       isFixed: true,
       active: true,
       icon,
+      // Wave 9a-D — undefined for a legacy bill whose type the customer has
+      // not re-chosen, which keeps it on the explicit Other fallback rather
+      // than inventing a purpose for them.
+      categoryId: billCategoryId,
     };
     if (editItem) {
       updateRecurringItem(editItem.id, payload);

@@ -24,7 +24,7 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-import { reminderDaysUntil, resolveReminderStatus } from '../src/lib/reminderPresentation';
+import { reminderDaysUntil, resolveReminderStatus, CARD_REMINDER_CAUTION } from '../src/lib/reminderPresentation';
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -177,10 +177,34 @@ console.log('\n=== 8. The card reminder states facts, not prose (Class C) ===');
   assert('8b. no interest arithmetic is duplicated in the presentation layer', !/\/ 365/.test(PRESENT) && !/\* cycleDays/.test(PRESENT) && !/\/ 365/.test(CODE));
   assert('8c. the expected repayment is NOT called an amount due', !/amount due/i.test(PRESENT) && /'Expected monthly repayment'/.test(PRESENT));
   assert('8d. the balance is labelled as what Nolie recorded, not what the bank says', /'Current recorded balance'/.test(PRESENT));
-  assert('8e. the interest figure is labelled an estimate and marked as one', /'Estimated interest if unpaid'/.test(PRESENT) && /estimated: true/.test(PRESENT));
+  // RECONCILED — Wave 9a closure, Correction C.
+  // OLD CLAUSE: matched the literal label `'Estimated interest if unpaid'`.
+  // SUPERSEDED BECAUSE that label read as an amount the ISSUER would bill.
+  // PRESERVED INTENT: the figure must still be unmistakably an estimate and
+  // still carry the structured `estimated: true` flag — both asserted, now
+  // against the stronger "Illustrative … recorded balance" wording.
+  assert('8e. the interest figure is labelled an estimate and marked as one', /Illustrative interest over \$\{input\.cycleDays\} days if the recorded balance stayed unpaid/.test(PRESENT) && /estimated: true/.test(PRESENT));
   assert('8f. a sub-dollar estimate is suppressed rather than shown as \$0', /estimatedCycleInterest >= 1/.test(PRESENT));
-  assert('8g. the rate provenance says whether the customer supplied it', /isAssumedRate[\s\S]{0,200}assumed rate of/.test(PRESENT) && /your card's rate of/.test(PRESENT));
-  assert('8h. the caution explains the mechanism rather than blaming the customer', /Interest is charged on whatever is left unpaid/.test(PRESENT) && !/you should|you failed|too much debt/i.test(PRESENT));
+  // RECONCILED — Wave 9a closure, Correction C. OLD CLAUSE matched
+  // "assumed rate of" / "your card's rate of". SUPERSEDED because the old
+  // assumed-branch also nudged the customer ("Add your card's rate for a
+  // closer figure"), framing a compliance assumption as their shortcoming.
+  // PRESERVED INTENT — and strengthened: the provenance must still state
+  // WHICH rate was used and whether the customer supplied it, and a
+  // recorded 0% must now read as recorded rather than assumed.
+  assert('8g. the rate provenance says whether the customer supplied it', /isAssumedRate[\s\S]{0,240}assumed annual rate of/.test(PRESENT) && /rate you recorded/.test(PRESENT));
+  // RECONCILED — Wave 9a closure, Correction C. OLD CLAUSE matched
+  // "Interest is charged on whatever is left unpaid. Paying more than the
+  // expected amount reduces it." SUPERSEDED because the first sentence
+  // asserted how the ISSUER charges (which Nolie cannot know) and the
+  // second was behavioural coaching. PRESERVED INTENT: the caution must
+  // still describe the mechanism and must never blame the customer — both
+  // asserted, now against the issuer-terms qualification.
+  // Asserted against the RESOLVED value, not the source text: the caution is
+  // now a re-export of the one shared issuer qualification, so the literal
+  // lives in creditCardPresentation.ts.
+  assert('8h. the caution explains the mechanism rather than blaming the customer', /Your card issuer may calculate interest differently/.test(CARD_REMINDER_CAUTION) && !/you should|you failed|too much debt|Paying more than/i.test(CARD_REMINDER_CAUTION));
+  assert('8h-i. and it names what the illustration excludes', /Interest-free periods, fees, cash-advance rates, compounding/.test(CARD_REMINDER_CAUTION));
   // RECONCILED (Wave 6 polish): the surface no longer renders the engine's
   // prose at all. Its body restated the due date the status pill and the
   // supporting line already carried, and its title prepended "your" to an

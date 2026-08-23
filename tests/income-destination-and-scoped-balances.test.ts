@@ -41,6 +41,7 @@
 // Run with: npx tsx tests/income-destination-and-scoped-balances.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { resolveEligibleIncomeDestinations, resolveIncomeDestinationAsset } from '../src/lib/calculations/incomeDestinations';
 import { resolveIncludeInMoneyCalculations, computeMoneyAvailableBalances, listMoneyAvailableAccounts } from '../src/lib/calculations/liquidAssets';
@@ -54,6 +55,18 @@ import {
   MidCycleIncomeOccurrenceChoice,
 } from '../src/state/AppStateContext';
 import type { AppData, Asset, RecurringItem } from '../src/types/models';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -91,13 +104,13 @@ function incomeItem(patch: Partial<RecurringItem> = {}): RecurringItem {
   };
 }
 
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
-const ADD_ANYTHING_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const SAFE_TO_SPEND_HERO_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/SafeToSpendHero.tsx', 'utf-8');
-const SELECT_BALANCES_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/SelectBalancesSheet.tsx', 'utf-8');
-const TRANSACTIONS_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/transactions/TransactionsScreen.tsx', 'utf-8');
-const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
-const SMART_REMINDER_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/today/SmartReminderCard.tsx', 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
+const ADD_ANYTHING_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const SAFE_TO_SPEND_HERO_SRC = readFileSync(srcPath('src/components/money/SafeToSpendHero.tsx'), 'utf-8');
+const SELECT_BALANCES_SRC = readFileSync(srcPath('src/components/money/SelectBalancesSheet.tsx'), 'utf-8');
+const TRANSACTIONS_SCREEN_SRC = readFileSync(srcPath('src/screens/transactions/TransactionsScreen.tsx'), 'utf-8');
+const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
+const SMART_REMINDER_SRC = readFileSync(srcPath('src/components/today/SmartReminderCard.tsx'), 'utf-8');
 
 // ============================================================================
 // Section 1 — resolveEligibleIncomeDestinations / resolveIncomeDestinationAsset
@@ -856,7 +869,7 @@ console.log('\n=== Section 8: AddAnythingSheet.tsx — scoped balance-only choos
 // ============================================================================
 console.log('\n=== Section 9: AddWealthItemModal.tsx — forcedIncludeInMoneyDefault (structural) ===');
 {
-  const WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
+  const WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
   assert(
     'forcedIncludeInMoneyDefault is a real, typed, optional prop',
     /forcedIncludeInMoneyDefault\?: boolean;/.test(WEALTH_SRC)
@@ -948,7 +961,7 @@ console.log('\n=== Section 11: SafeToSpendHero.tsx — Manage balances control (
 // ============================================================================
 console.log('\n=== Section 12: setup-reconciliation dataRef fix — counter-proof + real proof (real import) ===');
 {
-  const APP_STATE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/state/AppStateContext.tsx', 'utf-8');
+  const APP_STATE_SRC = readFileSync(srcPath('src/state/AppStateContext.tsx'), 'utf-8');
 
   assert(
     'Structural: addRecurringIncomeWithMidCycleOccurrence now reads dataRef.current, not the closed-over `data` — the exact fix for the pre-correction double-tap gap',
@@ -1188,7 +1201,7 @@ console.log('\n=== Section 14: reconciliation branches A-E — 10 Aug / 4 Sept s
   // are reproduced here and the wiring is proven structurally — no new
   // transaction/balance mutation logic exists in this branch at all.
   {
-    const ADD_INCOME_SRC_LOCAL = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/income/AddIncomeModal.tsx', 'utf-8');
+    const ADD_INCOME_SRC_LOCAL = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
     assert(
       'Branch C/D wiring: chooseMidCycleNoOccurrence calls the REAL addRecurringItem action, never a bespoke mutation',
       /function chooseMidCycleNoOccurrence\(\) \{[\s\S]{0,200}addRecurringItem\(midCyclePayload\);/.test(ADD_INCOME_SRC_LOCAL)
@@ -1239,7 +1252,7 @@ console.log('\n=== Section 15: destination identity and reversal (real import) =
 
   assert(
     'Destination identity is the asset\'s stable id (targetAssetId), never its label — models.ts documents this',
-    /targetAssetId/.test(readFileSync('/Users/tommy/Claude/Lulu/app/src/types/models.ts', 'utf-8'))
+    /targetAssetId/.test(readFileSync(srcPath('src/types/models.ts'), 'utf-8'))
   );
 
   // The controlled numerical example, full lifecycle: confirm -> Main
@@ -1319,7 +1332,7 @@ console.log('\n=== Section 15: destination identity and reversal (real import) =
 // ============================================================================
 console.log('\n=== Section 16: no-eligible-destination recovery journey (structural) ===');
 {
-  const ADD_INCOME_SRC_LOCAL = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/income/AddIncomeModal.tsx', 'utf-8');
+  const ADD_INCOME_SRC_LOCAL = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
   assert(
     'AddIncomeModal.tsx: the Add Balance overlay is scoped via onlyLiquidCategories — never the full unrestricted asset chooser',
     /<AddWealthItemModal visible=\{addBalanceVisible\} kind="asset" onClose=\{\(\) => setAddBalanceVisible\(false\)\} onlyLiquidCategories \/>/.test(ADD_INCOME_SRC_LOCAL)
@@ -1366,7 +1379,7 @@ console.log('\n=== Section 16: no-eligible-destination recovery journey (structu
   // existing LIQUID_BALANCE_TYPES list already used elsewhere in the file
   // for the analogous presetAssetType-driven chip filter — never a second,
   // hand-maintained liquid-types list).
-  const WEALTH_SRC_LOCAL = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
+  const WEALTH_SRC_LOCAL = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
   assert(
     'AddWealthItemModal.tsx: onlyLiquidCategories is a real, typed, optional prop',
     /onlyLiquidCategories\?: boolean;/.test(WEALTH_SRC_LOCAL)
