@@ -110,6 +110,41 @@ console.log('=== 2. Engine fixtures — byte-identical outcomes (Class A) ===');
   // CAPTURED before the Wave 9a presentation change (see the Wave 9a
   // report §8). Asserted with exact equality: same engine, same input,
   // same double, same rounding.
+  //
+  // ---------------------------------------------------------------------
+  // RECONCILED — Wave 9a closure, Correction B (monetary totals only).
+  //
+  // OLD CLAUSE: `2a` compared `futureValue` and `totalGrowth` with `===`
+  // against the captured doubles.
+  //
+  // SUPERSEDED BECAUSE those two fixtures failed on the owner's x86_64 Mac
+  // while compoundCalculator.ts was byte-identical to origin/main
+  // (sha256 5b83634c…, verified worktree = HEAD = origin/main). The
+  // captured doubles came from the remote container; `Math.pow` is not
+  // required by IEEE-754 to be correctly rounded, so its last bit is
+  // legitimately platform-dependent. Measured divergence was 1.6–1.8 ULP
+  // (relative 4.0e-16 and 3.6e-16) — below a cent by ten orders of
+  // magnitude, and identical once rounded:
+  //     weekly $10 / 5% / 10y   captured 6742.582547117058
+  //                             x86_64   6742.582547117061   → both $6,742.58
+  //     $1M +$5k/mo / 8% / 40y  captured 41728424.69930172
+  //                             x86_64   41728424.699301735  → both $41,728,424.70
+  //
+  // PRESERVED INTENT: the fixture still pins the engine to an exact
+  // captured outcome — no input changed, no engine changed, no expected
+  // customer-visible value changed, and NO broad tolerance introduced.
+  // REPLACEMENT: the two monetary totals are compared as integer cents,
+  // which is the precision the product actually renders and settles in.
+  // `totalContributed` is an exact sum of exact inputs with no transcendental
+  // in its path, so it stays `===`. §2b (home loan) is untouched: it passes
+  // exactly on this machine, and this correction is scoped to the two
+  // assertions that genuinely failed.
+  //
+  // A one-cent difference must still fail — proven by the negative controls
+  // in §2a-neg below, at both the $6.7k and the $41.7M magnitude.
+  // ---------------------------------------------------------------------
+  /** Integer cents. The unit the product displays and reconciles in. */
+  const toCents = (n: number) => Math.round(n * 100);
   const compoundFixtures: { input: { initial: number; contribution: number; frequency: ContributionFrequency; annualRatePct: number; years: number }; fv: number; contributed: number; growth: number }[] = [
     { input: { initial: 0, contribution: 10, frequency: 'weekly', annualRatePct: 5, years: 10 }, fv: 6742.582547117058, contributed: 5200, growth: 1542.5825471170583 },
     { input: { initial: 1000, contribution: 50, frequency: 'monthly', annualRatePct: 0, years: 5 }, fv: 4000, contributed: 4000, growth: 0 },
@@ -120,7 +155,27 @@ console.log('=== 2. Engine fixtures — byte-identical outcomes (Class A) ===');
   ];
   for (const f of compoundFixtures) {
     const r = computeCompoundGrowth(f.input);
-    assert(`2a. compound ${JSON.stringify(f.input)} → exact captured outcome`, r.futureValue === f.fv && r.totalContributed === f.contributed && r.totalGrowth === f.growth);
+    assert(
+      `2a. compound ${JSON.stringify(f.input)} → captured outcome, to the cent`,
+      toCents(r.futureValue) === toCents(f.fv) && r.totalContributed === f.contributed && toCents(r.totalGrowth) === toCents(f.growth)
+    );
+  }
+
+  // Negative controls for the cent-normalised comparison above. These prove
+  // the comparator is a CENT comparison, not a loose tolerance: one cent
+  // added to the real engine output must break it, including at the largest
+  // magnitude in the fixture set where the ULP gap is widest.
+  {
+    const small = computeCompoundGrowth(compoundFixtures[0].input);
+    const big = computeCompoundGrowth(compoundFixtures[5].input);
+    assert('2a-neg. one cent on a $6.7k total is rejected', toCents(small.futureValue + 0.01) !== toCents(small.futureValue));
+    assert('2a-neg. one cent on a $41.7M total is rejected', toCents(big.futureValue + 0.01) !== toCents(big.futureValue));
+    assert('2a-neg. one cent on growth is rejected', toCents(small.totalGrowth + 0.01) !== toCents(small.totalGrowth));
+    // And the ULP gap this correction absorbs is genuinely sub-cent — if a
+    // future engine change moved a figure by a cent, the guard above fires.
+    assert('2a-neg. the absorbed divergence is under one cent', Math.abs(small.futureValue - compoundFixtures[0].fv) < 0.01 && Math.abs(big.futureValue - compoundFixtures[5].fv) < 0.01);
+    // totalContributed stays EXACT — no normalisation, no tolerance.
+    assert('2a-neg. totalContributed is still compared exactly', small.totalContributed === 5200 && big.totalContributed === 3400000);
   }
 
   const loanFixtures: { input: { loanAmount: number; annualRatePct: number; years: number; frequency: RepaymentFrequency }; per: number; interest: number; cost: number }[] = [

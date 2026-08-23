@@ -693,11 +693,21 @@ export function WealthScreen() {
                           importantForAccessibility="no"
                         />
                       ) : null}
+                      {/* Wave 9a closure, Correction C — two lines. The
+                          bare " (est. rate)" suffix was the only signal that
+                          a 19.5% ASSUMPTION was in play; it is replaced by an
+                          explicit second line naming the rate and its source
+                          together with the short issuer qualification. Both
+                          lines wrap rather than truncate. */}
                       <Text style={[styles.rowMicro, { color: wealthToneColor(semantic, colors, rowTone) }]} testID={`wealth-debt-status-${l.id}`}>
                         {ccInsight.text}
-                        {ccInsight.usingAssumedApr ? ' (est. rate)' : ''}
                       </Text>
                     </View>
+                  ) : null}
+                  {ccInsight?.sourceLine ? (
+                    <Text style={styles.rowMicro} testID={`wealth-debt-rate-source-${l.id}`}>
+                      {ccInsight.sourceLine}
+                    </Text>
                   ) : null}
                   {equity ? (
                     <Text style={styles.rowMicro}>

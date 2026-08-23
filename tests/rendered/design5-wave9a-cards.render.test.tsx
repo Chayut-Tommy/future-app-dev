@@ -18,6 +18,8 @@ import { CardsScreen } from '../../src/screens/cards/CardsScreen';
 import { EmergencyFundScreen } from '../../src/screens/discover/EmergencyFundScreen';
 import { SavingsComparisonScreen } from '../../src/screens/discover/SavingsComparisonScreen';
 import { computeCreditAggregate } from '../../src/lib/calculations/creditHealth';
+import { utilisationPresentation } from '../../src/lib/creditCardPresentation';
+import { utilisationStatus } from '../../src/lib/calculations/creditHealth';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { AppData } from '../../src/types/models';
 
@@ -124,7 +126,14 @@ describe('Wave 9a — Cards', () => {
 
   test('the aggregate states the engine\'s own utilisation as a fact, value unchanged', () => {
     const aggregate = computeCreditAggregate([CARD_A, CARD_B] as never);
-    expect(screen.getByText(`${Math.round(aggregate.utilisation * 100)}% of limit used · ${aggregate.utilisation < 0.3 ? 'Healthy' : aggregate.utilisation < 0.7 ? 'Getting high' : 'High utilisation'}`)).toBeOnTheScreen();
+    // RECONCILED — Wave 9a closure, Correction B. The band labels are now
+    // factual; the inlined engine labels above were replaced by the shared
+    // presentation mapping, which DERIVES from the same engine so the
+    // threshold can never drift. The percentage is unchanged.
+    expect(
+      screen.getByText(`${Math.round(aggregate.utilisation * 100)}% of limit used · ${utilisationPresentation(aggregate.utilisation).label}`)
+    ).toBeOnTheScreen();
+    expect(utilisationPresentation(aggregate.utilisation).tone).toBe(utilisationStatus(aggregate.utilisation).tone);
     expect(screen.getByText(`$${aggregate.totalLimit.toLocaleString()}`)).toBeOnTheScreen();
     expect(screen.getByText(`$${aggregate.availableCredit.toLocaleString()}`)).toBeOnTheScreen();
   });
@@ -132,8 +141,13 @@ describe('Wave 9a — Cards', () => {
   test('each card row keeps its per-card utilisation value and caution stays worded, not colour-only', () => {
     // 1200/5000 = 24% — ordinary; 4500/5000 = 90% — the engine's existing
     // caution threshold, which must keep its words alongside any colour.
-    expect(screen.getByText('24% of limit used · Healthy')).toBeOnTheScreen();
+    // RECONCILED — Wave 9a closure, Correction B. "Healthy" was a claim
+    // about the customer's standing; the band is now stated factually. The
+    // PERCENTAGES and the engine's thresholds are deliberately unchanged,
+    // which is what these two assertions now pin.
+    expect(screen.getByText('24% of limit used · Low utilisation')).toBeOnTheScreen();
     expect(screen.getByText('90% of limit used · High utilisation')).toBeOnTheScreen();
+    expect(screen.queryByText(/Healthy/)).toBeNull();
   });
 
   test('each card row is ONE collapsed accessible sentence with balance, utilisation and repayment', () => {

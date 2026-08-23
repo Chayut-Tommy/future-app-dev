@@ -154,7 +154,6 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
   const RETAINED = [
     'src/components/discover/MoneyOpportunitiesHero.tsx',
     'src/components/health/OpportunityCard.tsx',
-    'src/components/debt/DebtCoachSheet.tsx',
     'src/components/discover/MarketPulsePreview.tsx',
     'src/components/discover/ExploreCategorySection.tsx',
     'src/components/discover/FutureYouCard.tsx',
@@ -163,6 +162,71 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
     assert(`5h. ${rel.split('/').pop()} is retained`, fs.existsSync(path.join(ROOT, rel)));
     assert(`5i. ${rel.split('/').pop()} is byte-unchanged`, execSync(`git diff --stat -- ${rel}`, { cwd: ROOT }).toString().trim() === '');
   }
+
+  // -------------------------------------------------------------------
+  // RECONCILED — Wave 9a closure, Correction A.
+  //
+  // OLD CLAUSE: DebtCoachSheet.tsx was in RETAINED above, asserted both
+  // "is retained" and "is byte-unchanged".
+  //
+  // SUPERSEDED BECAUSE Wave 9a Correction A explicitly authorises adding
+  // ONE navigation action to this sheet. The owner's device test confirmed
+  // Cards had no stable route: its only production call site was the
+  // transient `card_due_soon` reminder, which snoozing or dismissing
+  // removes. The byte-unchanged clause was a Wave 8 SCOPE guard — "Nolie
+  // Pick is unwired, but do not rewrite the retained code" — not a
+  // statement that this file must never change again.
+  //
+  // PRESERVED INTENT: the retained opportunity/coaching workstream must
+  // still be untouched. So the replacement below is narrower and stronger
+  // than a bare byte comparison: the file is retained, its coaching content
+  // is intact, its engine is byte-unchanged, and the ONLY thing added is
+  // the single Cards route. Every other retained file keeps the original
+  // byte-unchanged clause above.
+  // -------------------------------------------------------------------
+  const DEBT_SHEET = 'src/components/debt/DebtCoachSheet.tsx';
+  const DEBT_RAW = read(DEBT_SHEET);
+  assert('5i-a. DebtCoachSheet.tsx is retained', fs.existsSync(path.join(ROOT, DEBT_SHEET)));
+  assert('5i-b. its own engine is still byte-unchanged', execSync('git diff --stat -- src/lib/calculations/debtCoach.ts', { cwd: ROOT }).toString().trim() === '');
+  // The coaching surface Wave 8 retained is all still there, verbatim.
+  for (const kept of [
+    'Your debt overview',
+    'payoffAcceleration',
+    'highestInterestDebt',
+    'debtToIncomeRatio',
+    'Educational estimate only',
+    "Let's understand your debt first",
+    'I have no debt',
+    'buildDebtFreeCelebration',
+    'AddWealthItemModal',
+    'AddCreditCardModal',
+  ]) {
+    assert(`5i-c. coaching content retained: ${kept}`, DEBT_RAW.includes(kept));
+  }
+  // Nothing was REMOVED to make room for the action: the diff deletes only
+  // the two lines the addition necessarily rewrites (the React import, and
+  // the memo dependency array that now also depends on locale).
+  const deletions = execSync(`git diff -U0 -- ${DEBT_SHEET}`, { cwd: ROOT })
+    .toString()
+    .split('\n')
+    .filter((l) => l.startsWith('-') && !l.startsWith('---'));
+  // RECONCILED — Wave 9a closure, Correction B. The count was 2 (the React
+  // import and the memo dependency array). Correction B additionally
+  // replaces one line of COPY — "…can show real payoff scenarios here." —
+  // which overstated what the recorded inputs support. PRESERVED INTENT:
+  // nothing is removed to make room; every deletion must still be one this
+  // correction is authorised to make, and each is named individually.
+  // The retired claim was a three-line <Text> element, so 2 + 3 = 5.
+  assert('5i-d. every deletion is a named, authorised rewrite', deletions.length === 5);
+  assert('5i-e. …the React import', deletions.some((l) => l.includes("from 'react'")));
+  assert('5i-f. …the memo dependency array', deletions.some((l) => l.includes('insets.bottom]')));
+  assert('5i-f-i. …and the retired "real payoff scenarios" claim', deletions.some((l) => l.includes('real payoff scenarios')));
+  assert('5i-f-ii. no coaching or debt content was deleted', !deletions.some((l) => /payoffAcceleration|highestInterestDebt|debtToIncomeRatio|no debt/.test(l)));
+  // And the addition is exactly one outbound route, to Cards.
+  const DEBT_CODE = DEBT_RAW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert('5i-g. exactly one navigate call was added', (DEBT_CODE.match(/navigation\.navigate\(/g) ?? []).length === 1);
+  assert('5i-h. and its destination is Cards', /navigation\.navigate\('Cards'\)/.test(DEBT_CODE));
+  assert('5i-i. no opportunity or Nolie Pick wiring was introduced here', !/MoneyOpportunit|OpportunityCard|getUnlockStatus|Nolie Pick/.test(DEBT_RAW));
   assert('5j. the opportunity engine itself is untouched', execSync('git diff --stat -- src/lib/calculations/moneyOpportunities.ts', { cwd: ROOT }).toString().trim() === '');
   assert('5k. and DebtCoachSheet stays reachable from Money, so nothing is stranded', /DebtCoachSheet/.test(read('src/screens/money/MoneyScreen.tsx')));
 }

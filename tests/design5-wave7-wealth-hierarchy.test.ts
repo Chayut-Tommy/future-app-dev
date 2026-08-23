@@ -553,7 +553,15 @@ console.log('\n=== 17. Correction D — due-soon tone (Class A + C) ===');
   assert('17g. a warning stays caution', resolveLiabilityRowTone('warning', 'Getting high') === 'caution');
   assert('17h. colour is never the only cue — each state carries an icon', liabilityRowToneIcon('caution') === 'time-outline' && liabilityRowToneIcon('urgent') === 'alert-circle' && liabilityRowToneIcon('neutral') === null);
   assert('17i. the engine itself is untouched', /if \(days <= 1\) return \{ tone: 'danger', label: days <= 0 \? 'Due today' : 'Due tomorrow' \};/.test(read('src/lib/calculations/creditHealth.ts')));
-  assert('17j. the row renders the engine text and provenance unchanged', /\{ccInsight\.text\}/.test(SCREEN) && /ccInsight\.usingAssumedApr \? ' \(est\. rate\)' : ''/.test(SCREEN));
+  // RECONCILED — Wave 9a closure, Correction C.
+  // OLD CLAUSE: required the bare " (est. rate)" suffix.
+  // SUPERSEDED BECAUSE that four-word suffix was the ONLY signal that a
+  // 19.5% assumption was in play, and it never named the rate. PRESERVED
+  // INTENT: the row still renders the engine's own text and still discloses
+  // the rate's provenance — now on an explicit second line that names the
+  // rate and says whether the customer recorded it.
+  assert('17j. the row renders the engine text and provenance', /\{ccInsight\.text\}/.test(SCREEN) && /\{ccInsight\.sourceLine\}/.test(SCREEN));
+  assert('17j-i. the bare "(est. rate)" suffix is retired', !/\(est\. rate\)/.test(SCREEN));
   assert('17k. and the legacy danger colour is no longer read on this surface', !/colors\.danger/.test(SCREEN));
 }
 

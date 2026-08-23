@@ -11,6 +11,8 @@ import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { Button } from '../shared/Button';
 import { buildDebtReducedCelebration } from '../../lib/celebrations';
 import { brand } from '../../lib/brand';
+import { CARD_DETAILS_PANEL, PURCHASE_RATE_FIELD, purchaseRateBlankHelper } from '../../lib/creditCardPresentation';
+import { ASSUMED_CREDIT_CARD_APR } from '../../lib/calculations/creditHealth';
 import { resolveExpectedMonthlyRepayment } from '../../lib/calculations/creditHealth';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
@@ -312,10 +314,17 @@ export const AddCreditCardModal = forwardRef<
         </View>
       ) : null}
 
+      {/* Wave 9a closure, Correction A — the checkmarked benefit panel
+          ("Reduce interest / Improve credit utilisation / Create a payoff
+          plan / Avoid missed payments") promised outcomes a manual-recording
+          app cannot deliver, and implied Nolie acts on the card. Replaced by
+          one factual description of what recording the card actually does.
+          The copy lives in lib/creditCardPresentation.ts so it cannot drift
+          from the Cards empty state, which carried the same promises. */}
       {!isEditing ? (
         <View style={styles.benefitBox}>
-          <Text style={styles.benefitTitle}>Add your card so {brand.name} can help you:</Text>
-          <Text style={styles.benefitLine}>✓ Reduce interest{'\n'}✓ Improve credit utilisation{'\n'}✓ Create a payoff plan{'\n'}✓ Avoid missed payments</Text>
+          <Text style={styles.benefitTitle}>{CARD_DETAILS_PANEL.title}</Text>
+          <Text style={styles.benefitLine}>{CARD_DETAILS_PANEL.body}</Text>
         </View>
       ) : null}
 
@@ -368,17 +377,21 @@ export const AddCreditCardModal = forwardRef<
 
       {/* A rate, NOT a money amount — deliberately a TextField, so the
           strict money grammar is never applied to a percentage. */}
+      {/* Wave 9a closure, Correction C — this single stored field
+          (`CreditCard.apr`) drives the purchase-balance interest
+          illustration only; it models no cash-advance, promotional or wider
+          contract rate, so it is named for what it actually feeds. The
+          assumed-rate figure is read from the engine constant rather than
+          written out again. */}
       <TextField
-        label="Interest rate / APR % (optional)"
+        label={PURCHASE_RATE_FIELD.label}
         placeholder="e.g. 19.99"
         keyboardType="decimal-pad"
         value={apr}
         onChangeText={setApr}
       />
       <Text style={[styles.benefitLine, { marginTop: -spacing.sm, marginBottom: spacing.sm }]}>
-        {apr.trim().length > 0
-          ? `Lets ${brand.name} show a real payoff-acceleration estimate.`
-          : `Leave blank and ${brand.name} will use an estimated rate (~19.5% p.a.) until you add your own — update it anytime for better accuracy.`}
+        {apr.trim().length > 0 ? PURCHASE_RATE_FIELD.helper : purchaseRateBlankHelper(ASSUMED_CREDIT_CARD_APR)}
       </Text>
 
       {isEditing ? (

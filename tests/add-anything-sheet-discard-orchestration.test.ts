@@ -21,6 +21,19 @@
 // Run with: ./node_modules/.bin/tsx tests/add-anything-sheet-discard-orchestration.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 // DESIGN 5.1 WAVE 3 — signatures widened, behaviour NOT changed.
 // enterRoute/reselectOrEnter/chooseAssetTile now take an explicit
@@ -41,13 +54,13 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const ADD_WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
-const CREDIT_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/credit/AddCreditCardModal.tsx', 'utf-8');
-const KEYBOARD_SHEET_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/shared/KeyboardSheet.tsx', 'utf-8');
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
-const ADD_INCOME_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/income/AddIncomeModal.tsx', 'utf-8');
-const ADD_RECURRING_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/AddRecurringItemModal.tsx', 'utf-8');
+const SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const ADD_WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
+const CREDIT_CARD_SRC = readFileSync(srcPath('src/components/credit/AddCreditCardModal.tsx'), 'utf-8');
+const KEYBOARD_SHEET_SRC = readFileSync(srcPath('src/components/shared/KeyboardSheet.tsx'), 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
+const ADD_INCOME_SRC = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
+const ADD_RECURRING_SRC = readFileSync(srcPath('src/components/money/AddRecurringItemModal.tsx'), 'utf-8');
 
 function functionBody(fnSignature: string, srcText: string = SRC): string {
   const start = srcText.indexOf(fnSignature);

@@ -43,6 +43,19 @@
 // Run with: npx tsx tests/parked-draft-and-repayment-ux.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -52,7 +65,7 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
+const WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
 
 function functionBody(fnSignature: string, srcText: string): string {
   const start = srcText.indexOf(fnSignature);
@@ -295,7 +308,7 @@ console.log('\n=== 3. Behavioural: selecting an EXISTING liability row has the i
 
 console.log('\n=== 4. Structural: the switch-guard for dirty Personal Loan -> Credit Card (untouched this round) still stands (required test 9) ===');
 {
-  const SHEET_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
+  const SHEET_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
   assert(
     '4a. presentSwitchGuard/DISCARD_COPY/resetDraft (the cross-type dirty-switch mechanism, e.g. Personal Loan -> Credit Card) are unchanged by this pass — grepped verbatim, still present',
     /function presentSwitchGuard\(/.test(SHEET_SRC) && /const DISCARD_COPY: Record</.test(SHEET_SRC) && /function resetDraft\(/.test(SHEET_SRC)
@@ -417,7 +430,7 @@ console.log('\n=== 7. Behavioural + structural: Clear/Remove cannot leave a hidd
   assert('7h. structural: the explanatory note JSX is gated on hasSavedLinkedRepayment alone', /\{hasSavedLinkedRepayment \? \(/.test(WEALTH_SRC));
   assert(
     '7i. structural: no new persistence/removal transition was invented this round — AppStateContext.tsx is untouched by this pass (confirmed: not read via a git diff in this correction; the safe-fallback disposition documented above is a UI-only gate)',
-    !/function removeLinkedRepayment/.test(readFileSync('/Users/tommy/Claude/Lulu/app/src/state/AppStateContext.tsx', 'utf-8'))
+    !/function removeLinkedRepayment/.test(readFileSync(srcPath('src/state/AppStateContext.tsx'), 'utf-8'))
   );
 }
 

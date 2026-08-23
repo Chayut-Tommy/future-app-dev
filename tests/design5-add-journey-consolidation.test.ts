@@ -117,7 +117,17 @@ console.log('\n=== 6. The forms now share the field system instead of hand-rolli
     assert(`6a. ${name}: no bare <TextInput> survives`, !/<TextInput\b/.test(stripComments(src)));
   }
   assert('6b. all seven forms take their money through CurrencyField', ALL_SEVEN.filter(([, s]) => /CurrencyField/.test(s)).length === 7);
-  assert('6c. APR is deliberately NOT a CurrencyField — a percentage must never be run through the money grammar', /<TextField\n\s+label="Interest rate \/ APR % \(optional\)"/.test(CREDIT));
+  // RECONCILED — Wave 9a closure, Correction C.
+  // OLD CLAUSE: matched the literal label `Interest rate / APR % (optional)`.
+  // SUPERSEDED BECAUSE that field was renamed to `Purchase interest rate
+  // p.a. % (optional)` — inspection confirmed the stored `CreditCard.apr`
+  // feeds only the purchase-balance illustration, so the old name implied a
+  // wider contract than it models. PRESERVED INTENT: the rate must still be
+  // a TextField, never a CurrencyField — a percentage must never be run
+  // through the money grammar. That is now asserted directly rather than
+  // via a copy string that compliance work is expected to change.
+  assert('6c. APR is deliberately NOT a CurrencyField — a percentage must never be run through the money grammar', /<TextField\n\s+label=\{PURCHASE_RATE_FIELD\.label\}/.test(CREDIT));
+  assert('6c-i. and the rate field is not wrapped in CurrencyField', !/CurrencyField[^\n]*PURCHASE_RATE_FIELD/.test(CREDIT));
   // Wave 4 closure — the goal form's fields moved into the shared
   // GoalFormFields, so its adapter now passes the message down as
   // `amountMessage` rather than straight onto CurrencyField. The guarantee

@@ -21,6 +21,7 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Button } from '../../components/shared/Button';
 import { CreditCard } from '../../types/models';
 import { brand } from '../../lib/brand';
+import { CARD_DETAILS_PANEL, utilisationPresentation } from '../../lib/creditCardPresentation';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -77,7 +78,7 @@ export function CardsScreen() {
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const aggregate = useMemo(() => computeCreditAggregate(data.creditCards), [data.creditCards]);
-  const overallStatus = utilisationStatus(aggregate.utilisation);
+  const overallStatus = utilisationPresentation(aggregate.utilisation);
   const overallRoles = toneRoles(overallStatus.tone, semantic);
   const canAddCard = data.creditCards.length === 0; // free tier: 1 card
 
@@ -206,8 +207,8 @@ export function CardsScreen() {
         ListEmptyComponent={
           <EmptyState
             icon="card-outline"
-            title="No cards added yet"
-            body={`Add your cards so ${brand.name} can help you reduce interest, improve utilisation, create payoff plans, and avoid missed payments.`}
+            title={CARD_DETAILS_PANEL.title}
+            body={CARD_DETAILS_PANEL.body}
             actionLabel="Add a card"
             onAction={openAdd}
           />
@@ -217,7 +218,7 @@ export function CardsScreen() {
           const due = dueDateStatus(days);
           const dueRoles = toneRoles(due.tone, semantic);
           const util = item.creditLimit > 0 ? item.currentBalance / item.creditLimit : 0;
-          const utilStatus = utilisationStatus(util);
+          const utilStatus = utilisationPresentation(util);
           const utilRoles = toneRoles(utilStatus.tone, semantic);
           const payoffInsight = computeCardPayoffInsight(item);
           const utilisationInsight = computeCardUtilisationInsight(item);
