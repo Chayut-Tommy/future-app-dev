@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { fontFamilyForWeight, AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { Button } from './Button';
 
 export function EmptyState({
@@ -29,6 +31,9 @@ export function EmptyState({
   tone?: 'neutral' | 'error';
 }) {
   const { colors, spacing, typography } = useTheme();
+  // Design 5.1 Wave 9a — family-only migration (Wave 1B pattern): existing
+  // sizes and weights verbatim, matching bundled faces declared alongside.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -48,12 +53,14 @@ export function EmptyState({
         },
         title: {
           ...typography.heading,
+          fontFamily: fontFamilyForWeight(600, locale),
           color: colors.textPrimary,
           marginBottom: spacing.xs,
           textAlign: 'center',
         },
         body: {
           ...typography.caption,
+          fontFamily: fontFamilyForWeight(400, locale),
           color: colors.textSecondary,
           textAlign: 'center',
           lineHeight: 19,
@@ -70,7 +77,7 @@ export function EmptyState({
           backgroundColor: colors.dangerSoft,
         },
       }),
-    [colors, spacing, typography]
+    [colors, spacing, typography, locale]
   );
 
   return (

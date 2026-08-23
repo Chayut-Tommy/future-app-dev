@@ -279,14 +279,29 @@ describe('Wave 6 — a credit card reminder', () => {
     expect(screen.queryByText(/amount due/i)).toBeNull();
   });
 
-  test('the interest figure is labelled an estimate and says where the rate came from', () => {
-    expect(screen.getByText('Estimated interest if unpaid')).toBeOnTheScreen();
-    expect(screen.getByText(/approximately \$\d+ over 30 days/)).toBeOnTheScreen();
-    expect(screen.getByText(/19\.5% p\.a\./)).toBeOnTheScreen();
+  // RECONCILED — Wave 9a closure, Correction C.
+  // OLD CLAUSES: matched the label 'Estimated interest if unpaid', the value
+  // 'approximately $N over 30 days', and the caution 'Interest is charged on
+  // whatever is left unpaid. Paying more than the expected amount reduces it.'
+  // SUPERSEDED BECAUSE the label read as an amount the ISSUER would bill, and
+  // the caution both asserted how the issuer charges and coached the customer
+  // on what to do about it.
+  // PRESERVED INTENT — and strengthened: the figure must still be visibly an
+  // estimate, must still name the rate AND now its SOURCE, and the caution
+  // must still describe the mechanism without blaming anyone.
+  test('the interest figure is labelled an illustration and says where the rate came from', () => {
+    expect(screen.getByText('Illustrative interest over 30 days if the recorded balance stayed unpaid')).toBeOnTheScreen();
+    expect(screen.getByText(/^~\$\d/)).toBeOnTheScreen();
+    expect(screen.getByText(/19\.5%/)).toBeOnTheScreen();
+    // The rate's PROVENANCE is stated, not just the number.
+    expect(screen.getByText(/Uses an assumed annual rate of 19\.5% because no rate is recorded\./)).toBeOnTheScreen();
   });
 
-  test('the caution explains the mechanism rather than blaming the customer', () => {
-    expect(screen.getByText(/Interest is charged on whatever is left unpaid/)).toBeOnTheScreen();
+  test('the issuer qualification is VISIBLE, not hidden behind an info control', () => {
+    expect(screen.getByText(/Your card issuer may calculate interest differently/)).toBeOnTheScreen();
+    expect(screen.getByText(/Interest-free periods, fees, cash-advance rates, compounding/)).toBeOnTheScreen();
+    // No behavioural coaching survives.
+    expect(screen.queryByText(/Paying more than the expected amount/)).toBeNull();
   });
 
   // RECONCILED (Design 5.1 Wave 6 final). The clause protected one thing:

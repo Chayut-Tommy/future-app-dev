@@ -18,6 +18,7 @@ import {
 import { createEmptyAppData, loadAppData, saveAppData } from '../lib/storage';
 import { generateId } from '../lib/id';
 import { computeLuluScore } from '../lib/calculations/luluScore';
+import { resolveBillTransactionCategory } from '../lib/calculations/billCategory';
 import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
@@ -697,10 +698,28 @@ export function confirmRecurringOccurrenceTransition(
 
   // --- success path only from here; nothing above this line ever mutates,
   // and no rejection above ever calls applyNewTransaction. ---
+  // Wave 9a-D — an ordinary confirmed EXPENSE occurrence keeps the purpose
+  // the customer chose on the bill. This was previously the literal
+  // 'cat-other-expense' with no input at all, so Rent, Car Loan and Gym
+  // bills all produced "Other" transactions and every category insight
+  // under-reported. `resolveBillTransactionCategory` reads ONLY the
+  // structured `categoryId`; it never consults the bill's name, label or
+  // icon, and it falls back to 'cat-other-expense' explicitly for a legacy
+  // bill that has no purpose recorded yet.
+  //
+  // This changes CLASSIFICATION only. It does not select an accounting
+  // path: repayment treatment keys on `isRepayment` (see
+  // repaymentAccounting.ts), and a liability-linked repayment never reaches
+  // this branch at all.
+  //
+  // The income branch is deliberately untouched. It resolves by lower-cased
+  // label match, which is the same name-matching anti-pattern — recorded as
+  // follow-up risk rather than widened into here, because correcting it
+  // would change which category existing income confirmations land in.
   const categoryId =
     item.type === 'income'
       ? data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === item.label.toLowerCase())?.id ?? 'cat-other-income'
-      : 'cat-other-expense';
+      : resolveBillTransactionCategory(item);
 
   // Final narrow Pass 2D correction — an ordinary confirmed EXPENSE
   // (bill) occurrence now gets the same stable, durable occurrence

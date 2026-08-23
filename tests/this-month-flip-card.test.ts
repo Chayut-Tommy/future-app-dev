@@ -25,6 +25,7 @@
 // Run with: npx tsx tests/this-month-flip-card.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { computeThisMonthRecordedSummary, computeMonthToDateActivity, ThisMonthSpendingSource } from '../src/lib/calculations/monthlySummary';
 import {
@@ -37,6 +38,18 @@ import {
   SaveBnplPlanInput,
 } from '../src/state/AppStateContext';
 import type { AppData, Asset, Liability, CreditCard, Transaction, RecurringItem } from '../src/types/models';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -72,9 +85,9 @@ function income(overrides: Partial<Transaction> = {}): Transaction {
   return { id: nextTxnId(), type: 'income', amount: 100, categoryId: 'cat-salary', date: dISO('2026-08-10'), ...overrides };
 }
 
-const THIS_MONTH_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/ThisMonthCard.tsx', 'utf-8');
-const THIS_MONTH_SHEET_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/ThisMonthSourcesSheet.tsx', 'utf-8');
-const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
+const THIS_MONTH_CARD_SRC = readFileSync(srcPath('src/components/money/ThisMonthCard.tsx'), 'utf-8');
+const THIS_MONTH_SHEET_SRC = readFileSync(srcPath('src/components/money/ThisMonthSourcesSheet.tsx'), 'utf-8');
+const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
 
 // ============================================================================
 // Section 1 — $130 controlled reconciliation (real import)

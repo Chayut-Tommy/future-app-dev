@@ -63,7 +63,20 @@
 // Run with: ./node_modules/.bin/tsx tests/nested-loan-handoff-back.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { reduceAddWorkspaceTransition, initialAddWorkspaceTransitionState, AddWorkspaceRoute, AddWorkspaceTransitionState } from '../src/components/navigation/addWorkspaceTransitionController';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 // WAVE 3 (D5-001): these journeys all start from the CATALOGUE — every one
 // asserts that Back eventually lands on the chooser — so the chooser step is
@@ -79,9 +92,9 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const SHEET_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
-const BILL_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/AddRecurringItemModal.tsx', 'utf-8');
+const SHEET_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
+const BILL_SRC = readFileSync(srcPath('src/components/money/AddRecurringItemModal.tsx'), 'utf-8');
 
 function functionBody(fnSignature: string, srcText: string): string {
   const start = srcText.indexOf(fnSignature);

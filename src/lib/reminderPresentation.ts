@@ -1,3 +1,4 @@
+import { ISSUER_TERMS_QUALIFICATION, formatAnnualRate } from './creditCardPresentation';
 // Nolie Design 5.1 Wave 6 closure — how a reminder is PRESENTED.
 //
 // Pure, RN-free and financial-arithmetic-free. It decides wording, queue
@@ -165,10 +166,13 @@ export function composeCardReminderFacts(input: {
   // estimate reads as "this costs nothing", which is the opposite of what
   // a sub-dollar-but-nonzero figure means. Mirrors the >= 1 gate the card
   // insight already applies to the same figure.
+  // Wave 9a closure, Correction C — the label now states plainly that this
+  // is an ILLUSTRATION over a fixed window on the RECORDED balance, rather
+  // than "interest if unpaid", which read as an amount the issuer will bill.
   if (input.estimatedCycleInterest >= 1) {
     facts.push({
-      label: 'Estimated interest if unpaid',
-      value: `approximately ${displayAmount(Math.round(input.estimatedCycleInterest))} over ${input.cycleDays} days`,
+      label: `Illustrative interest over ${input.cycleDays} days if the recorded balance stayed unpaid`,
+      value: `~${displayAmount(Math.round(input.estimatedCycleInterest))}`,
       estimated: true,
     });
   }
@@ -179,17 +183,24 @@ export function composeCardReminderFacts(input: {
  * estimate and whether the customer supplied it. Never presented as a
  * bill. */
 export function cardReminderRateProvenance(rateUsed: number, isAssumedRate: boolean): string {
-  const rate = `${(rateUsed * 100).toFixed(1)}% p.a.`;
+  // Wave 9a closure, Correction C — states the rate's PROVENANCE in the
+  // exact shared wording, and no longer nudges the customer to enter data
+  // ("Add your card's rate for a closer figure"), which framed a compliance
+  // assumption as a customer shortcoming. A recorded 0% is a recorded rate.
+  const rate = formatAnnualRate(rateUsed);
   return isAssumedRate
-    ? `Estimated using an assumed rate of ${rate}. Add your card's rate for a closer figure.`
-    : `Estimated using your card's rate of ${rate}.`;
+    ? `Uses an assumed annual rate of ${rate} because no rate is recorded.`
+    : `Uses the ${rate} p.a. rate you recorded.`;
 }
 
-/** The caution note. Deliberately explains the MECHANISM (interest accrues
- * on what is left) rather than warning the customer about themselves — the
- * coaching-not-shaming line this product holds. */
-export const CARD_REMINDER_CAUTION =
-  'Interest is charged on whatever is left unpaid. Paying more than the expected amount reduces it.';
+/** Wave 9a closure, Correction C — was "Interest is charged on whatever is
+ * left unpaid. Paying more than the expected amount reduces it." That
+ * second sentence was behavioural coaching about what the customer should
+ * do, and the first asserted how the issuer charges. Replaced by the shared
+ * issuer-terms qualification, which describes what the illustration does
+ * NOT account for. Kept as a named export so every existing consumer picks
+ * the corrected text up automatically. */
+export const CARD_REMINDER_CAUTION = ISSUER_TERMS_QUALIFICATION;
 
 /**
  * How many whole days from `today` until an occurrence — negative when it

@@ -34,6 +34,7 @@
 // Run with: npx tsx tests/everyday-account-integrity-correction.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { applyNewTransaction, applyTransactionUpdate, applyTransactionDelete } from '../src/state/AppStateContext';
 import { computeMoneyAvailableBalances } from '../src/lib/calculations/liquidAssets';
@@ -43,6 +44,18 @@ import { computeMoneyPlan } from '../src/lib/calculations/moneyPlan';
 import { computeMonthToDateActivity } from '../src/lib/calculations/monthlySummary';
 import type { AppData, Asset } from '../src/types/models';
 
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
+
 let failures = 0;
 let total = 0;
 function assert(label: string, pass: boolean) {
@@ -51,15 +64,15 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const MONTHLY_SUMMARY_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/monthlySummary.ts', 'utf-8');
-const THIS_MONTH_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/ThisMonthCard.tsx', 'utf-8');
-const SAFE_TO_SPEND_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/safeToSpend.ts', 'utf-8');
-const QUICK_ADD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/dashboard/QuickAddModal.tsx', 'utf-8');
-const SMART_REMINDER_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/today/SmartReminderCard.tsx', 'utf-8');
-const ADD_INCOME_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/income/AddIncomeModal.tsx', 'utf-8');
-const ACHIEVEMENTS_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/achievements.ts', 'utf-8');
-const LULU_SCORE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/luluScore.ts', 'utf-8');
-const STORAGE_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/storage.ts', 'utf-8');
+const MONTHLY_SUMMARY_SRC = readFileSync(srcPath('src/lib/calculations/monthlySummary.ts'), 'utf-8');
+const THIS_MONTH_CARD_SRC = readFileSync(srcPath('src/components/money/ThisMonthCard.tsx'), 'utf-8');
+const SAFE_TO_SPEND_SRC = readFileSync(srcPath('src/lib/calculations/safeToSpend.ts'), 'utf-8');
+const QUICK_ADD_SRC = readFileSync(srcPath('src/components/dashboard/QuickAddModal.tsx'), 'utf-8');
+const SMART_REMINDER_SRC = readFileSync(srcPath('src/components/today/SmartReminderCard.tsx'), 'utf-8');
+const ADD_INCOME_SRC = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
+const ACHIEVEMENTS_SRC = readFileSync(srcPath('src/lib/calculations/achievements.ts'), 'utf-8');
+const LULU_SCORE_SRC = readFileSync(srcPath('src/lib/calculations/luluScore.ts'), 'utf-8');
+const STORAGE_SRC = readFileSync(srcPath('src/lib/storage.ts'), 'utf-8');
 
 function everydayAsset(patch: Partial<Asset> = {}): Asset {
   return { id: 'everyday-1', type: 'everyday', label: 'Main everyday account', currentValue: 900, ...patch };
@@ -408,7 +421,7 @@ console.log('\n=== 6. targetAssetId compatibility — income vs. Everyday-expens
   assert(
     "6g. models.ts documents targetAssetId's dual meaning explicitly, keyed by type/paymentSource, not a separate discriminator field",
     (() => {
-      const modelsSrc = readFileSync('/Users/tommy/Claude/Lulu/app/src/types/models.ts', 'utf-8');
+      const modelsSrc = readFileSync(srcPath('src/types/models.ts'), 'utf-8');
       return /Income only \(B2\.4\)/.test(modelsSrc) && /paymentSource === 'everyday'.*only/.test(modelsSrc);
     })()
   );

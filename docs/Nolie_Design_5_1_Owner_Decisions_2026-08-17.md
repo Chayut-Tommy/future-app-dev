@@ -952,3 +952,59 @@ TypeScript 0. Legacy **82 files / 6,309**. Rendered **34 suites / 306**, green t
 **iOS: device-approved by the owner.** **Android: export-tested only — not device-tested.** Cross-platform device verification remains deferred.
 
 **Mandatory Wave 9 carry-over:** complete semantic/Figtree typography and visual migration for Settings and all four calculator screens, verified against their actual rendered Text and TextInput trees.
+
+---
+
+# Change control — Wave 9a closure and checkpoint (23 August 2026)
+
+**Baseline** `1213232` (Wave 8 checkpoint). Approved by the owner's iOS device testing across four correction rounds. Earlier entries above are left exactly as written.
+
+## Cards and calculator presentation migration
+
+The four calculator screens and Cards completed the Design 5.1 semantic/Figtree migration Wave 8 carried over. `EmergencyFund` joined the other three calculators as dock-hidden, so the global shell reaches none of the four, and Back restores Grow with the full shell. Cards keeps its existing aggregate presentation: total limit, available credit, and `{n}% of limit used` at the accepted integer rounding, which this wave did not change.
+
+Two portability defects in the test harness were corrected. Twenty legacy structural suites read an absolute owner-machine path (`/Users/tommy/Claude/Lulu/app/...`), so from any other checkout they asserted against code that was **not under test**; all 107 reads now resolve from the suite's own repository root. Two compound-calculator fixtures compared IEEE-754 doubles with `===` and failed on a different CPU while `compoundCalculator.ts` was byte-identical — a 1.6–1.8 ULP divergence, identical to the cent. Those two monetary totals are now compared as integer cents, with four negative controls proving a genuine one-cent difference still fails; `totalContributed` stays exact and no input or engine changed.
+
+## Credit-card compliance wording
+
+The Add-card form and the Cards empty state both promised outcomes a manual-recording app cannot deliver — "Add your card so Nolie can help you: Reduce interest / Improve credit utilisation / Create a payoff plan / Avoid missed payments". Both now render **one shared factual panel** ("Keep your card details together") from `lib/creditCardPresentation.ts`, so the copy cannot drift between entry points again. The debt overview no longer offers "real payoff scenarios".
+
+Utilisation is stated factually — **Low / Moderate / High utilisation**, replacing "Healthy" and "Getting high", which described the customer's standing rather than the recorded number. The band mapping is **derived from the protected engine's own output**, so thresholds and percentages are provably unchanged. No surface implies a credit score, creditworthiness, approval likelihood or product recommendation, and `Credit health {n}/100` remains absent.
+
+Interest illustrations now distinguish three structured states — `assumed_rate`, `recorded_rate`, `unavailable`. One separate calculation defect was corrected: `card.apr > 0` treated a recorded **0%** as "no rate recorded" and substituted the 19.5% assumption, producing non-zero interest on an interest-free card and mislabelling its provenance. The formula is unchanged; only the question "did the customer record a rate?" is answered correctly. Every surface states the amount, the rate **and its source**, plus a visible issuer-terms qualification that is also carried in the composed VoiceOver label. Behavioural coaching ("Paying more than the expected amount reduces it") was retired.
+
+## Stable Cards reachability
+
+Cards had **no stable route**. Its only production call site was the transient `card_due_soon` reminder, gated to a three-day window and removed from the ranked selector once snoozed or dismissed — so ordinary use of the reminder controls deleted the only way in. Wealth card rows open the card editor, and Money's debt overview was a dead end.
+
+`Money → Money plan → View full debt overview → View credit cards` is now the stable route. Eligibility reads the **authoritative card collection**, never display copy, an icon or a name. The action sits **outside both branches** of the debt sheet, so a customer whose cards are all at $0 with no other liability keeps the route: a zero balance means a card is not debt, never that the card is not there. It closes the sheet before navigating (the ordering the reminder path already used), guards double taps, opens Cards with the dock visible and Money selected, and Back returns to Money with no sheet layered underneath. No Cards tab, no second route, no change to `ROUTE_OWNER_TAB`.
+
+## Recurring-bill structured category propagation
+
+A customer's bill purpose left **no structured trace**. `RecurringItem` carried only `icon`, documented as "purely visual", and the confirmation path stamped every generated expense `cat-other-expense` as an unconditional literal — not a fallback. Amounts were correct; every category insight silently under-reported.
+
+`RecurringItem.categoryId` is a new **additive, optional** field holding the canonical `Category.id` the customer's own bill-type choice means. Bill purposes and transaction categories are the same taxonomy in substance, so no second enum was invented and payment-time propagation is a copy rather than a translation. The preset table in `lib/calculations/billCategory.ts` is the only place a purpose becomes a category, and it runs at bill creation: Rent → `cat-rent`, Mortgage → `cat-mortgage`, Utilities/Phone/Internet → `cat-utilities`, Gym → `cat-health`, Subscription → `cat-subscriptions`, Car and Car Loan → `cat-transport`, Personal Loan → `cat-debt`, Insurance → `cat-insurance`, Other → `cat-other-expense`.
+
+**Category never selects the accounting path.** Repayment treatment keys on `isRepayment` / `isLoanRepayment` and never on `categoryId`. An ordinary Car Loan bill stays ordinary spending with no principal allocation and no liability sync; a genuinely linked repayment continues through the unchanged specialised engine and keeps `cat-debt`.
+
+## Historical and legacy-data behaviour
+
+**No migration, no backfill, no rewrite.** Storage parses persisted data permissively, so records without the new field load unchanged. A legacy bill remains loadable, editable and payable, and resolves through the **explicit** `cat-other-expense` fallback until the customer picks a bill type and saves; its leftover icon is never promoted into a category on their behalf. **Historical `Other` transactions created before this wave remain exactly as recorded** — past-month analytics are unchanged until the customer edits those transactions themselves.
+
+## Checkpoint-stability correction
+
+Several assertions used `git diff` as behavioural evidence — comparing the working tree, or `origin/main`, to prove a file was "byte-unchanged". Those references move: a working-tree diff empties as soon as the wave is committed, and an `origin/main` diff empties as soon as the wave is checkpointed into main, at which point the assertion passes while proving nothing, and cannot run in a fresh clone at all. Every one was replaced with hermetic structural or behavioural evidence against the source under test — engine invariants, real-function boundary cases, and presence of the surfaces that must not have been removed. **No git command is used as behavioural evidence anywhere in the test tree.**
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **86 files / 6,937**. Rendered **40 suites / 352**, green twice. Wave 9a-D 120, Cards reachability 109 pure + 13 rendered, Cards/calculators 132, card compliance 234, Wave 8 hierarchy 148, Wave 7 299, Wave 6 reminder actions 102, Wave 5 353. Contrast, typography, iconography, navigation and dock floors all green. Dependency and configuration diffs empty. `git diff --check` clean. Doctor 17/18 (pre-existing "2 packages out of date"). Both exports exit 0.
+
+**Protected financial engines unchanged**: repayment accounting, monthly summary, safe-to-spend, money timeline, money plan, spending insights, reminder ranking/suppression/lifecycle, recurring schedule, debt coach, the three calculators, Score, default categories and storage. `creditHealth.ts` changed only by the authorised rate-source correction described above; `models.ts` gained one optional field; `AppStateContext.tsx` changed one classification branch.
+
+**iOS: device-approved by the owner.** **Android: export-tested only — not device-tested.** Cross-platform device verification remains deferred to Wave 11 per owner decision 6.
+
+## Mandatory Wave 9b carry-over
+
+1. **BNPL category.** `confirmBnplRepaymentTransition` stamps `cat-other-expense`. Investigate whether BNPL is a genuine specialised repayment; if so, correct it to the existing canonical debt-repayment category **without changing its accounting**. Not touched in Wave 9a.
+2. **Income label matching.** The income branch of `confirmRecurringOccurrenceTransition` resolves a category by lower-cased label match — the same name-matching anti-pattern this wave removed from the expense branch. Audit it; do not change it without a structured, deterministic source, because correcting it would move which category existing income confirmations land in.
+3. Wave 9b (Settings, Language, Reset, Goals, Transactions) and Wave 9c (onboarding rebuild) remain **unstarted**.

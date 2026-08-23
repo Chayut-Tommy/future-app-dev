@@ -15,6 +15,8 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { useTheme } from '../../../theme/ThemeContext';
+import { fontFamilyForWeight, AppLocale } from '../../../theme/typography';
+import i18n from '../../../i18n';
 
 /** Height the message row always occupies. 13pt caption at the RN default
  * ~1.3 line-height rounds to 17; the extra 2pt is the gap above it, so the
@@ -43,6 +45,12 @@ export function FieldShell({
   children: React.ReactNode;
 }) {
   const { colors, spacing, typography } = useTheme();
+  // Design 5.1 Wave 9a — family-only migration (the documented Wave 1B
+  // pattern): the bundled face for each style's EXISTING weight is declared
+  // alongside it, sizes and weights verbatim, so a field label never falls
+  // back to the platform font. The label's local 600 override needs the
+  // matching family, per fontFamilyForWeight's own contract.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const styles = useMemo(
     () =>
@@ -51,19 +59,21 @@ export function FieldShell({
         label: {
           ...typography.caption,
           fontWeight: '600',
+          fontFamily: fontFamilyForWeight(600, locale),
           color: colors.textSecondary,
           marginBottom: spacing.xs,
         },
         required: { color: colors.danger },
         message: {
           ...typography.caption,
+          fontFamily: fontFamilyForWeight(400, locale),
           marginTop: spacing.xs,
         },
         messageRow: { minHeight: RESERVED_MESSAGE_MIN_HEIGHT },
         error: { color: colors.danger },
         hint: { color: colors.textMuted },
       }),
-    [colors, spacing, typography]
+    [colors, spacing, typography, locale]
   );
 
   return (

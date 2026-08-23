@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { fontFamilyForWeight, AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { InfoSheet } from './InfoSheet';
 import { brand } from '../../lib/brand';
 
@@ -20,14 +22,17 @@ const FULL_EXPLANATION = `${brand.name} provides educational information, estima
 export function EducationalNote({ text = 'Educational scenario only — not personal financial advice.' }: { text?: string }) {
   const { colors, spacing, typography } = useTheme();
   const [expanded, setExpanded] = useState(false);
+  // Design 5.1 Wave 9a — family-only migration (Wave 1B pattern): existing
+  // sizes and weights verbatim, matching bundled faces declared alongside.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         row: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.xs },
-        text: { ...typography.micro, fontSize: 10, color: colors.textMuted, flex: 1, lineHeight: 14 },
+        text: { ...typography.micro, fontFamily: fontFamilyForWeight(500, locale), fontSize: 10, color: colors.textMuted, flex: 1, lineHeight: 14 },
       }),
-    [colors, spacing, typography]
+    [colors, spacing, typography, locale]
   );
 
   return (
@@ -37,7 +42,7 @@ export function EducationalNote({ text = 'Educational scenario only — not pers
         <Text style={styles.text}>{text}</Text>
       </TouchableOpacity>
       <InfoSheet visible={expanded} onClose={() => setExpanded(false)} title="Educational information only">
-        <Text style={{ ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 21 }}>{FULL_EXPLANATION}</Text>
+        <Text style={{ ...typography.body, fontFamily: fontFamilyForWeight(400, locale), fontSize: 14, color: colors.textSecondary, lineHeight: 21 }}>{FULL_EXPLANATION}</Text>
       </InfoSheet>
     </>
   );

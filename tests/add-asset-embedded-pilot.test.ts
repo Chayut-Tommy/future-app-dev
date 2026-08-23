@@ -30,6 +30,19 @@
 // Run with: ./node_modules/.bin/tsx tests/add-asset-embedded-pilot.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -39,22 +52,22 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const ADD_ANYTHING_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8');
-const ADD_WEALTH_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/AddWealthItemModal.tsx', 'utf-8');
-const TRANSFER_FORM_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferForm.tsx', 'utf-8');
-const TRANSFER_MODAL_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferModal.tsx', 'utf-8');
-const FLOATING_ADD_BUTTON_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/FloatingAddButton.tsx', 'utf-8');
-const WEALTH_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/wealth/WealthScreen.tsx', 'utf-8');
-const DISCOVER_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/discover/DiscoverScreen.tsx', 'utf-8');
-const TODAY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/today/TodayScreen.tsx', 'utf-8');
-const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
-const CONTROLLER_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/addAssetTransitionController.ts', 'utf-8');
-const GEOMETRY_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/addWorkspaceGeometry.ts', 'utf-8');
+const ADD_ANYTHING_SRC = readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8');
+const ADD_WEALTH_SRC = readFileSync(srcPath('src/components/wealth/AddWealthItemModal.tsx'), 'utf-8');
+const TRANSFER_FORM_SRC = readFileSync(srcPath('src/components/wealth/TransferForm.tsx'), 'utf-8');
+const TRANSFER_MODAL_SRC = readFileSync(srcPath('src/components/wealth/TransferModal.tsx'), 'utf-8');
+const FLOATING_ADD_BUTTON_SRC = readFileSync(srcPath('src/components/navigation/FloatingAddButton.tsx'), 'utf-8');
+const WEALTH_SCREEN_SRC = readFileSync(srcPath('src/screens/wealth/WealthScreen.tsx'), 'utf-8');
+const DISCOVER_SCREEN_SRC = readFileSync(srcPath('src/screens/discover/DiscoverScreen.tsx'), 'utf-8');
+const TODAY_SCREEN_SRC = readFileSync(srcPath('src/screens/today/TodayScreen.tsx'), 'utf-8');
+const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
+const CONTROLLER_SRC = readFileSync(srcPath('src/components/navigation/addAssetTransitionController.ts'), 'utf-8');
+const GEOMETRY_SRC = readFileSync(srcPath('src/components/navigation/addWorkspaceGeometry.ts'), 'utf-8');
 // Floating navigation design pass — focusElement was extracted out of
 // AddAnythingSheet.tsx into this shared module so QuickActionsTray.tsx
 // could reuse the exact same iOS/Android focus-movement logic rather than
 // duplicating it; its own logic is unchanged, just relocated.
-const A11Y_FOCUS_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/a11yFocus.ts', 'utf-8');
+const A11Y_FOCUS_SRC = readFileSync(srcPath('src/lib/a11yFocus.ts'), 'utf-8');
 
 console.log('=== 1. Exactly two AddWealthItemModal instances in AddAnythingSheet.tsx — asset and liability, each correctly scoped (Class C) ===');
 {

@@ -26,6 +26,7 @@
 // Run with: npx tsx tests/move-money-architecture-correction.test.ts
 
 import { readFileSync } from 'fs';
+import * as path from 'path';
 import { createEmptyAppData } from '../src/lib/storage';
 import { resolveBnplHandoffState, listBnplHandoffStates } from '../src/lib/calculations/bnplHandoff';
 import { disambiguateBalanceLabels } from '../src/lib/calculations/moveMoneyEligibility';
@@ -33,6 +34,18 @@ import { computeMoneyFlowCategoryBreakdown } from '../src/lib/calculations/money
 import { computeSafeToSpend } from '../src/lib/calculations/safeToSpend';
 import { confirmBnplRepaymentTransition } from '../src/state/AppStateContext';
 import type { AppData, Asset, Liability, RecurringItem, Goal } from '../src/types/models';
+
+// TEST-INFRASTRUCTURE CORRECTION (Wave 9a verification pass) — this file's
+// structural reads were pinned to an absolute path naming one specific
+// checkout on one machine. Run from any other worktree that silently reads
+// a DIFFERENT
+// repository, so a structural assertion could pass against code that is not
+// the code under test. Paths now resolve from this file's own location,
+// matching the convention design5-add-architecture.test.ts and others
+// already use. No product assertion, expected value or production file is
+// changed by this correction.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const srcPath = (rel: string) => path.join(REPO_ROOT, rel);
 
 let failures = 0;
 let total = 0;
@@ -74,7 +87,7 @@ function item(patch: Partial<RecurringItem> = {}): RecurringItem {
   };
 }
 
-const TRANSFER_FORM_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/wealth/TransferForm.tsx', 'utf-8');
+const TRANSFER_FORM_SRC = readFileSync(srcPath('src/components/wealth/TransferForm.tsx'), 'utf-8');
 
 // ============================================================================
 // Section 1 — resolveBnplHandoffState (real import)
@@ -384,10 +397,10 @@ console.log('\n=== 5. computeMoneyFlowCategoryBreakdown (real import) ===');
 // ============================================================================
 console.log('\n=== 6. Structural — Today navigation and Money drill-down wiring ===');
 {
-  const TODAY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/today/TodayScreen.tsx', 'utf-8');
-  const MONTH_SNAPSHOT_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/today/MonthSnapshotCard.tsx', 'utf-8');
-  const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
-  const MONEY_PLAN_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/MoneyPlanCard.tsx', 'utf-8');
+  const TODAY_SCREEN_SRC = readFileSync(srcPath('src/screens/today/TodayScreen.tsx'), 'utf-8');
+  const MONTH_SNAPSHOT_SRC = readFileSync(srcPath('src/components/today/MonthSnapshotCard.tsx'), 'utf-8');
+  const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
+  const MONEY_PLAN_CARD_SRC = readFileSync(srcPath('src/components/money/MoneyPlanCard.tsx'), 'utf-8');
 
   assert('6a. MonthSnapshotCard navigates to the real Transactions route (not the Money tab) when populated', /navigation\.navigate\('Transactions'\)/.test(MONTH_SNAPSHOT_SRC));
   // Wave 5 closure — MonthSnapshotCard no longer HAS an empty state. Today
@@ -401,7 +414,7 @@ console.log('\n=== 6. Structural — Today navigation and Money drill-down wirin
   // different component — keeps both its empty state and its own action.
   assert('6b. MonthSnapshotCard has no empty state to wire — the whole section is gated instead', !/onAddTransaction/.test(MONTH_SNAPSHOT_SRC) && /activity: MonthToDateActivity/.test(MONTH_SNAPSHOT_SRC));
   assert('6c. TodayScreen gates the month section on the shared eligibility rule, and mounts no second transaction modal', /const monthSectionVisible = isMonthSectionEligible\(monthActivity\);/.test(TODAY_SCREEN_SRC) && !/QuickAddModal/.test(TODAY_SCREEN_SRC));
-  assert('6c-ii. and Add transaction remains reachable from the global "+"', /QuickAddModal/.test(readFileSync('/Users/tommy/Claude/Lulu/app/src/components/navigation/AddAnythingSheet.tsx', 'utf-8')));
+  assert('6c-ii. and Add transaction remains reachable from the global "+"', /QuickAddModal/.test(readFileSync(srcPath('src/components/navigation/AddAnythingSheet.tsx'), 'utf-8')));
   assert('6d. TodayScreen no longer renders a separate "Upcoming payments" block (the duplicated lower credit-card due reminder)', !/Upcoming payments/.test(TODAY_SCREEN_SRC));
 
   assert('6e. MoneyScreen mounts the shared MoneyFlowCategoryDetailSheet', /<MoneyFlowCategoryDetailSheet/.test(MONEY_SCREEN_SRC));
@@ -727,7 +740,7 @@ console.log('\n=== 10. Category independence, period figures, explicit-today, da
   // parameter or a stored date string — never a bare, argument-less
   // `new Date()` reading the system clock.
   {
-    const src = readFileSync('/Users/tommy/Claude/Lulu/app/src/lib/calculations/moneyFlowBreakdown.ts', 'utf-8');
+    const src = readFileSync(srcPath('src/lib/calculations/moneyFlowBreakdown.ts'), 'utf-8');
     // Strip line comments before scanning — this file's own doc comments
     // discuss "new Date()" in prose (see the header comment on
     // buildBillsBreakdown), which must not be mistaken for actual code.
@@ -771,8 +784,8 @@ console.log('\n=== 10. Category independence, period figures, explicit-today, da
 // ============================================================================
 console.log('\n=== 11. Zero-state/CTA architecture audit ===');
 {
-  const MONEY_SCREEN_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/screens/money/MoneyScreen.tsx', 'utf-8');
-  const MONEY_PLAN_CARD_SRC = readFileSync('/Users/tommy/Claude/Lulu/app/src/components/money/MoneyPlanCard.tsx', 'utf-8');
+  const MONEY_SCREEN_SRC = readFileSync(srcPath('src/screens/money/MoneyScreen.tsx'), 'utf-8');
+  const MONEY_PLAN_CARD_SRC = readFileSync(srcPath('src/components/money/MoneyPlanCard.tsx'), 'utf-8');
 
   // Q1: exactly one shared detail-sheet instance in MoneyScreen.tsx.
   assert('11a. MoneyScreen.tsx mounts exactly ONE <MoneyFlowCategoryDetailSheet> instance, controlled by flowDetailCategory state (never four)', (MONEY_SCREEN_SRC.match(/<MoneyFlowCategoryDetailSheet/g) || []).length === 1);
@@ -817,7 +830,7 @@ console.log('\n=== 11. Zero-state/CTA architecture audit ===');
   assert(
     '11e-ii. and the retired allocation card is unwired, not deleted — its file and its detail sheet remain',
     !/<MoneyPlanCard/.test(MONEY_SCREEN_SRC) &&
-      require('fs').existsSync('/Users/tommy/Claude/Lulu/app/src/components/money/MoneyPlanCard.tsx') &&
+      require('fs').existsSync(srcPath('src/components/money/MoneyPlanCard.tsx')) &&
       /<SavingsAllocationDetailSheet/.test(MONEY_SCREEN_SRC)
   );
 }
