@@ -37,7 +37,9 @@ function spokenMoney(display: string): string {
 }
 
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
-  const { colors, spacing, typography } = useTheme();
+  const { colors, spacing } = useTheme();
+  // Own binding: this helper renders outside the main component's scope.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   return (
     <View
       style={{
@@ -49,8 +51,8 @@ function BreakdownRow({ label, value, isTotal }: { label: string; value: string;
         marginTop: isTotal ? spacing.xs : 0,
       }}
     >
-      <Text style={{ ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '400' }}>{label}</Text>
-      <Text style={{ ...typography.heading, fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '600' }}>{value}</Text>
+      <Text style={{ ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '400' }}>{label}</Text>
+      <Text style={{ ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '600' }}>{value}</Text>
     </View>
   );
 }
@@ -209,7 +211,7 @@ export function SafeToSpendHero({
         },
         heroCtaText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
         labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: spacing.sm },
-        label: { ...typography.micro, fontSize: 11, color: onFeaturedAlpha(0.8), fontWeight: '700', letterSpacing: 0.5 },
+        label: { ...typeStyle('labelTab', locale), fontSize: 11, color: onFeaturedAlpha(0.8), fontWeight: '700', letterSpacing: 0.5 },
         labelWarning: { color: colors.warning },
         labelRowActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         infoButton: { padding: 2 },
@@ -220,12 +222,12 @@ export function SafeToSpendHero({
         // an icon-only button is there; ≥44pt effective tap target via
         // hitSlop, matching the info button's own convention.
         manageBalancesButton: { flexDirection: 'row', alignItems: 'center', gap: 3, padding: 2 },
-        manageBalancesText: { ...typography.micro, fontSize: 11, color: onFeaturedAlpha(0.85), fontWeight: '700' },
+        manageBalancesText: { ...typeStyle('labelTab', locale), fontSize: 11, color: onFeaturedAlpha(0.85), fontWeight: '700' },
         manageBalancesTextWarning: { color: colors.warning },
-        line: { ...typography.body, fontSize: 14, color: onFeaturedAlpha(0.9), textAlign: 'center' },
+        line: { ...typeStyle('body', locale), fontSize: 14, color: onFeaturedAlpha(0.9), textAlign: 'center' },
         lineWarning: { color: colors.textSecondary, textAlign: 'center', lineHeight: 19 },
-        value: { ...typography.title, fontSize: 40, color: colors.onNavy, marginVertical: 2 },
-        explainer: { ...typography.caption, fontSize: 12, color: onFeaturedAlpha(0.8), textAlign: 'center', marginTop: spacing.sm, lineHeight: 17 },
+        value: { ...typeStyle('titleSection', locale), fontSize: 40, fontWeight: '700', color: colors.onNavy, marginVertical: 2 },
+        explainer: { ...typeStyle('meta', locale), fontSize: 12, color: onFeaturedAlpha(0.8), textAlign: 'center', marginTop: spacing.sm, lineHeight: 17 },
         reactionBox: {
           marginTop: spacing.md,
           backgroundColor: onFeaturedAlpha(0.14),
@@ -233,8 +235,8 @@ export function SafeToSpendHero({
           padding: spacing.sm,
           alignSelf: 'stretch',
         },
-        reactionText: { ...typography.caption, fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
-        breakdownFooter: { ...typography.micro, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
+        reactionText: { ...typeStyle('meta', locale), fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
+        breakdownFooter: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
         // Stacked, single-column presentation for the daily-estimate row
         // specifically (Stream A follow-up §2) — replaces the generic
         // two-column BreakdownRow only here, since that row's dynamic label
@@ -247,11 +249,11 @@ export function SafeToSpendHero({
           borderTopColor: colors.border,
           marginTop: spacing.xs,
         },
-        dailyEstimateLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700' },
-        dailyEstimateValue: { ...typography.title, fontSize: 22, color: colors.textPrimary, fontWeight: '700', marginTop: 2 },
-        dailyEstimateContext: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+        dailyEstimateLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '700' },
+        dailyEstimateValue: { ...typeStyle('titleSection', locale), fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginTop: 2 },
+        dailyEstimateContext: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: 2 },
       }),
-    [colors, radius, spacing, typography, glow]
+    [colors, radius, spacing, typography, locale, glow]
   );
 
   // Correction round, 2026-08-10 (requirement 6) — the same "Manage

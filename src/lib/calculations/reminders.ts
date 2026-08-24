@@ -395,6 +395,45 @@ export function computeRankedReminder(
     if (!isExcluded(reminder)) return reminder;
   }
 
+  // Wave 9b — BNPL, due exactly tomorrow.
+  //
+  // CONFIRMED DEFECT (owner device test): a ZIP plan with a repayment due
+  // tomorrow never reached the reminder queue, so "Record repayment" was
+  // unreachable. BNPL had an OVERDUE tier and a DUE-TODAY tier, but the
+  // due-soon tier above explicitly filters BNPL out (`!bnplItemIds.has`)
+  // and had no BNPL branch of its own — so for the one-day window between
+  // "not yet due" and "due today", no `bnpl_repayment_due` candidate was
+  // ever constructed. Nothing was starving it and nothing suppressed it;
+  // the candidate simply did not exist.
+  //
+  // This restores the existing contract rather than introducing a new
+  // priority policy: BNPL sits in the SAME tier as an ordinary bill due
+  // tomorrow, exactly as it already shares the overdue and due-today tiers
+  // with bills. Card reminders remain a lower tier, unchanged. The queue
+  // stays finite and the ordering deterministic.
+  //
+  // Mirrors dueTodayBnplCandidates verbatim, including the outstanding-
+  // balance cap — a final instalment must never invite a payment larger
+  // than what is actually still owed.
+  const dueSoonBnplCandidates = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense' && bnplItemIds.has(r.id))
+    .filter((r) => daysBetween(today, new Date(r.nextDueDate)) === 1);
+  for (const dueSoonBnplItem of dueSoonBnplCandidates) {
+    const liability = data.liabilities.find((l) => l.id === dueSoonBnplItem.linkedLiabilityId)!;
+    const cappedAmount = Math.min(dueSoonBnplItem.amount, liability.currentBalance);
+    const reminder: SmartReminder = {
+      id: `bnpl-soon-${dueSoonBnplItem.id}-${dueSoonBnplItem.nextDueDate}`,
+      kind: 'bnpl_repayment_due',
+      title: `Your ${dueSoonBnplItem.label} is due tomorrow`,
+      body: `$${Math.round(cappedAmount).toLocaleString()} due ${shortDate(dueSoonBnplItem.nextDueDate)}.`,
+      recurringItemId: dueSoonBnplItem.id,
+      liabilityId: liability.id,
+      amount: cappedAmount,
+      occurrenceDate: dueSoonBnplItem.nextDueDate,
+    };
+    if (!isExcluded(reminder)) return reminder;
+  }
+
   // Final Pass 2D device-test correction, item 1/4 (canonical helper, §6
   // round) — a card whose CURRENT due occurrence has already been marked
   // handled via a Reminder-initiated repayment never re-surfaces for that

@@ -564,15 +564,15 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         // measure, so a customer never has to guess what a number counts.
         // Deliberately quiet: it explains, it does not compete.
         measureDefinition: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: -designSpacing.xs, marginBottom: designSpacing.sm },
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
+        sectionTitle: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary },
         // Wave 6 Correction C — section actions ("+ Add bill", "+ Add")
         // are navigation, not a positive financial outcome, so they take
         // the Ocean Blue interactive role rather than the legacy accent
         // green. 44pt in their own right rather than via hitSlop.
         link: { ...typeStyle('labelButton', locale), color: semantic.interactive },
         linkTarget: { minHeight: minTouchTarget, justifyContent: 'center' },
-        emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
-        flowInfoText: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.md },
+        emptyText: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        flowInfoText: { ...typeStyle('body', locale), fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.md },
 
         // Money Flow period toggle
         periodToggleRow: {
@@ -589,7 +589,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         // positive financial outcome, so it takes the Ocean Blue
         // interactive role rather than the legacy accent green.
         periodToggleOptionActive: { backgroundColor: semantic.interactive },
-        periodToggleText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '700' },
+        periodToggleText: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, fontWeight: '700' },
         flowTile: {
           width: 26,
           height: 26,
@@ -613,8 +613,8 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         barBlock: { marginBottom: spacing.md, minHeight: 24, justifyContent: 'center' },
         barLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
         barLabelWithChevron: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-        barLabel: { ...typography.body, fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
-        barValue: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
+        barLabel: { ...typeStyle('body', locale), fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
+        barValue: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary },
 
         // Needs Your Attention
         attentionRow: {
@@ -628,7 +628,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           ...cardShadow,
         },
         attentionIconBadge: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-        attentionText: { ...typography.body, fontSize: 13, color: colors.textPrimary, flex: 1 },
+        attentionText: { ...typeStyle('body', locale), fontSize: 13, color: colors.textPrimary, flex: 1 },
 
         // End of Month Outlook
         outlookBox: {
@@ -636,9 +636,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           borderRadius: radius.control,
           padding: spacing.md,
         },
-        outlookLabel: { ...typography.micro, fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: spacing.xs },
-        outlookValue: { ...typography.title, fontSize: 24, color: colors.textPrimary, marginBottom: spacing.xs },
-        outlookExplainer: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
+        outlookLabel: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: spacing.xs },
+        outlookValue: { ...typeStyle('titleSection', locale), fontSize: 24, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.xs },
+        outlookExplainer: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
 
         // Spending Tracker insight cards
         insightCard: {
@@ -653,8 +653,8 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         },
         insightIconBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.marketSoft, alignItems: 'center', justifyContent: 'center' },
         insightTextBlock: { flex: 1 },
-        insightHeading: { ...typography.caption, fontSize: 13, fontWeight: '700', color: colors.textPrimary },
-        insightBody: { ...typography.micro, color: colors.textSecondary, marginTop: 2, lineHeight: 15 },
+        insightHeading: { ...typeStyle('meta', locale), fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+        insightBody: { ...typeStyle('labelTab', locale), color: colors.textSecondary, marginTop: 2, lineHeight: 15 },
         trackerFooterRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
@@ -664,26 +664,26 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
         },
-        flowLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
+        flowLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary },
 
         // Spending Tracker actual-activity summary + recent transactions
-        trackerRecentHeading: { ...typography.micro, fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, marginTop: spacing.md, marginBottom: spacing.xs },
+        trackerRecentHeading: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, marginTop: spacing.md, marginBottom: spacing.xs },
         trackerTxnRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
         trackerTxnLeft: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flex: 1 },
-        trackerTxnLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
-        trackerTxnDate: { ...typography.micro, fontSize: 11, color: colors.textMuted },
-        trackerTxnAmount: { ...typography.heading, fontSize: 14 },
+        trackerTxnLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary },
+        trackerTxnDate: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted },
+        trackerTxnAmount: { ...typeStyle('titleCard', locale), fontSize: 14 },
 
         // Debt Overview
         debtTotalsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md },
-        debtTotalsLabel: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginBottom: 2 },
-        debtTotalsValue: { ...typography.heading, fontSize: 18, color: colors.textPrimary },
+        debtTotalsLabel: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, marginBottom: 2 },
+        debtTotalsValue: { ...typeStyle('titleCard', locale), fontSize: 18, color: colors.textPrimary },
         debtRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 7 },
         debtTextBlock: { flex: 1 },
-        debtLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
-        debtSub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 1 },
+        debtLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        debtSub: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: 1 },
       }),
-    [colors, spacing, typography, radius, cardShadow, semantic, locale, minTouchTarget]
+    [colors, spacing, typography, locale, radius, cardShadow, semantic, locale, minTouchTarget]
   );
 
   // Wave 6 — presentation-only derivations. Every input is read straight

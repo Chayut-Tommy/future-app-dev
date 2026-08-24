@@ -3,6 +3,9 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { Screen } from '../../components/shared/Screen';
 import { Button } from '../../components/shared/Button';
@@ -20,6 +23,8 @@ export function ResetLuluScreen() {
   const navigation = useNavigation<any>();
   const { resetAllData } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const styles = useMemo(
     () =>
@@ -35,17 +40,17 @@ export function ResetLuluScreen() {
           marginTop: spacing.xl,
           marginBottom: spacing.lg,
         },
-        title: { ...typography.title, fontSize: 22, color: colors.textPrimary, textAlign: 'center', marginBottom: spacing.sm },
-        body: { ...typography.body, fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: spacing.lg },
+        title: { ...typeStyle('titleSection', locale), fontSize: 22, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', marginBottom: spacing.sm },
+        body: { ...typeStyle('body', locale), fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: spacing.lg },
         listBox: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.lg, marginBottom: spacing.xl },
         listRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
-        listText: { ...typography.body, fontSize: 14, color: colors.textPrimary },
-        startOverText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl, lineHeight: 18 },
+        listText: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary },
+        startOverText: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.xl, lineHeight: 18 },
         footer: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.md },
         footerButton: { flex: 1 },
         resetButton: { flex: 1, backgroundColor: colors.danger },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, locale]
   );
 
   function handleReset() {

@@ -128,9 +128,32 @@ function resolveAmount(dollars: number | null): Pick<SafeToSpendPresentation, 'a
  * function does not change any customer-facing wording, only where it is
  * authored and how completely its shape is described.
  */
+/** The one customer-facing identity for the Available Until Payday metric.
+ * Never selected from occupation, employment, persona, confidence or goal. */
+export const AVAILABLE_UNTIL_PAYDAY_LABEL = 'Available until payday';
+export const AVAILABLE_UNTIL_PAYDAY_HEADING = AVAILABLE_UNTIL_PAYDAY_LABEL.toUpperCase();
+
+/** The amount's own label for the normal state — likewise persona-free. */
+export const AVAILABLE_UNTIL_PAYDAY_AMOUNT_LABEL = 'Estimated amount remaining';
+
 export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, heroCopy: MoneyHeroCopy): SafeToSpendPresentation {
   const heroState = selectSafeToSpendHeroState(safeToSpend);
-  const eyebrow = heroCopy.eyebrowScheduled.toUpperCase();
+  // Wave 9b closure, Correction A — ONE canonical identity for this metric.
+  //
+  // DEFECT (owner recording): Today showed "BUSINESS CASH POSITION · $32,836"
+  // while Money showed "Available until payday · $32,836" — the same
+  // financial result presented as two different concepts. The eyebrow came
+  // from `heroCopy.eyebrowScheduled`, which `resolveMoneyPersona` derives
+  // from the persisted `moneyPersona`. The income-identity questionnaire was
+  // retired earlier in Wave 9b, but a legacy stored value still overrode the
+  // cadence fallback, so employment wording survived a restart.
+  //
+  // The label is now a constant. Pay frequency and schedule still drive the
+  // CALCULATION and the period; they no longer invent a customer persona.
+  // Note the invalid/unavailable branches below already hard-coded these
+  // exact words, so this makes the valid branch agree with them rather than
+  // introducing anything new. The stored field is not cleared or migrated.
+  const eyebrow = AVAILABLE_UNTIL_PAYDAY_HEADING;
 
   switch (heroState) {
     case 'unavailable_balance_data':
@@ -243,7 +266,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         heroState,
         tone: 'warning',
         heading: eyebrow,
-        primaryCopy: heroCopy.amountLabel,
+        primaryCopy: AVAILABLE_UNTIL_PAYDAY_AMOUNT_LABEL,
         supportingCopy: `Your goals would need ${formatSafeToSpendAmount(
           safeToSpend.goalAllocation.totalRequiredMonthly
         )}/month. That's more than your current monthly plan covers — explore adjusting the timeline or contribution.`,
@@ -258,7 +281,7 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         heroState: 'normal',
         tone: 'normal',
         heading: eyebrow,
-        primaryCopy: heroCopy.amountLabel,
+        primaryCopy: AVAILABLE_UNTIL_PAYDAY_AMOUNT_LABEL,
         supportingCopy: null,
         ...resolveAmount(Math.max(0, safeToSpend.cycleRemainingPool)),
         amountIsAvailableMoney: false,

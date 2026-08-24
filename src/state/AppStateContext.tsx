@@ -1796,7 +1796,22 @@ export function confirmBnplRepaymentTransition(data: AppData, input: ConfirmBnpl
   const transactionInput: Omit<Transaction, 'id'> = {
     type: 'expense',
     amount: effectivePaymentCents / 100,
-    categoryId: 'cat-other-expense',
+    // Wave 9b — a BNPL instalment is a genuine specialised liability
+    // repayment, established from STRUCTURED state alone before this point:
+    // `liability.type === 'bnpl'`, `item.linkedLiabilityId === liability.id`,
+    // and an unambiguous `resolveBnplLinkedItems` resolution. It was stamped
+    // 'cat-other-expense', so a real debt repayment displayed as "Other" in
+    // Transactions and in category lists.
+    //
+    // It now carries the SAME canonical id a loan and a credit-card
+    // repayment already carry. This is a DISPLAY correction only: every
+    // accounting resolver in repaymentAccounting.ts keys on the structured
+    // `isRepayment` flag, the `isBnplLinkedTransaction` liability lookup, or
+    // `isLoanRepayment` — and explicitly NEVER on `categoryId === 'cat-debt'`
+    // (see that file's own doc comment). This transaction is already
+    // excluded from aggregate spending, category coaching and recorded
+    // cashflow through that lookup, and remains so, unchanged.
+    categoryId: 'cat-debt',
     date: input.date,
     note: item.label,
     paymentSource: input.paymentSource,

@@ -4,6 +4,10 @@ import type { RefObject } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
+import { brand } from '../../lib/brand';
 import {
   resolveReminderIdentity,
   BILL_SOURCE_STEP,
@@ -208,6 +212,9 @@ export function SmartReminderCard({
   const { data, confirmRecurringOccurrence, confirmBnplRepayment, snoozeReminderOccurrence, dismissReminderOccurrence } = useAppState();
   const navigation = useNavigation<any>();
   const { colors, radius, spacing, typography, scheme, semantic } = useTheme();
+  // Wave 9b closure — tokens.typography carries no fontFamily, so every
+  // reminder string rendered in the platform font. Resolve the shipped role.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const { fontScale, width } = useWindowDimensions();
   /**
    * Wave 6 final — Snooze and Dismiss are inline STEPS of this same
@@ -299,8 +306,8 @@ export function SmartReminderCard({
         card: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
         iconBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
         textBlock: { flex: 1 },
-        title: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
-        body: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
+        title: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, marginBottom: 2 },
+        body: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.sm },
         // Pass 2B correction §1 — flexWrap fixes the confirmed overflow:
         // pills that don't fit the available width wrap onto additional
         // rows inside this container instead of extending past it. Never
@@ -308,7 +315,7 @@ export function SmartReminderCard({
         actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
         actionRowStacked: { flexDirection: 'column', alignItems: 'stretch' },
         statusPill: { alignSelf: 'flex-start', paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill, marginBottom: spacing.xs },
-        statusText: { ...typography.caption, fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+        statusText: { ...typeStyle('meta', locale), fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
         // The four tones map onto existing Design 5.1 semantic roles — no
         // new colour is introduced, and urgency never uses success green.
         statusPill_informational: { backgroundColor: semantic.infoTint },
@@ -369,18 +376,18 @@ export function SmartReminderCard({
           backgroundColor: colors.surface,
           marginBottom: spacing.sm,
         },
-        snoozeRowLabel: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary, flex: 1 },
-        snoozeRowDate: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        stepSummary: { ...typography.caption, fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.textPrimary, marginBottom: spacing.xs },
+        snoozeRowLabel: { ...typeStyle('body', locale), fontSize: 15, fontWeight: '600', color: colors.textPrimary, flex: 1 },
+        snoozeRowDate: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary },
+        stepSummary: { ...typeStyle('meta', locale), fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.textPrimary, marginBottom: spacing.xs },
         /* Back is a real, named 44pt control — not small floating text. */
         stepBack: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingRight: spacing.md, marginTop: spacing.xs },
-        stepBackText: { ...typography.caption, fontSize: 13, fontWeight: '700', color: semantic.interactive },
+        stepBackText: { ...typeStyle('meta', locale), fontSize: 13, fontWeight: '700', color: semantic.interactive },
         // The inline Snooze/Dismiss steps read as a distinct decision area
         // without becoming a second card — a tinted block inside the same
         // surface, not a nested SectionCard.
         stepBlock: { marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.card, backgroundColor: colors.surfaceMuted, gap: spacing.xs },
-        stepTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary },
-        stepBody: { ...typography.caption, fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginBottom: spacing.xs },
+        stepTitle: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary },
+        stepBody: { ...typeStyle('meta', locale), fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginBottom: spacing.xs },
         // Snooze and Dismiss sit below the domain action, separated by a
         // hairline so they read as a different tier rather than a third and
         // fourth equally-weighted button.
@@ -404,7 +411,7 @@ export function SmartReminderCard({
           borderRadius: radius.card,
         },
         suppressionLabels: { flexShrink: 1 },
-        suppressionSupport: { ...typography.caption, fontSize: 11, lineHeight: 15, color: colors.textSecondary },
+        suppressionSupport: { ...typeStyle('meta', locale), fontSize: 11, lineHeight: 15, color: colors.textSecondary },
         // Dismiss is the only destructive control here. It is deliberately
         // NOT a filled red button: it is reversible in effect (a future
         // recurrence still appears) and must never out-shout the action
@@ -416,31 +423,51 @@ export function SmartReminderCard({
         factGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: spacing.sm, rowGap: spacing.sm },
         factCellHalf: { width: '50%', paddingRight: spacing.sm },
         factCellFull: { width: '100%' },
-        factGridLabel: { ...typography.caption, fontSize: 11, lineHeight: 15, color: colors.textSecondary },
-        factGridValue: { ...typography.caption, fontSize: 14, lineHeight: 19, fontWeight: '600', color: colors.textPrimary },
+        factGridLabel: { ...typeStyle('meta', locale), fontSize: 11, lineHeight: 15, color: colors.textSecondary },
+        factGridValue: { ...typeStyle('meta', locale), fontSize: 14, lineHeight: 19, fontWeight: '600', color: colors.textPrimary },
         inlineLink: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-start', minHeight: 44, paddingRight: spacing.sm },
-        inlineLinkText: { ...typography.caption, fontSize: 13, fontWeight: '600', color: semantic.interactive },
+        inlineLinkText: { ...typeStyle('meta', locale), fontSize: 13, fontWeight: '600', color: semantic.interactive },
         // Label left, figure right: the scan pattern every other measure
         // surface in Design 5.1 already uses.
         factRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: spacing.md },
-        factLabel: { ...typography.caption, fontSize: 13, lineHeight: 18, color: colors.textSecondary, flexShrink: 1 },
-        factValue: { ...typography.caption, fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.textPrimary },
+        factLabel: { ...typeStyle('meta', locale), fontSize: 13, lineHeight: 18, color: colors.textSecondary, flexShrink: 1 },
+        factValue: { ...typeStyle('meta', locale), fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.textPrimary },
         // The estimate is the one figure here Nolie did not record, so it
         // is the one figure that is toned differently.
         factValueEstimated: { color: semantic.warning },
-        factNote: { ...typography.caption, fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: spacing.xs },
-        factProvenance: { ...typography.caption, fontSize: 12, lineHeight: 17, color: semantic.textTertiary },
+        factNote: { ...typeStyle('meta', locale), fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: spacing.xs },
+        factProvenance: { ...typeStyle('meta', locale), fontSize: 12, lineHeight: 17, color: semantic.textTertiary },
         actionTextOnPrimary: { color: semantic.onInteractive },
         actionButtonOutline: { backgroundColor: 'transparent', borderWidth: 2, borderColor: semantic.interactive },
         actionTextOutline: { color: semantic.interactive },
         actionButtonDisabled: { opacity: 0.5 },
-        actionText: { ...typography.caption, fontSize: 13, color: colors.onAccent, fontWeight: '700', textAlign: 'center' },
+        actionText: { ...typeStyle('meta', locale), fontSize: 13, color: colors.onAccent, fontWeight: '700', textAlign: 'center' },
         actionTextSecondary: { color: colors.textSecondary },
         // Wave 5 — the Design 5.1 semantic warning role, which is darker
         // than the legacy token and needs no per-scheme override.
-        errorText: { ...typography.caption, fontSize: 12, color: semantic.warning, lineHeight: 16, marginTop: spacing.sm },
+        sourceHeading: { ...typeStyle('titleCard', locale), color: colors.textPrimary, marginTop: spacing.sm, marginBottom: 2 },
+        sourceAmount: { ...typeStyle('meta', locale), color: colors.textSecondary, fontVariant: ['tabular-nums'], marginBottom: spacing.sm },
+        sourceList: { gap: spacing.xs, marginBottom: spacing.sm },
+        sourceRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.sm,
+          minHeight: 56,
+          paddingHorizontal: spacing.md,
+          paddingVertical: spacing.sm,
+          borderRadius: radius.control,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surfaceMuted,
+        },
+        sourceRowSelected: { borderColor: semantic.interactive, borderWidth: 2, backgroundColor: colors.surface },
+        sourceRowText: { flex: 1, flexShrink: 1 },
+        sourceRowLabel: { ...typeStyle('body', locale), color: colors.textPrimary, fontWeight: '600', flexShrink: 1 },
+        sourceRowMeta: { ...typeStyle('meta', locale), color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+        sourceDisclosure: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.sm },
+        errorText: { ...typeStyle('meta', locale), fontSize: 12, color: semantic.warning, lineHeight: 16, marginTop: spacing.sm },
       }),
-    [colors, radius, spacing, typography, scheme, semantic]
+    [colors, radius, spacing, typography, locale, scheme, semantic]
   );
 
   if (!reminder) return null;
@@ -667,7 +694,41 @@ export function SmartReminderCard({
   // reject with 'insufficient_source_balance' (never a partial/silently
   // clamped application — see confirmBnplRepaymentTransition's own doc
   // comment).
-  function runBnplConfirmation(paymentSource: 'cash' | 'credit_card' | 'everyday', targetAssetId?: string) {
+  // The EXISTING shared eligibility resolver — the same one the ordinary
+  // bill branch uses. Eligibility is not re-derived or broadened here.
+  const bnplSources = useMemo(
+    () => resolveEligibleBillPaymentSources(data.assets, data.creditCards),
+    [data.assets, data.creditCards]
+  );
+
+  /** The customer's own plan name, from the linked liability — never a
+   * generic placeholder and never parsed from display text. */
+  const bnplPlanName = useMemo(() => {
+    if (!reminder?.liabilityId) return 'this plan';
+    return data.liabilities.find((l) => l.id === reminder.liabilityId)?.label ?? 'this plan';
+  }, [reminder?.liabilityId, data.liabilities]);
+
+  /** Confirm dispatches to the ONE authoritative BNPL handler, routing the
+   * selected option to the payment-source branch it belongs to. */
+  function confirmBnplFromSelection() {
+    const opt = bnplSources.find((o) => o.id === selectedSourceId);
+    if (!opt) return;
+    if (opt.kind === 'credit_card') {
+      runBnplConfirmation('credit_card', undefined, opt.id);
+      return;
+    }
+    if (opt.assetType === 'everyday') {
+      runBnplConfirmation('everyday', opt.id);
+      return;
+    }
+    runBnplConfirmation('cash');
+  }
+
+  // Wave 9b closure — `creditCardId` was always part of
+  // ConfirmBnplRepaymentInput and the transition REJECTS a credit-card
+  // repayment without it (`invalid_source`). Forwarding the selected card is
+  // a wiring fix; the accounting contract is unchanged.
+  function runBnplConfirmation(paymentSource: 'cash' | 'credit_card' | 'everyday', targetAssetId?: string, creditCardId?: string) {
     if (!reminder || !reminder.recurringItemId || !reminder.liabilityId) return;
     setActionError(null);
     setIsSubmitting(true);
@@ -678,6 +739,7 @@ export function SmartReminderCard({
       expectedNextDueDate: item?.nextDueDate ?? '',
       paymentSource,
       targetAssetId,
+          creditCardId,
     });
 
     if (transition.applied) {
@@ -728,11 +790,9 @@ export function SmartReminderCard({
     setActionError(recoverableErrorMessage(transition.reason));
   }
 
+  // Wave 9b closure — BNPL no longer routes through here; it goes through
+  // confirmBnplFromSelection, which only ever runs from an explicit confirm.
   function confirmBillPaid(source: 'cash' | 'credit_card') {
-    if (reminder?.kind === 'bnpl_repayment_due') {
-      runBnplConfirmation(source);
-      return;
-    }
     runConfirmation(source);
   }
 
@@ -759,9 +819,6 @@ export function SmartReminderCard({
   // choice, mirrors confirmBillPaid's own dispatch shape but is only ever
   // reachable for bnpl_repayment_due (see awaitingEverydayAccount's own
   // comment for why this isn't offered to ordinary bills in this pass).
-  function confirmBnplEveryday(accountId: string) {
-    runBnplConfirmation('everyday', accountId);
-  }
 
   const icon =
     reminder.kind === 'salary_check'
@@ -1183,107 +1240,91 @@ export function SmartReminderCard({
             </View>
           ) : null}
 
-          {reminder.kind === 'bnpl_repayment_due' && awaitingSource && !awaitingEverydayAccount ? (
+          {reminder.kind === 'bnpl_repayment_due' && awaitingSource ? (
             <>
-              {/* Same transparency treatment as the income branch above —
-                  shown before the payment-source choice, since that choice
-                  is what determines whether Cash or the credit card is
-                  updated (PRD ask, post-device-testing correction). BNPL
-                  gets its own wording — a second balance (what's still
-                  owed on the plan) changes too. */}
+              {/* Wave 9b closure — the legacy state offered three ragged pills
+                  ("From cash" / "From everyday account" / "From credit card")
+                  where tapping cash or credit card ran the financial mutation
+                  IMMEDIATELY: there was no separation between choosing a
+                  source and confirming. "From credit card" could not even
+                  succeed, because the transition requires `creditCardId` and
+                  the component never supplied one. Replaced by the same
+                  select-then-confirm shape the rest of the app uses, driven by
+                  the EXISTING shared eligibility resolver — no source is
+                  broadened and no eligibility logic is duplicated here. */}
+              <Text style={styles.sourceHeading} accessibilityRole="header">Where was this paid from?</Text>
               {disclosedAmount.valid ? (
-                <Text style={styles.body}>
-                  {`Confirming will record ${formatDisclosureAmount(disclosedAmount.cents)} as an expense, update your chosen payment source, and reduce what you still owe on this plan by the same amount. This updates Nolie only—it does not move money in your bank.`}
+                <Text style={styles.sourceAmount}>
+                  {`${formatDisclosureAmount(disclosedAmount.cents)} · ${bnplPlanName}`}
                 </Text>
               ) : null}
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
-                  onPress={() => confirmBillPaid('cash')}
-                  disabled={isSubmitting}
-                  accessibilityRole="button"
-                  accessibilityLabel="From cash"
-                >
-                  <Text style={styles.actionText}>From cash</Text>
-                </TouchableOpacity>
-                {/* Correction pass, §2 — Everyday Accounts were previously
-                    entirely unreachable from BNPL confirmation (report only
-                    described a cash/credit-card choice); this reuses the
-                    same routed-spending source contract the transaction
-                    engine already supports. Scoped to bnpl_repayment_due
-                    only — see awaitingEverydayAccount's own comment. */}
-                {data.assets.some((a) => a.type === 'everyday') ? (
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
-                    onPress={() => setAwaitingEverydayAccount(true)}
-                    disabled={isSubmitting}
-                    accessibilityRole="button"
-                    accessibilityLabel="From everyday account"
-                  >
-                    <Text style={[styles.actionText, styles.actionTextSecondary]}>From everyday account</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {data.creditCards.length > 0 ? (
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.actionButtonSecondary, isSubmitting ? styles.actionButtonDisabled : null]}
-                    onPress={() => confirmBillPaid('credit_card')}
-                    disabled={isSubmitting}
-                    accessibilityRole="button"
-                    accessibilityLabel="From credit card"
-                  >
-                    <Text style={[styles.actionText, styles.actionTextSecondary]}>From credit card</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </>
-          ) : null}
-
-          {reminder.kind === 'bnpl_repayment_due' && awaitingSource && awaitingEverydayAccount ? (
-            <>
-              {disclosedAmount.valid ? (
-                <Text style={styles.body}>
-                  {`Choose which account this ${formatDisclosureAmount(disclosedAmount.cents)} repayment comes from. Only that account's balance will change.`}
-                </Text>
-              ) : null}
-              <View style={styles.actionRow}>
-                {data.assets
-                  .filter((a) => a.type === 'everyday')
-                  .map((a) => (
+              <View style={styles.sourceList}>
+                {bnplSources.map((opt) => {
+                  const selected = selectedSourceId === opt.id;
+                  return (
                     <TouchableOpacity
-                      key={a.id}
-                      style={[styles.actionButton, isSubmitting ? styles.actionButtonDisabled : null]}
-                      onPress={() => confirmBnplEveryday(a.id)}
+                      key={opt.id}
+                      style={[styles.sourceRow, selected ? styles.sourceRowSelected : null]}
+                      onPress={() => setSelectedSourceId(opt.id)}
                       disabled={isSubmitting}
-                      accessibilityRole="button"
-                      accessibilityLabel={a.label}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected, disabled: isSubmitting }}
+                      accessibilityLabel={`${opt.label}, ${opt.kind === 'credit_card' ? 'credit card' : opt.assetType === 'cash' ? 'cash' : 'everyday account'}, balance ${formatDisclosureAmount(Math.round(opt.currentValue * 100))}`}
+                      testID={`bnpl-source-${opt.id}`}
                     >
-                      <Text style={styles.actionText}>
-                        {a.label} (${a.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                      </Text>
+                      <View style={styles.sourceRowText}>
+                        <Text style={styles.sourceRowLabel}>{opt.label}</Text>
+                        <Text style={styles.sourceRowMeta}>{formatDisclosureAmount(Math.round(opt.currentValue * 100))}</Text>
+                      </View>
+                      {/* Selection is never colour-only: the checkmark glyph and
+                          the row border both carry it, alongside
+                          accessibilityState.selected. Ocean interactive, never
+                          success green — nothing has succeeded yet. */}
+                      <Ionicons
+                        name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={20}
+                        color={selected ? semantic.interactive : colors.textMuted}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
                     </TouchableOpacity>
-                  ))}
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.actionButtonSecondary]}
-                  onPress={() => setAwaitingEverydayAccount(false)}
-                  disabled={isSubmitting}
-                  accessibilityRole="button"
-                  accessibilityLabel="Back"
-                >
-                  <Text style={[styles.actionText, styles.actionTextSecondary]}>Back</Text>
-                </TouchableOpacity>
+                  );
+                })}
               </View>
+              {disclosedAmount.valid ? (
+                <Text style={styles.sourceDisclosure}>
+                  {`This records the repayment in ${brand.name}, updates the selected payment source and reduces the ${bnplPlanName} balance. It does not move money in your bank.`}
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.primaryAction, !selectedSourceId || isSubmitting ? styles.actionButtonDisabled : null]}
+                onPress={confirmBnplFromSelection}
+                disabled={!selectedSourceId || isSubmitting}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !selectedSourceId || isSubmitting }}
+                accessibilityLabel={disclosedAmount.valid ? `Record ${formatDisclosureAmount(disclosedAmount.cents)} repayment` : 'Record repayment'}
+                testID="bnpl-confirm"
+              >
+                <Text style={[styles.actionText, styles.actionTextOnPrimary]}>
+                  {disclosedAmount.valid ? `Record ${formatDisclosureAmount(disclosedAmount.cents)} repayment` : 'Record repayment'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.stepBack}
+                onPress={() => {
+                  setSelectedSourceId(null);
+                  setAwaitingSource(false);
+                }}
+                disabled={isSubmitting}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                testID="bnpl-source-back"
+              >
+                <Text style={styles.stepBackText}>Back</Text>
+              </TouchableOpacity>
             </>
           ) : null}
 
-          {/* Wave 6 final — the standalone acknowledgement control that used
-              to live here is GONE. A due-soon bill now offers the same three
-              intentions every other reminder does: Mark as paid (above),
-              Snooze and Dismiss (below). The acknowledgement was a fourth
-              control that overlapped both of the latter while being vaguer
-              than either — it could not say when the reminder would return,
-              or whether it ever would. Snooze answers "not now, ask me on
-              this day"; Dismiss answers "never for this one". Between them
-              there is nothing left for a bare acknowledgement to mean. */}
           {reminder.kind === 'card_due_soon' ? (
             /* Wave 6 final — one full-width primary, in the same position
                every other kind puts it. "View card" is not here: it is a

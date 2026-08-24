@@ -1,6 +1,9 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, ViewProps } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 /**
  * Design 5.1 Wave 4 — `title`, `supporting` and `footer` are ADDITIVE. Every
@@ -22,6 +25,8 @@ export function SectionCard({
   footer?: React.ReactNode;
 }) {
   const { colors, radius, spacing, cardShadow, typography } = useTheme();
+  // Wave 9b closure — tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -33,11 +38,11 @@ export function SectionCard({
           ...cardShadow,
         },
         title: {
-          ...typography.heading,
+          ...typeStyle('titleCard', locale),
           color: colors.textPrimary,
         },
         supporting: {
-          ...typography.caption,
+          ...typeStyle('meta', locale),
           color: colors.textSecondary,
           marginTop: 2,
         },
@@ -48,7 +53,7 @@ export function SectionCard({
           marginTop: spacing.md,
         },
       }),
-    [colors, radius, spacing, cardShadow, typography]
+    [colors, radius, spacing, cardShadow, typography, locale]
   );
 
   return (

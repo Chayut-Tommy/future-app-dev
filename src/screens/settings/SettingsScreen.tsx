@@ -4,17 +4,17 @@ import { useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { EditProfileModal } from '../../components/settings/EditProfileModal';
 import { InfoSheet } from '../../components/shared/InfoSheet';
-import { MONEY_GOALS, CONFIDENCE_LEVELS } from '../../lib/profileOptions';
 import { ThemePreference } from '../../types/models';
 import { brand } from '../../lib/brand';
-import { MoneyPersona, MONEY_PERSONA_LABEL, resolveMoneyPersona } from '../../lib/calculations/moneyPersona';
 
-const MONEY_PERSONA_OPTIONS: MoneyPersona[] = ['employee', 'freelancer', 'retiree', 'investor', 'business_owner'];
 
 type LegalSheetKey = 'disclaimer' | 'assumptions' | 'privacy' | 'terms' | 'financialServices' | 'region' | null;
 
@@ -70,18 +70,29 @@ export function SettingsScreen() {
   const { data, updateUser } = useAppState();
   const { t } = useTranslation();
   const { colors, radius, spacing, typography, preference, setPreference } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [legalSheet, setLegalSheet] = useState<LegalSheetKey>(null);
   const languageLabel = t(LANGUAGE_LABELS[data.user.language ?? 'system']);
   const cardTheme = data.user.luluCardTheme ?? 'blue';
 
-  const moneyGoalLabel = MONEY_GOALS.find((g) => g.value === data.user.moneyGoal)?.label ?? 'Not set';
-  const confidenceLabel = CONFIDENCE_LEVELS.find((c) => c.value === data.user.confidenceLevel)?.label ?? 'Not set';
+  // Wave 9b — read from the ONE authoritative goal collection, never from
+  // the retired profile enum. `priority` is the app's existing canonical
+  // focus concept, so a prioritised active goal is named directly; otherwise
+  // the row states how many are active, or stays calm when there are none.
+  const activeGoals = data.goals.filter((g) => g.status === 'active');
+  const focusedGoal = activeGoals.find((g) => g.priority === 'high') ?? null;
+  const goalsRowValue = focusedGoal
+    ? focusedGoal.name
+    : activeGoals.length > 0
+    ? `${activeGoals.length} active`
+    : 'No active goals yet';
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm },
+        sectionTitle: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm },
         optionRow: { flexDirection: 'row', gap: spacing.sm },
         option: {
           flex: 1,
@@ -91,27 +102,72 @@ export function SettingsScreen() {
           backgroundColor: colors.surfaceMuted,
         },
         optionActive: { backgroundColor: colors.accentSoft },
-        optionLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 4 },
+        optionLabel: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: 4 },
         optionLabelActive: { color: colors.accentStrong, fontWeight: '600' },
         row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
-        rowLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary },
-        rowValue: { ...typography.caption, fontSize: 12, color: colors.textMuted },
-        rowValueActive: { ...typography.caption, fontSize: 13, color: colors.accent, fontWeight: '600' },
+        rowLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary },
+        rowValue: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textMuted },
+        rowValueActive: { ...typeStyle('meta', locale), fontSize: 13, color: colors.accent, fontWeight: '600' },
         rowValueLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-        legalBody: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 21 },
+        legalBody: { ...typeStyle('body', locale), fontSize: 14, color: colors.textSecondary, lineHeight: 21 },
         guestBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.accentSoft, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md, marginBottom: spacing.sm, alignSelf: 'flex-start' },
-        guestBadgeText: { ...typography.micro, color: colors.accentStrong, fontWeight: '700' },
+        guestBadgeText: { ...typeStyle('labelTab', locale), color: colors.accentStrong, fontWeight: '700' },
         dangerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm },
         dangerRowLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-        dangerRowLabel: { ...typography.body, fontSize: 14, color: colors.danger, fontWeight: '600' },
+        dangerRowLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.danger, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, locale]
   );
 
   return (
     <Screen title={t('settings.title')} onBack={() => navigation.goBack()}>
       <SectionCard>
-        <Text style={styles.sectionTitle}>{t('settings.appearance')}</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{t('settings.profile')}</Text>
+        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
+          <Text style={styles.rowLabel}>Name</Text>
+          <View style={styles.rowValueLink}>
+            <Text style={styles.rowValueActive}>{data.user.name || 'Not set'}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
+          <Text style={styles.rowLabel}>Age</Text>
+          <View style={styles.rowValueLink}>
+            <Text style={styles.rowValueActive}>{data.user.age ?? 'Not set'}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </View>
+        </TouchableOpacity>
+        {/* Wave 9b — "Main money goal" was a separate profile ENUM
+            ("Save more money") that looked like a trackable goal but had no
+            connection to the customer's real Goals ("New car", "Build
+            wealth"). It is replaced by a row backed by the one authoritative
+            Goals source, navigating into the existing Goals journey. The
+            stored `moneyGoal` field is deliberately left untouched for
+            backward compatibility — it is simply no longer presented as a
+            goal, and nothing auto-creates a Goal from it.
+
+            "Money confidence" was removed outright: it displayed a
+            judgemental status ("Beginner") that drives no calculation, no
+            Score, no eligibility and no content anywhere in the app. */}
+        <TouchableOpacity
+          style={styles.row}
+          onPress={() => navigation.navigate('Goals')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Goals. ${goalsRowValue}`}
+          accessibilityHint="Opens your goals"
+          testID="settings-goals-row"
+        >
+          <Text style={styles.rowLabel}>Goals</Text>
+          <View style={styles.rowValueLink}>
+            <Text style={styles.rowValueActive}>{goalsRowValue}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </View>
+        </TouchableOpacity>
+      </SectionCard>
+
+      <SectionCard>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{t('settings.appearance')}</Text>
         <View style={styles.optionRow}>
           {OPTIONS.map((opt) => {
             const active = preference === opt.value;
@@ -130,7 +186,7 @@ export function SettingsScreen() {
       </SectionCard>
 
       <SectionCard>
-        <Text style={styles.sectionTitle}>{t('settings.preferences')}</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{t('settings.preferences')}</Text>
         <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Language')} activeOpacity={0.7}>
           <Text style={styles.rowLabel}>{t('settings.language')}</Text>
           <View style={styles.rowValueLink}>
@@ -160,53 +216,7 @@ export function SettingsScreen() {
       </SectionCard>
 
       <SectionCard>
-        <Text style={styles.sectionTitle}>{t('settings.profile')}</Text>
-        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
-          <Text style={styles.rowLabel}>Name</Text>
-          <View style={styles.rowValueLink}>
-            <Text style={styles.rowValueActive}>{data.user.name || 'Not set'}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
-          <Text style={styles.rowLabel}>Age</Text>
-          <View style={styles.rowValueLink}>
-            <Text style={styles.rowValueActive}>{data.user.age ?? 'Not set'}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
-          <Text style={styles.rowLabel}>Main money goal</Text>
-          <View style={styles.rowValueLink}>
-            <Text style={styles.rowValueActive}>{moneyGoalLabel}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.row} onPress={() => setProfileModalVisible(true)} activeOpacity={0.7}>
-          <Text style={styles.rowLabel}>Money confidence</Text>
-          <View style={styles.rowValueLink}>
-            <Text style={styles.rowValueActive}>{confidenceLabel}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </View>
-        </TouchableOpacity>
-      </SectionCard>
-
-      <SectionCard>
-        <Text style={styles.sectionTitle}>How would you describe your income?</Text>
-        <Text style={styles.rowValue}>{brand.name} uses this to choose wording for the Money tab only — calculations never change.</Text>
-        {MONEY_PERSONA_OPTIONS.map((p) => {
-          const active = (data.user.moneyPersona ?? resolveMoneyPersona(data.user)) === p;
-          return (
-            <TouchableOpacity key={p} style={styles.row} activeOpacity={0.7} onPress={() => updateUser({ moneyPersona: p })}>
-              <Text style={styles.rowLabel}>{MONEY_PERSONA_LABEL[p]}</Text>
-              {active ? <Ionicons name="checkmark-circle" size={18} color={colors.accent} /> : null}
-            </TouchableOpacity>
-          );
-        })}
-      </SectionCard>
-
-      <SectionCard>
-        <Text style={styles.sectionTitle}>{t('settings.account')}</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{t('settings.account')}</Text>
         <View style={styles.guestBadge}>
           <Ionicons name="person-outline" size={13} color={colors.accentStrong} />
           <Text style={styles.guestBadgeText}>Guest mode</Text>
@@ -226,7 +236,7 @@ export function SettingsScreen() {
       </SectionCard>
 
       <SectionCard>
-        <Text style={styles.sectionTitle}>{t('settings.security')}</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">{t('settings.security')}</Text>
         <View style={styles.row}>
           <Text style={styles.rowLabel}>Face ID</Text>
           <Text style={styles.rowValue}>Coming soon</Text>
@@ -238,7 +248,7 @@ export function SettingsScreen() {
       </SectionCard>
 
       <SectionCard>
-        <Text style={styles.sectionTitle}>About and legal</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">About and legal</Text>
         {(Object.keys(LEGAL_CONTENT) as Exclude<LegalSheetKey, null>[]).map((key) => (
           <TouchableOpacity key={key} style={styles.row} activeOpacity={0.7} onPress={() => setLegalSheet(key)}>
             <Text style={styles.rowLabel}>{LEGAL_CONTENT[key].title}</Text>
@@ -246,6 +256,8 @@ export function SettingsScreen() {
           </TouchableOpacity>
         ))}
       </SectionCard>
+
+
 
       <SectionCard>
         <TouchableOpacity style={styles.dangerRow} onPress={() => navigation.navigate('ResetLulu')} activeOpacity={0.7}>

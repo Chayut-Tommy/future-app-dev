@@ -1008,3 +1008,47 @@ TypeScript 0. Legacy **86 files / 6,937**. Rendered **40 suites / 352**, green t
 1. **BNPL category.** `confirmBnplRepaymentTransition` stamps `cat-other-expense`. Investigate whether BNPL is a genuine specialised repayment; if so, correct it to the existing canonical debt-repayment category **without changing its accounting**. Not touched in Wave 9a.
 2. **Income label matching.** The income branch of `confirmRecurringOccurrenceTransition` resolves a category by lower-cased label match — the same name-matching anti-pattern this wave removed from the expense branch. Audit it; do not change it without a structured, deterministic source, because correcting it would move which category existing income confirmations land in.
 3. Wave 9b (Settings, Language, Reset, Goals, Transactions) and Wave 9c (onboarding rebuild) remain **unstarted**.
+
+---
+
+# Change control — Wave 9b closure and checkpoint (24 August 2026)
+
+**Baseline** `76d2f42` (Wave 9a checkpoint). Approved by the owner's iOS device testing across four correction rounds. Earlier entries above are left exactly as written.
+
+## Settings recomposition and profile-field retirement
+
+Settings now follows the canonical spine — **Profile, Appearance, Language, Account, Security, About and legal, Reset Nolie** — with every section title a real VoiceOver heading. Three profile questions were retired from Settings and Edit Profile after a full usage audit proved none drives any calculation, Score, eligibility or content outcome: **Main money goal** (a profile enum that looked like a trackable goal but never connected to the customer's real Goals — replaced by a Goals row backed by the authoritative goal collection and its existing `priority` focus concept), **Money confidence** (a judgemental status with no consumer), and **"How would you describe your income?"** (five employment identities that tailored two wording strings — the same wording is derivable from the recorded pay cadence). All three stored fields remain on the model untouched; nothing is migrated, cleared or auto-created.
+
+## Semantic typography migration
+
+Ten customer surfaces still spread `tokens.typography.*`, which carries **no `fontFamily`** — so Settings, Language, Reset, Edit Profile, Goals, Goal Detail, Transactions, the entire reminder journey, "What happens next" and the AUP hero all rendered in the platform font. All now resolve `typeStyle(role, locale)` with `locale` as a live stylesheet dependency. Runtime proof was added at checkpoint: a rendered suite flattens the actual mounted Text styles of the What-happens-next tree and proves Figtree in English and Noto Sans Thai in Thai across the heading, supporting sentence, date headings, bill/BNPL/card rows, tabular-numeral amounts and the View all upcoming control, with icon fonts excluded.
+
+## BNPL corrections
+
+A ZIP plan due **tomorrow** never reached the reminder queue: `computeRankedReminder` had BNPL branches in the overdue and due-today tiers but the due-soon tier filtered BNPL out with no branch of its own, so the candidate was never constructed. One mirrored branch restores the existing contract — BNPL ranks with bills, cards keep their tier, the queue stays finite and deterministic. The BNPL repayment transaction is now categorised **`cat-debt`** (was the unconditional `cat-other-expense` literal), proven display-only: every accounting resolver keys on the structured BNPL liability lookup, never on `categoryId`.
+
+The BNPL source state was rebuilt as **select-then-confirm**: the legacy three-pill layout ran the financial mutation on first tap ("From credit card" could not even succeed — the transition requires `creditCardId` and the component never supplied one), and its copy called the repayment "an expense", contradicting the accepted specialised accounting. Sources now come from the existing shared eligibility resolver as 56pt radio rows with Ocean-interactive selection (never success green), a gated full-width confirm, a shared 44pt Back, and repayment wording that promises no bank movement. Reconciliation unchanged: one exact-cent transaction, liability and funding source each move once, ordinary spending and recorded cashflow stay $0, double-confirm and stale confirmations refused.
+
+## One identity for the AUP metric
+
+Today rendered **"BUSINESS CASH POSITION · $32,836"** while Money rendered "Available until payday" for the same figure: a persisted legacy `moneyPersona` still overrode the cadence fallback inside `computeMoneyHeroCopy`. The heading and amount label are now canonical constants in the shared presentation selector, proven across the full 5-persona × 4-cadence matrix; "Business Cash Position", "Retirement Income" and "Passive Income" can no longer reach the surface. Non-payday fallbacks, the calculation, the daily amount and the stored field are all untouched.
+
+## Illustrative Your Future wording
+
+The lead sentence interpolated one exact age ("…around age 30"), presenting an illustrative projection as a personalised forecast. It now reads *"Based on what you've recorded, the timeline below illustrates how your wealth could change over time."*; the caption is **Illustrative timeline**. The age tiles, "How this is calculated", the disclaimer and the projection engine are byte-unchanged.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **91 files / 7,246**. Rendered **41 suites / 363** (the new runtime-typography suite adds 11). Wave 9a floors all green (cards/calculators 132, reachability 109, compliance 234, bill-category 120). BNPL reconciliation 50 + 38 + 169. Contrast, typography, iconography, navigation and accessibility gates green. Dependency and config diffs empty. `git diff --check` clean. Doctor 17/18 (the accepted pre-existing "2 packages out of date"). Both exports exit 0.
+
+**Protected financial engines unchanged**: safeToSpend, futureProjection, moneyTimeline, repaymentAccounting, bnpl, bnplHandoff, recurringSchedule, moneyPersona, billCategory, creditHealth, monthlySummary, Score, storage, models and defaultCategories are all byte-identical to `76d2f42`. The only engine-adjacent changes are the two authorised ones documented above: `reminders.ts` (BNPL due-soon tier) and `AppStateContext.tsx` (BNPL `cat-debt` stamp).
+
+**iOS: device-approved by the owner.** **Android: export-tested only — not device-tested.** Physical Android verification remains deferred to Wave 11 per owner decision 6.
+
+## Carry-overs (recorded, not authority to change)
+
+1. **`MoneyPlanCard` (10) and `SavingsAllocationDetailSheet` (6)** still spread legacy `typography.*` — adjacent Money surfaces outside this wave's authorised set.
+2. **Navigation-shell tab labels** (`FloatingNavBar`) render with no `fontFamily` — pre-existing shell debt discovered by the runtime sweep, deliberately excluded from it.
+3. **Latent `projectBnplOccurrences` boundary** (`bnpl.ts`): it passes the raw `nextDueDate` timestamp as the generator's `from` while occurrences are quantised to local midnight, so any stored time-of-day would silently drop the FIRST BNPL instalment from the timeline and window sums. Every shipped writer is midnight-anchored, so customers are unaffected today; fixing the boundary needs its own authorisation because the file is a protected engine.
+4. **Income category-by-label matching** and the recurring-income `categoryId` persistence remain as recorded in the Wave 9a entry.
+5. **Wave 9c onboarding rebuild** (retire Main Money Goal/Money Confidence from onboarding, seven-state journey) not started at this checkpoint.

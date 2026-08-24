@@ -3,6 +3,9 @@ import { Animated, LayoutChangeEvent, PixelRatio, StyleSheet, Text, TouchableOpa
 import type { RefObject } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { BriefingTile, computeBriefingLayout } from '../../lib/calculations/briefingTiles';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 
@@ -137,6 +140,9 @@ export function BriefingTileRow({
   reminderTileRef?: RefObject<any>;
 }) {
   const { spacing, radius, typography, naviloPalette } = useTheme();
+  // Wave 9b closure — tokens.typography carries no fontFamily, so every
+  // reminder string rendered in the platform font. Resolve the shipped role.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const fontScale = PixelRatio.getFontScale();
   // 0 until the row's own first layout pass — computeBriefingLayout treats
   // that as "not yet measured" and returns the safest possible interim
@@ -174,11 +180,11 @@ export function BriefingTileRow({
           borderColor: naviloPalette.tileBorder,
         },
         iconRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
-        label: { ...typography.micro, fontSize: 10, fontWeight: '700', color: naviloPalette.heroForeground, letterSpacing: 0.3, flexShrink: 1 },
-        value: { ...typography.body, fontSize: 15, fontWeight: '800', color: naviloPalette.heroForeground, marginTop: 2 },
-        supportingLine: { ...typography.micro, fontSize: 10, color: naviloPalette.heroForeground, marginTop: 2 },
+        label: { ...typeStyle('labelTab', locale), fontSize: 10, fontWeight: '700', color: naviloPalette.heroForeground, letterSpacing: 0.3, flexShrink: 1 },
+        value: { ...typeStyle('body', locale), fontSize: 15, fontWeight: '800', color: naviloPalette.heroForeground, marginTop: 2 },
+        supportingLine: { ...typeStyle('labelTab', locale), fontSize: 10, color: naviloPalette.heroForeground, marginTop: 2 },
       }),
-    [spacing, radius, typography, naviloPalette, basisPercent, isFixedThreeColumn, tileWidth]
+    [spacing, radius, typography, locale, naviloPalette, basisPercent, isFixedThreeColumn, tileWidth]
   );
 
   return (

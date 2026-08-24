@@ -386,7 +386,11 @@ function assertKindOpensWithContent(kind: SmartReminderKind, reminder: SmartRemi
     bill_overdue: /\(reminder\.kind === 'bill_overdue' \|\| reminder\.kind === 'bill_due_soon' \|\| reminder\.kind === 'bnpl_repayment_due'\) && !awaitingSource \? \(/,
     bill_due_soon: /\(reminder\.kind === 'bill_overdue' \|\| reminder\.kind === 'bill_due_soon'\) && awaitingSource \? \(/,
     card_due_soon: /reminder\.kind === 'card_due_soon' \? \(/,
-    bnpl_repayment_due: /reminder\.kind === 'bnpl_repayment_due' && awaitingSource && !awaitingEverydayAccount \? \(/,
+    // RECONCILED — Wave 9b closure: the guard no longer needs
+    // `!awaitingEverydayAccount`; the separate everyday sub-state was folded
+    // into ONE source selector. PRESERVED INTENT: the kind still has a real,
+    // reachable, contentful JSX branch.
+    bnpl_repayment_due: /reminder\.kind === 'bnpl_repayment_due' && awaitingSource \? \(/,
     loan_repayment_due: /reminder\.kind === 'loan_repayment_due' \? \(/,
   };
   (Object.keys(KIND_BRANCH_PATTERNS) as SmartReminderKind[]).forEach((kind) => {

@@ -2,6 +2,9 @@ import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { TimelineEvent, TimelineEventKind } from '../../lib/calculations/moneyTimeline';
 import { reconcileDisplayedAmounts } from '../../lib/calculations/displayReconciliation';
 import { occurrenceDateKey, eventOccurrenceIdentity, occurrenceIdentityKey } from '../../lib/calculations/todayBriefing';
@@ -139,6 +142,9 @@ export function MoneyTimelineCard({
   reduceMotion?: boolean;
 }) {
   const { colors, radius, spacing, typography, cardShadow, semantic } = useTheme();
+  // Wave 9b closure — tokens.typography carries no fontFamily, so these
+  // rows rendered in the platform font. Resolve the shipped role instead.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   // Wave 6 correction D — inline expansion state. Collapsed by default so
   // the sections beneath the timeline stay reachable.
@@ -206,11 +212,11 @@ export function MoneyTimelineCard({
           borderTopColor: semantic.border,
           marginTop: spacing.sm,
         },
-        expandText: { ...typography.body, fontSize: 14, fontWeight: '600', color: semantic.interactive },
+        expandText: { ...typeStyle('body', locale), fontSize: 14, fontWeight: '600', color: semantic.interactive },
         group: { marginBottom: spacing.md },
         groupHeader: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: spacing.sm },
-        groupRelative: { ...typography.heading, fontSize: 13, color: colors.textPrimary },
-        groupDate: { ...typography.micro, fontSize: 11, color: colors.textMuted },
+        groupRelative: { ...typeStyle('titleCard', locale), fontSize: 13, color: colors.textPrimary },
+        groupDate: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted },
         divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginBottom: spacing.md },
         row: { flexDirection: 'row', alignItems: 'center' },
         dot: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
@@ -226,12 +232,12 @@ export function MoneyTimelineCard({
           ...cardShadow,
         },
         textBlock: { flex: 1 },
-        label: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
-        sublabel: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: 1 },
-        amount: { ...typography.heading, fontSize: 14, marginRight: 4 },
-        empty: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, paddingVertical: spacing.md },
+        label: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        sublabel: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, marginTop: 1 },
+        amount: { ...typeStyle('titleCard', locale), fontSize: 14, marginRight: 4, fontVariant: ['tabular-nums'] },
+        empty: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, lineHeight: 18, paddingVertical: spacing.md },
       }),
-    [colors, radius, spacing, typography, cardShadow, semantic]
+    [colors, radius, spacing, typography, locale, cardShadow, semantic]
   );
 
   if (groups.length === 0) {

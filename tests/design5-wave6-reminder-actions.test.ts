@@ -131,7 +131,12 @@ console.log('\n=== 4. Queue, focus and dismissal behaviour is untouched (Class C
 console.log('\n=== 5. Touch targets and announcements (Class C) ===');
 {
   assert('5a. every action is a real button with its own accessible name', (CODE.match(/accessibilityRole="button"/g) || []).length >= 6);
-  assert('5b. each carries an explicit accessibilityLabel', (CODE.match(/accessibilityLabel="/g) || []).length >= 6);
+  // RECONCILED — Wave 9b closure. The three legacy BNPL pills carried STATIC
+  // double-quoted labels ("From cash" ...). Their replacements carry DYNAMIC
+  // labels naming the real account, its type and its balance — strictly more
+  // informative. The clause counted only the double-quoted form.
+  assert('5b. each carries an explicit accessibilityLabel', ((CODE.match(/accessibilityLabel="/g) || []).length + (CODE.match(/accessibilityLabel=\{/g) || []).length) >= 6);
+  assert('5b-i. the BNPL source rows name account, type and balance', /accessibilityLabel=\{`\$\{opt\.label\}, /.test(CODE));
   assert('5c. and the action buttons meet a 44pt minimum — 48pt, since they resolve real money', /const REMINDER_ACTION_MIN_HEIGHT = 48;/.test(CARD) && /minHeight: REMINDER_ACTION_MIN_HEIGHT/.test(CODE));
   assert('5d. no state is communicated by colour alone — every control carries its own words', !/actionButton[\s\S]{0,120}<View\s*\/>/.test(CODE));
 }

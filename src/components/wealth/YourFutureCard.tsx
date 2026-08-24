@@ -155,19 +155,17 @@ export function YourFutureCard() {
         <Text style={styles.identityTitle} accessibilityRole="header">Your future</Text>
       </View>
 
-      {nextMilestone ? (
+      {/* Wave 9b closure, Correction C — the lead sentence used to interpolate
+          a single exact age ("…could reach your next wealth milestone around
+          age 30."). The projection behind it is illustrative, but naming one
+          precise age reads as a personalised forecast. The prose now says what
+          the card IS; the age-based tiles below remain, because they are
+          visibly labelled as an illustrative timeline and carry their own
+          disclaimer. No projection, milestone, figure or age changed — only
+          this sentence. */}
+      {nextMilestone || (projections && projections.length > 0) ? (
         <Text style={styles.freedomText}>
-          {nextMilestone.age
-            ? `At your current saving pace, ${brand.name} estimates you could reach your next wealth milestone around age ${nextMilestone.age}.`
-            : `At your current saving pace, ${brand.name} estimates you could reach your next wealth milestone in about ${nextMilestone.yearsAway} year${
-                nextMilestone.yearsAway === 1 ? '' : 's'
-              }.`}
-        </Text>
-      ) : projections && projections.length > 0 ? (
-        <Text style={styles.freedomText}>
-          {projections[0].monthlyContribution > 0
-            ? `At your current saving pace, you could reach ${formatMoney(projections[projections.length - 1].projectedNetWorth)} net worth around age ${projections[projections.length - 1].age}.`
-            : `With no further monthly saving assumed, your existing balance alone could grow to ${formatMoney(projections[projections.length - 1].projectedNetWorth)} around age ${projections[projections.length - 1].age}.`}
+          {`Based on what you've recorded, the timeline below illustrates how your wealth could change over time.`}
         </Text>
       ) : (
         <Text style={styles.body}>Add income and a savings buffer and {brand.name} will estimate your next wealth milestone.</Text>
@@ -187,7 +185,7 @@ export function YourFutureCard() {
               destination is unchanged: the same per-age breakdown sheet the
               cells already opened. */}
           <View style={styles.projectionHead}>
-            <Text style={styles.subheading}>Estimated at these ages</Text>
+            <Text style={styles.subheading}>Illustrative timeline</Text>
             <TouchableOpacity
               style={styles.calcButton}
               onPress={() => setBreakdownAge(projections[0])}

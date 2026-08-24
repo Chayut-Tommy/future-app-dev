@@ -3,6 +3,9 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { ProgressBar } from '../../components/shared/ProgressBar';
 import { AddGoalModal } from '../../components/goals/AddGoalModal';
@@ -23,6 +26,8 @@ export function GoalsScreen() {
   const [visible, setVisible] = useState(false);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const { colors, spacing, typography, cardShadow } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const activeGoals = data.goals.filter((g) => g.status === 'active');
   const completedGoals = data.goals.filter((g) => g.status === 'completed');
@@ -42,7 +47,7 @@ export function GoalsScreen() {
     () =>
       StyleSheet.create({
         emptyContainer: { flexGrow: 1, justifyContent: 'center' },
-        sectionTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm, marginTop: spacing.lg },
+        sectionTitle: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm, marginTop: spacing.lg },
         card: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -54,13 +59,13 @@ export function GoalsScreen() {
         },
         cardBody: { flex: 1, marginRight: spacing.sm },
         cardTitle: {
-          ...typography.heading,
+          ...typeStyle('titleCard', locale),
           fontSize: 15,
           color: colors.textPrimary,
           marginBottom: spacing.sm,
         },
         cardSubtitle: {
-          ...typography.caption,
+          ...typeStyle('meta', locale),
           fontSize: 12,
           color: colors.textSecondary,
           marginTop: spacing.xs,
@@ -68,7 +73,7 @@ export function GoalsScreen() {
         completedCard: { backgroundColor: colors.goldSoft },
         completedIcon: { marginRight: spacing.sm },
       }),
-    [colors, spacing, typography, cardShadow]
+    [colors, spacing, typography, locale, cardShadow]
   );
 
   function renderGoalCard(item: Goal, completed: boolean) {
@@ -120,7 +125,7 @@ export function GoalsScreen() {
 
           {completedGoals.length > 0 ? (
             <>
-              <Text style={styles.sectionTitle}>🎉 Completed Goals</Text>
+              <Text style={styles.sectionTitle} accessibilityRole="header">🎉 Completed Goals</Text>
               {completedGoals.map((g) => renderGoalCard(g, true))}
             </>
           ) : null}
@@ -133,7 +138,7 @@ export function GoalsScreen() {
               necessarily completed. */}
           {archivedGoals.length > 0 ? (
             <>
-              <Text style={styles.sectionTitle}>Archived goals</Text>
+              <Text style={styles.sectionTitle} accessibilityRole="header">Archived goals</Text>
               {archivedGoals.map((g) => renderGoalCard(g, false))}
             </>
           ) : null}

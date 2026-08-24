@@ -466,10 +466,27 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
     'and goals_underfunded now presents the SAME canonical cycle amount as the normal state, so the card and its breakdown cannot disagree',
     /case 'goals_underfunded':[\s\S]*?\.\.\.resolveAmount\(Math\.max\(0, safeToSpend\.cycleRemainingPool\)\),/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
   );
+  // RECONCILED — Wave 9b closure, Correction A. The clause matched
+  // `primaryCopy: heroCopy.amountLabel`. That label was persona-derived:
+  // Today showed "BUSINESS CASH POSITION" while Money showed "Available
+  // until payday" for the same figure, because a persisted legacy
+  // `moneyPersona` still overrode the cadence fallback. The primary line is
+  // now the persona-free canonical constant.
+  //
+  // PRESERVED INTENT — the goal statement is SUPPORTING copy, never the
+  // primary amount line, and never quotes the monthly cash-flow figure — is
+  // unchanged, and the primary line is still asserted to be the amount label.
   assert(
     'and its goal statement is supporting copy, never the primary amount line, and never quotes the monthly cash-flow figure',
-    /case 'goals_underfunded':[\s\S]*?primaryCopy: heroCopy\.amountLabel,/.test(SAFE_TO_SPEND_PRESENTATION_SRC) &&
+    /case 'goals_underfunded':[\s\S]*?primaryCopy: AVAILABLE_UNTIL_PAYDAY_AMOUNT_LABEL,/.test(SAFE_TO_SPEND_PRESENTATION_SRC) &&
       !/availableForGoals\s*\n?\s*\)\} is currently available/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
+  );
+  assert(
+    'and that primary line is now persona-free, so Today and Money cannot name the same figure differently',
+    /export const AVAILABLE_UNTIL_PAYDAY_AMOUNT_LABEL = 'Estimated amount remaining';/.test(SAFE_TO_SPEND_PRESENTATION_SRC) &&
+      // Executable code only: the doc comment beside the fix names the
+      // retired field in order to explain what was corrected and why.
+      !/eyebrowScheduled/.test(SAFE_TO_SPEND_PRESENTATION_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1'))
   );
   assert(
     'the unavailable_balance_data branch renders neither $0 nor any numeric formatMoney call, does not render the "≈ .../day" daily-rate line, and renders whatever primaryCopy/supportingCopy the shared selector returns (Pass 2A correction: statusLines was replaced by these two explicit fields; the literal balance-specific wording itself now lives once in safeToSpendPresentation.ts, checked separately below, not duplicated here)',

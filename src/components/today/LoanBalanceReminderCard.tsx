@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { LiabilityType } from '../../types/models';
@@ -24,6 +27,9 @@ const LOAN_COPY: Partial<Record<LiabilityType, { emoji: string; label: string; i
 export function LoanBalanceReminderCard() {
   const { data, updateLiability } = useAppState();
   const { colors, radius, spacing, typography } = useTheme();
+  // Wave 9b closure — tokens.typography carries no fontFamily, so every
+  // reminder string rendered in the platform font. Resolve the shipped role.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [modalVisible, setModalVisible] = useState(false);
 
   const loan = data.liabilities.find(
@@ -49,13 +55,13 @@ export function LoanBalanceReminderCard() {
         },
         iconBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
         textBlock: { flex: 1 },
-        title: { ...typography.heading, fontSize: 13, color: colors.textPrimary, marginBottom: 2 },
-        body: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
+        title: { ...typeStyle('titleCard', locale), fontSize: 13, color: colors.textPrimary, marginBottom: 2 },
+        body: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.sm },
         button: { alignSelf: 'flex-start', backgroundColor: colors.surface, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md },
-        buttonText: { ...typography.micro, fontSize: 11, color: colors.textPrimary, fontWeight: '700' },
+        buttonText: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textPrimary, fontWeight: '700' },
         dismissButton: { padding: 4 },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, locale]
   );
 
   if (!loan || !copy) return null;

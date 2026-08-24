@@ -783,8 +783,8 @@ console.log('\n=== Section 10: component wiring (Structural — .tsx files canno
     // the-review device-test defect (dismiss()'s own local dismissedIds Set
     // conflicting with the reducer's correct re-selection of an unchanged
     // top reminder). The other six confirm/action functions are unchanged.
-    'every one of SmartReminderCard\'s confirm/action/outcome functions (runConfirmation, runBnplConfirmation, confirmSalary, confirmSalaryToDestination, confirmBillPaid, confirmBnplEveryday, deferReminder, acknowledgeReminder, reportCompleted, reportAlreadyResolved) exists with its current signature',
-    ['function deferReminder()', 'function acknowledgeReminder()', 'function reportCompleted(transactionId: string, latestData: AppData)', 'function reportAlreadyResolved()', 'function runConfirmation(', 'function runBnplConfirmation(', 'function confirmSalary()', 'function confirmSalaryToDestination(', 'function confirmBillPaid(', 'function confirmBnplEveryday('].every((needle) =>
+    'every one of SmartReminderCard\'s confirm/action/outcome functions (runConfirmation, runBnplConfirmation, confirmSalary, confirmSalaryToDestination, confirmBillPaid, confirmBnplFromSelection, deferReminder, acknowledgeReminder, reportCompleted, reportAlreadyResolved) exists with its current signature',
+    ['function deferReminder()', 'function acknowledgeReminder()', 'function reportCompleted(transactionId: string, latestData: AppData)', 'function reportAlreadyResolved()', 'function runConfirmation(', 'function runBnplConfirmation(', 'function confirmSalary()', 'function confirmSalaryToDestination(', 'function confirmBillPaid(', 'function confirmBnplFromSelection('].every((needle) =>
       SMART_REMINDER_CARD_SRC.includes(needle)
     )
   );

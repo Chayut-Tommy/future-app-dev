@@ -4,6 +4,9 @@ import { useNavigation } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { Screen } from '../../components/shared/Screen';
 import { resolveDeviceLanguage } from '../../i18n';
@@ -29,6 +32,8 @@ export function LanguageScreen() {
   const { data, updateUser } = useAppState();
   const { t } = useTranslation();
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const current: LanguageOption = data.user.language ?? 'system';
   const deviceLanguageLabel = resolveDeviceLanguage() === 'th' ? t('language.thai') : t('language.english');
@@ -36,8 +41,8 @@ export function LanguageScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        title: { ...typography.title, fontSize: 22, color: colors.textPrimary, marginBottom: spacing.xs },
-        subtitle: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.xl },
+        title: { ...typeStyle('titleSection', locale), fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.xs },
+        subtitle: { ...typeStyle('body', locale), fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.xl },
         option: {
           backgroundColor: colors.surface,
           borderRadius: radius.card,
@@ -49,12 +54,12 @@ export function LanguageScreen() {
         },
         optionActive: { borderColor: colors.accent },
         optionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-        optionLabel: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
-        previewGreeting: { ...typography.body, fontSize: 14, color: colors.textPrimary, marginTop: spacing.sm, fontWeight: '600' },
-        previewBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-        deviceCaption: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: 4 },
+        optionLabel: { ...typeStyle('titleCard', locale), fontSize: 15, color: colors.textPrimary },
+        previewGreeting: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, marginTop: spacing.sm, fontWeight: '600' },
+        previewBody: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+        deviceCaption: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, marginTop: 4 },
       }),
-    [colors, radius, spacing, typography, cardShadow]
+    [colors, radius, spacing, typography, locale, cardShadow]
   );
 
   return (

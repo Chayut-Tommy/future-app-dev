@@ -3,6 +3,9 @@ import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { QuickAddModal } from '../../components/dashboard/QuickAddModal';
 import { Screen } from '../../components/shared/Screen';
@@ -101,6 +104,8 @@ export function TransactionsScreen() {
   const [visible, setVisible] = useState(false);
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
   const { colors, spacing, typography, cardShadow, radius } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const categoryMap = useMemo(() => new Map(data.categories.map((c) => [c.id, c])), [data.categories]);
   const recurringItemsMap = useMemo(() => new Map(data.recurringItems.map((r) => [r.id, r])), [data.recurringItems]);
@@ -155,7 +160,7 @@ export function TransactionsScreen() {
           ...cardShadow,
         },
         monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-        monthLabel: { ...typography.heading, fontSize: 15, color: colors.textPrimary },
+        monthLabel: { ...typeStyle('titleCard', locale), fontSize: 15, color: colors.textPrimary },
         summaryRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
@@ -165,8 +170,8 @@ export function TransactionsScreen() {
           borderTopColor: colors.border,
         },
         summaryBlock: { flex: 1, alignItems: 'center' },
-        summaryLabel: { ...typography.micro, color: colors.textSecondary },
-        summaryValue: { ...typography.heading, fontSize: 14, marginTop: 2 },
+        summaryLabel: { ...typeStyle('labelTab', locale), color: colors.textSecondary },
+        summaryValue: { ...typeStyle('titleCard', locale), fontSize: 14, marginTop: 2 },
         txnList: { marginTop: spacing.sm, paddingTop: spacing.xs },
         txnRow: {
           flexDirection: 'row',
@@ -177,14 +182,14 @@ export function TransactionsScreen() {
           borderTopColor: colors.border,
         },
         txnLeft: { flexDirection: 'column', alignItems: 'flex-start', gap: 2, flex: 1 },
-        txnDescription: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        txnDescription: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
         txnMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         categoryChip: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        categoryChipText: { ...typography.micro, fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
-        txnDate: { ...typography.micro, color: colors.textMuted },
-        txnBadge: { ...typography.micro, fontSize: 11, color: colors.textSecondary, fontStyle: 'italic', marginTop: 1 },
-        rowAmount: { ...typography.heading, fontSize: 14, marginRight: 6 },
-        insightsTitle: { ...typography.heading, fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm },
+        categoryChipText: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
+        txnDate: { ...typeStyle('labelTab', locale), color: colors.textMuted },
+        txnBadge: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textSecondary, fontStyle: 'italic', marginTop: 1 },
+        rowAmount: { ...typeStyle('titleCard', locale), fontSize: 14, marginRight: 6 },
+        insightsTitle: { ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, marginBottom: spacing.sm },
         insightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.sm },
         insightIconBadge: {
           width: 30,
@@ -195,11 +200,11 @@ export function TransactionsScreen() {
           justifyContent: 'center',
         },
         insightTextBlock: { flex: 1 },
-        insightHeading: { ...typography.caption, fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-        insightBody: { ...typography.micro, color: colors.textSecondary, marginTop: 2, lineHeight: 15 },
-        teaserBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        insightHeading: { ...typeStyle('meta', locale), fontSize: 13, fontWeight: '600', color: colors.textPrimary },
+        insightBody: { ...typeStyle('labelTab', locale), color: colors.textSecondary, marginTop: 2, lineHeight: 15 },
+        teaserBody: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
       }),
-    [colors, spacing, typography, cardShadow, radius]
+    [colors, spacing, typography, locale, cardShadow, radius]
   );
 
   const insightsPanel =

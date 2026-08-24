@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Alert, Animated, Easing, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View, findNodeHandle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { Goal, GoalPriority, LifeGoalType } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
@@ -123,6 +126,8 @@ export function GoalDetailSheet({
 }) {
   const { data, updateGoal, deleteGoal } = useAppState();
   const { colors, radius, spacing, typography, minTouchTarget } = useTheme();
+  // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [contribution, setContribution] = useState('');
   // Inline validation feedback for a non-empty contribution that fails
   // parsePositiveContributionAmount (invalid-contribution-handling
@@ -325,7 +330,7 @@ export function GoalDetailSheet({
     () =>
       StyleSheet.create({
         ringRow: { alignItems: 'center', marginBottom: spacing.md },
-        amountsRemaining: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+        amountsRemaining: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: 2 },
         progressPrimary: { marginBottom: spacing.sm },
         progressEditor: {
           borderRadius: radius.card,
@@ -335,19 +340,19 @@ export function GoalDetailSheet({
           padding: spacing.md,
           marginBottom: spacing.md,
         },
-        progressEditorHeading: { ...typography.heading, fontSize: 15, color: colors.textPrimary, marginBottom: spacing.sm },
-        progressEditorMeta: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.sm },
+        progressEditorHeading: { ...typeStyle('titleCard', locale), fontSize: 15, color: colors.textPrimary, marginBottom: spacing.sm },
+        progressEditorMeta: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.sm },
         progressShortcut: { minHeight: minTouchTarget, justifyContent: 'center', marginBottom: spacing.sm },
-        progressShortcutText: { ...typography.body, fontWeight: '600', color: colors.accentStrong },
+        progressShortcutText: { ...typeStyle('body', locale), fontWeight: '600', color: colors.accentStrong },
         progressConfirm: {
           backgroundColor: colors.successSoft,
           borderRadius: radius.control,
           padding: spacing.md,
           marginBottom: spacing.md,
         },
-        progressConfirmText: { ...typography.caption, color: colors.textPrimary, fontWeight: '600' },
-        amounts: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: spacing.sm },
-        label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
+        progressConfirmText: { ...typeStyle('meta', locale), color: colors.textPrimary, fontWeight: '600' },
+        amounts: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, marginTop: spacing.sm },
+        label: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs, marginTop: spacing.md },
         row: { flexDirection: 'row', gap: spacing.sm },
         input: {
           flex: 1,
@@ -363,13 +368,13 @@ export function GoalDetailSheet({
         // clear of the input/button row above, 12px before whatever follows
         // (Priority's own marginTop of spacing.md brings that gap to ~20px
         // total), never a negative offset.
-        hintText: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.sm, marginBottom: spacing.md, lineHeight: 16 },
+        hintText: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, marginTop: spacing.sm, marginBottom: spacing.md, lineHeight: 16 },
         calcBox: { backgroundColor: colors.accentSoft, borderRadius: radius.control, padding: spacing.md, marginTop: spacing.sm },
-        calcText: { ...typography.caption, fontSize: 13, color: colors.accentStrong, fontWeight: '600', lineHeight: 18 },
-        calcSubtext: { ...typography.micro, fontSize: 11, color: colors.accentStrong, marginTop: 2, lineHeight: 15 },
+        calcText: { ...typeStyle('meta', locale), fontSize: 13, color: colors.accentStrong, fontWeight: '600', lineHeight: 18 },
+        calcSubtext: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.accentStrong, marginTop: 2, lineHeight: 15 },
         calcBoxWarning: { backgroundColor: colors.warningSoft },
         calcTextWarning: { color: colors.warning },
-        dateValidationText: { ...typography.caption, fontSize: 12, color: colors.warning, marginTop: spacing.sm, lineHeight: 16 },
+        dateValidationText: { ...typeStyle('meta', locale), fontSize: 12, color: colors.warning, marginTop: spacing.sm, lineHeight: 16 },
         // Extra scroll-content bottom padding (Stream A follow-up §2) — the
         // scrollable area inside the shared KeyboardSheet isn't
         // flex-bounded (it sizes to its own content rather than the
@@ -379,12 +384,12 @@ export function GoalDetailSheet({
         // only — KeyboardSheet itself is untouched, and so are its other 14
         // consumers.
         deleteRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.xl, marginBottom: DELETE_ROW_BOTTOM_CLEARANCE, alignSelf: 'center' },
-        deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
+        deleteText: { ...typeStyle('meta', locale), color: colors.danger, fontWeight: '600' },
         footerButton: { flex: 1 },
         // Signalled by both an icon and text, never colour alone (PRD ask,
         // Stream A §5/§8 accessibility).
         savedCueRow: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'center', marginBottom: spacing.sm },
-        savedCueText: { ...typography.caption, fontSize: 12, color: colors.success, fontWeight: '600' },
+        savedCueText: { ...typeStyle('meta', locale), fontSize: 12, color: colors.success, fontWeight: '600' },
         // Wave 4 closure — restrained success, not the previous gold. Green
         // is reserved for genuine positive achievement, which this is.
         completedBanner: {
@@ -397,20 +402,20 @@ export function GoalDetailSheet({
         },
         completedPrimary: { flex: 1 },
         completedTertiary: { minHeight: minTouchTarget, justifyContent: 'center', marginTop: spacing.xs },
-        completedTertiaryText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
-        completedTitle: { ...typography.body, fontSize: 14, color: colors.gold, fontWeight: '700', marginBottom: 2 },
-        completedBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        completedTertiaryText: { ...typeStyle('meta', locale), color: colors.textSecondary, fontWeight: '600' },
+        completedTitle: { ...typeStyle('body', locale), fontSize: 14, color: colors.gold, fontWeight: '700', marginBottom: 2 },
+        completedBody: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
         completedActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
         completedAction: { flex: 1, minWidth: '30%', alignItems: 'center', paddingVertical: 10, borderRadius: radius.control, backgroundColor: colors.surface },
-        completedActionText: { ...typography.caption, fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
+        completedActionText: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textPrimary, fontWeight: '600' },
         // Neutral, not celebratory — an archived goal isn't necessarily an
         // achievement (it may have been archived below target), so this
         // deliberately doesn't reuse completedBanner's gold treatment.
         archivedBanner: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
-        archivedTitle: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginBottom: 2 },
-        archivedBody: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
+        archivedTitle: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '700', marginBottom: 2 },
+        archivedBody: { ...typeStyle('meta', locale), fontSize: 13, color: colors.textSecondary, lineHeight: 18 },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, locale]
   );
 
   // Classifies the two raw date-input strings — 'empty'/'valid'/'partial'/

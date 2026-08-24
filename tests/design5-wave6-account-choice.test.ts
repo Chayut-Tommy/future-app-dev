@@ -285,7 +285,13 @@ console.log('\n=== 13. Snooze choices are complete, dated rows (Class A + C) ===
   assert('13f. Tomorrow is never rendered disabled', !/disabled[\s\S]{0,80}reminder-snooze-\$\{preset\.id\}/.test(CARD));
   assert('13g. quick choices still act directly — no financial-style confirmation was added to a snooze', /onPress=\{\(\) => confirmSnooze\(target\)\}/.test(CARD));
   assert('13h. and Back is a real 44pt named control, not floating text', /stepBack: \{[^}]*minHeight: 44/.test(CARD) && /testID="reminder-snooze-back"/.test(CARD));
-  assert('13i. every Back in this surface uses that same control', (CARD.match(/style=\{styles\.stepBack\}/g) || []).length === 4);
+  // RECONCILED — Wave 9b closure (BNPL source state redesign). The BNPL
+  // source state previously had NO shared Back at all: its two legacy
+  // sub-states used ad-hoc `actionButton` pills. It now uses this same 44pt
+  // control, so the count rises 4 -> 5. PRESERVED INTENT — every Back in the
+  // surface uses ONE control — is unchanged and now covers one more state.
+  assert('13i. every Back in this surface uses that same control', (CARD.match(/style=\{styles\.stepBack\}/g) || []).length === 5);
+  assert('13i-i. including the BNPL source state', /testID="bnpl-source-back"/.test(CARD));
 }
 
 console.log('\n=== 14. What was removed stayed removed (Class C) ===');
