@@ -58,6 +58,7 @@ export function EditSavingsAllocationModal({ visible, onClose }: { visible: bool
 
   return (
     <KeyboardSheet
+      focusTitleOnShow
       visible={visible}
       onClose={onClose}
       title="Savings allocation"

@@ -1099,3 +1099,21 @@ TypeScript 0. Legacy **96 files / 7,698**. Rendered **51 suites / 397**, green t
 2. **"Diversified Portfolio" toast copy** — optional Wave 10 copy review; no factual defect surfaced in this wave's traces.
 3. A savings-only first save still fires the engine's "Added First Asset" unlock alongside "Added Savings" — pre-existing, outside the corrected defect.
 4. **Wave 10 not started.**
+
+# Change control — post-Wave-9c celebration and Savings Allocation closure (25 August 2026)
+
+**Baseline** `237de25` (Wave 9c checkpoint). Approved by the owner's iOS device testing. Earlier entries above are left exactly as written.
+
+## Premium celebration toast (frozen)
+
+The small-tier celebration toast is the approved premium composition: full-strength style-scoped surface gradient (`interactiveTint → bgSurface → ambient[0]`), thin `featured` top accent, `heroBorder`, clipped ambient bloom, a 48pt medallion holding the structured event icon, the structured `MILESTONE` capsule (`event.context` only — never derived from copy), `titleCard` + tabular title, structured dwell (plain 3,200ms / milestone 3,600ms), a quiet top-right 44pt Dismiss, and `box-none` pass-through. The queue is untouched: one FIFO, one visible toast, keyed remount, state-timer lifetime immune to parent rerenders, idempotent dismissal, unmount cleanup, no Undo. Copy is byte-identical, including "Everyday account added" / "Nolie can now use this account in your money picture."
+
+## Money Savings Allocation handoff (approved)
+
+Confirmed device defect: every CTA in the Typical-money-flow category summary (a native-Modal KeyboardSheet) set a sibling modal visible while the summary was still presented — iOS silently refuses the second presentation, so "Set up savings allocation" absorbed taps. Corrected with the established pending-handoff pattern for **all four** summary CTAs (savings, income, bills, goals) through one mechanism: one pending intent (first tap wins), summary dismissal first, delivery on the native `onDismiss` (iOS) or the post-hidden commit effect (Android) — no timers, no duplicate destination, exactly one canonical `EditSavingsAllocationModal` shared with Wealth. Percentage/fixed/off, validation, exact-cent behaviour, Cancel-writes-nothing and Save-writes-once are the existing engine's, byte-unchanged; Money and Wealth read the one canonical field. KeyboardSheet gained an opt-in `focusTitleOnShow` (established a11yFocus utility) consumed only by the allocation editor.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **98 files / 7,777**. Rendered **54 suites / 404**. Toast pure 48, handoff pure 31, rendered toast/handoff/save/statecomms floors green. `git diff --check` clean; dependency/lockfile/config diffs empty; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0. **No financial engine, schema, storage or calculation change** — `src/lib/calculations/**` untouched at this checkpoint.
+
+**iOS: device-approved by the owner.** **Android: export-tested only — physical Android remains deferred to Wave 11.**

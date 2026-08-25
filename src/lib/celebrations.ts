@@ -11,6 +11,12 @@ export interface CelebrationEvent {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   body: string;
+  /** Pre-Wave-10 toast polish — OPTIONAL structured context label rendered
+   * as the toast's small eyebrow (e.g. 'MILESTONE'). Set by the CALLER
+   * from structured event identity, never derived from the rendered
+   * title/icon/free text; absent means no context row. Presentation only:
+   * event identity, tier, queueing and seen-state are untouched. */
+  context?: string;
 }
 
 function formatMoney(value: number): string {

@@ -33,6 +33,8 @@ export function MoneyFlowCategoryDetailSheet({
   emptyStateText,
   ctaLabel,
   onCta,
+  ctaHint,
+  onDismiss,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -46,6 +48,15 @@ export function MoneyFlowCategoryDetailSheet({
   emptyStateText: string | null;
   ctaLabel: string | null;
   onCta: (() => void) | null;
+  /** Spoken hint for the CTA (e.g. that it opens Savings Allocation
+   * settings) — presentation only. */
+  ctaHint?: string | null;
+  /** Pre-Wave-10 Savings-Allocation handoff correction — forwarded to the
+   * underlying KeyboardSheet's native onDismiss (iOS), so the OWNER can
+   * complete a sheet-to-sheet handoff only once this sheet's native
+   * dismissal has genuinely finished (the established
+   * AddWealthItemModal/OptionsSheet pattern). */
+  onDismiss?: () => void;
 }) {
   const { colors, spacing, typography } = useTheme();
 
@@ -80,13 +91,14 @@ export function MoneyFlowCategoryDetailSheet({
       visible={visible}
       onClose={onClose}
       title={categoryLabel}
+      onDismiss={onDismiss}
       footer={<Button label="Close" onPress={onClose} style={styles.footerButton} />}
     >
       <Text style={styles.periodLabel}>{periodLabel}</Text>
       {items.length === 0 ? (
         <>
           {emptyStateText ? <Text style={styles.emptyText}>{emptyStateText}</Text> : null}
-          {ctaLabel && onCta ? <Button label={ctaLabel} onPress={onCta} style={styles.ctaButton} /> : null}
+          {ctaLabel && onCta ? <Button label={ctaLabel} onPress={onCta} accessibilityHint={ctaHint ?? undefined} style={styles.ctaButton} /> : null}
         </>
       ) : (
         <>

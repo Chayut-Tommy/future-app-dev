@@ -86,6 +86,9 @@ describe('Correction A — the Everyday save toast, rendered', () => {
     await screen.findByText('Everyday account added', {}, { timeout: 20000 });
     expect(screen.getByText('Nolie can now use this account in your money picture.')).toBeTruthy();
     expect(screen.queryByText('Added First Asset')).toBeNull();
+    // Visual-elevation pass: a plain account confirmation renders NO
+    // milestone capsule — the structured context field alone decides it.
+    expect(screen.queryByText('MILESTONE')).toBeNull();
 
     // Exactly one record, only the everyday step completes, and the
     // unlock itself was recorded unchanged (engine untouched).

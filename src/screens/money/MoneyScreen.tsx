@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -157,6 +157,36 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // of the same shared MoneyFlowCategoryDetailSheet component, always at
   // 'monthly', so the two surfaces can never inherit each other's period.
   const [flowDetailCategory, setFlowDetailCategory] = useState<MoneyFlowCategory | null>(null);
+  // Pre-Wave-10 correction — the CONFIRMED device defect: every CTA inside
+  // the Typical-money-flow category detail sheet (a native-Modal
+  // KeyboardSheet) set a SIBLING modal visible while the summary was still
+  // presented. iOS silently refuses to present a second modal over an
+  // already-presented one, so "Set up savings allocation" absorbed taps
+  // and nothing opened — while the SAME canonical editor worked from
+  // Wealth, where no other modal is up. The fix is the repository's
+  // established pending-handoff pattern (AddWealthItemModal's credit-card
+  // handoff / OptionsSheet): the tap records ONE pending intent and starts
+  // the summary's dismissal; the intent runs only once that dismissal has
+  // genuinely completed — the native onDismiss on iOS, and the
+  // post-visible=false commit effect on Android (whose Modal hides
+  // synchronously and fires no onDismiss). Explicit states, no timers:
+  // idle (ref null) → dismissing (ref set) → editor open (ref drained).
+  // First tap wins; an ordinary Close with nothing pending is a no-op.
+  const pendingFlowDetailActionRef = useRef<(() => void) | null>(null);
+  const requestFlowDetailAction = useCallback((action: () => void) => {
+    if (pendingFlowDetailActionRef.current) return;
+    pendingFlowDetailActionRef.current = action;
+    setFlowDetailCategory(null);
+  }, []);
+  const runPendingFlowDetailAction = useCallback(() => {
+    const action = pendingFlowDetailActionRef.current;
+    if (!action) return;
+    pendingFlowDetailActionRef.current = null;
+    action();
+  }, []);
+  useEffect(() => {
+    if (Platform.OS === 'android' && flowDetailCategory === null) runPendingFlowDetailAction();
+  }, [flowDetailCategory, runPendingFlowDetailAction]);
   const [thisMonthInfoVisible, setThisMonthInfoVisible] = useState(false);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [selectBalancesVisible, setSelectBalancesVisible] = useState(false);
@@ -515,50 +545,61 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // (PRD ask: never say "not set up" merely because the current calculated
   // contribution rounds to zero). Reuses the exact existing Add/Manage
   // journeys already mounted on this screen — never a duplicated form.
-  function flowDetailEmptyState(): { text: string; ctaLabel: string | null; onCta: (() => void) | null } {
+  function flowDetailEmptyState(): { text: string; ctaLabel: string | null; ctaHint?: string; onCta: (() => void) | null } {
     if (!flowDetailCategory || !flowDetailBreakdown) return { text: '', ctaLabel: null, onCta: null };
     const state = flowDetailBreakdown.configurationState;
     switch (flowDetailCategory) {
+      // Every CTA below routes through requestFlowDetailAction: the summary
+      // sheet dismisses FIRST, and the destination opens only once that
+      // dismissal has completed — the same defect class existed for all
+      // four categories (income/bills/goal destinations are sibling native
+      // modals too; View goals matches the close-before-navigate rule).
       case 'income':
         return state === 'not_configured'
-          ? { text: 'No regular income is set up yet.', ctaLabel: 'Add income', onCta: () => { setEditIncome(null); setIncomeModalVisible(true); } }
+          ? { text: 'No regular income is set up yet.', ctaLabel: 'Add income', onCta: () => requestFlowDetailAction(() => { setEditIncome(null); setIncomeModalVisible(true); }) }
           : {
               text:
                 state === 'inactive_or_excluded'
                   ? 'Your income sources are currently inactive.'
                   : "Your income is currently $0 once rounded — it's still set up.",
               ctaLabel: 'Manage income',
-              onCta: () => { setEditIncome(null); setIncomeModalVisible(true); },
+              onCta: () => requestFlowDetailAction(() => { setEditIncome(null); setIncomeModalVisible(true); }),
             };
       case 'bills':
         return state === 'not_configured'
-          ? { text: 'No regular bills are set up yet.', ctaLabel: 'Add bill', onCta: openAddBill }
+          ? { text: 'No regular bills are set up yet.', ctaLabel: 'Add bill', onCta: () => requestFlowDetailAction(openAddBill) }
           : {
               text:
                 state === 'inactive_or_excluded'
                   ? 'Your bills are currently inactive.'
                   : "Your bills are currently $0 once rounded — they're still set up.",
               ctaLabel: 'Manage bills',
-              onCta: openAddBill,
+              onCta: () => requestFlowDetailAction(openAddBill),
             };
       case 'savings':
         return state === 'not_configured'
-          ? { text: 'No savings allocation is set up yet.', ctaLabel: 'Set up savings allocation', onCta: () => setEditSavingsAllocationVisible(true) }
+          ? {
+              text: 'No savings allocation is set up yet.',
+              ctaLabel: 'Set up savings allocation',
+              ctaHint: 'Opens Savings Allocation settings',
+              onCta: () => requestFlowDetailAction(() => setEditSavingsAllocationVisible(true)),
+            }
           : {
               text: "Your savings allocation is currently $0 because there's no regular income to calculate it from.",
               ctaLabel: 'Manage savings allocation',
-              onCta: () => setEditSavingsAllocationVisible(true),
+              ctaHint: 'Opens Savings Allocation settings',
+              onCta: () => requestFlowDetailAction(() => setEditSavingsAllocationVisible(true)),
             };
       case 'goals':
         return state === 'not_configured'
-          ? { text: 'No goals are set up yet.', ctaLabel: 'Add goal', onCta: () => setGoalModalVisible(true) }
+          ? { text: 'No goals are set up yet.', ctaLabel: 'Add goal', onCta: () => requestFlowDetailAction(() => setGoalModalVisible(true)) }
           : {
               text:
                 state === 'inactive_or_excluded'
                   ? 'You have goals set up, but none are currently active.'
                   : 'You have goals set up, but nothing is currently allocated to them each month.',
               ctaLabel: 'View goals',
-              onCta: () => navigation.navigate('Goals'),
+              onCta: () => requestFlowDetailAction(() => navigation.navigate('Goals')),
             };
     }
   }
@@ -972,7 +1013,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         items={flowDetailBreakdown?.items ?? []}
         emptyStateText={flowDetailEmpty.text || null}
         ctaLabel={flowDetailEmpty.ctaLabel}
+        ctaHint={flowDetailEmpty.ctaHint ?? null}
         onCta={flowDetailEmpty.onCta}
+        onDismiss={Platform.OS === 'ios' ? runPendingFlowDetailAction : undefined}
       />
 
       {/* Wave 6 final pass — "Typical Monthly Allocation" (MoneyPlanCard)

@@ -280,6 +280,10 @@ export function TodayScreen() {
         icon: firstAssetCopy?.icon ?? newlyUnlocked.icon,
         title: firstAssetCopy?.title ?? newlyUnlocked.title,
         body: firstAssetCopy?.body ?? newlyUnlocked.subtitle,
+        // Structured context, from event identity only: an achievement
+        // unlock is a MILESTONE; the corrected everyday-account copy keeps
+        // its plain account framing (approved wording, no label).
+        ...(firstAssetCopy ? {} : { context: 'MILESTONE' }),
       });
       markAchievementsSeen([newlyUnlocked.id]);
     };

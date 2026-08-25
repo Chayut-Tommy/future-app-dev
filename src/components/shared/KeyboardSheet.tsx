@@ -13,6 +13,7 @@ import {
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { shouldClaimSheetGesture, shouldDismissSheet } from './sheetDismissal';
 import { FocusedPickerProvider } from './fields/FocusedPickerHost';
+import { focusElement } from '../../lib/a11yFocus';
 
 
 /**
@@ -42,6 +43,7 @@ export function KeyboardSheet({
   headerRight,
   breadcrumb,
   animateContentEntrance = false,
+  focusTitleOnShow = false,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -71,6 +73,13 @@ export function KeyboardSheet({
    * this component's own JS-driven slide animation — it must reflect the
    * real native event, not an approximation of it. */
   onDismiss?: () => void;
+  /** Pre-Wave-10 Savings-Allocation handoff correction — when true, native
+   * `onShow` moves accessibility focus to this sheet's own title through
+   * the ESTABLISHED focus utility (lib/a11yFocus), so a customer arriving
+   * from another sheet's dismissal lands on the new heading rather than a
+   * stale element. Opt-in and state-driven (the native present signal,
+   * never a timer); sighted behaviour is unchanged. */
+  focusTitleOnShow?: boolean;
   /** Forwarded to the underlying native Modal's own animationType (Stream
    * D, Option B runtime spike) — defaults to 'slide' so every existing
    * caller that doesn't pass this renders exactly as before. A caller sets
@@ -159,6 +168,7 @@ export function KeyboardSheet({
   animateContentEntrance?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const titleFocusRef = useRef<Text>(null);
   const { colors, semantic, radius, spacing, typography } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const translateY = useRef(new Animated.Value(0)).current;
@@ -495,6 +505,7 @@ export function KeyboardSheet({
       transparent
       onRequestClose={requestClose}
       onDismiss={handleNativeDismissComplete}
+      onShow={focusTitleOnShow ? () => focusElement(titleFocusRef.current) : undefined}
     >
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.backdropTint, { opacity: backdropOpacity }]} />
@@ -520,7 +531,9 @@ export function KeyboardSheet({
           </View>
           <FocusedPickerProvider onActiveChange={setPickerActive}>
           <View style={styles.titleRow}>
-            <Text style={styles.title}>{title}</Text>
+            <Text ref={titleFocusRef} style={styles.title}>
+              {title}
+            </Text>
             {headerRight}
           </View>
           {breadcrumb ? <View style={styles.breadcrumbRow}>{breadcrumb}</View> : null}
