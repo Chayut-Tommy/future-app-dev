@@ -27,6 +27,8 @@ import i18n from '../../i18n';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet';
+import { OptionsSheet } from '../../components/shared/OptionsSheet';
+import { frequencyAdverb } from '../../lib/calculations/incomeEngine';
 import { SavingsAllocationDetailSheet } from '../../components/money/SavingsAllocationDetailSheet';
 import { EditSavingsAllocationModal } from '../../components/wealth/EditSavingsAllocationModal';
 import { MoneyPlanCard } from '../../components/money/MoneyPlanCard';
@@ -123,6 +125,12 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const thisMonthSectionY = useRef<number | null>(null);
   const [incomeModalVisible, setIncomeModalVisible] = useState(false);
   const [editIncome, setEditIncome] = useState<RecurringItem | null>(null);
+  // Wave 9c final correction pass, Correction B — a chooser for the rare
+  // case of MORE THAN ONE unscheduled income (see unscheduledIncomes
+  // below): the customer picks WHICH existing record to complete by its
+  // stable id, never by name matching. Same OptionsSheet -> AddIncomeModal
+  // edit pattern MoneyEngineCard's income-sources sheet already uses.
+  const [paydayChooserVisible, setPaydayChooserVisible] = useState(false);
   const [billModalVisible, setBillModalVisible] = useState(false);
   const [editBill, setEditBill] = useState<RecurringItem | null>(null);
   const [loanHandoff, setLoanHandoff] = useState<LiabilityType | null>(null);
@@ -700,6 +708,19 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       }),
     [safeToSpend.cycleStart, safeToSpend.cycleEnd, safeToSpend.daysRemaining, safeToSpend.hasKnownPayday, currentDate]
   );
+  // Correction B — an "unscheduled" income is one the legacy onboarding
+  // build persisted with `nextDueDateUnknown: true` on a PREDICTABLE
+  // cadence: the record genuinely exists (Wealth's monthly conversion is
+  // right), but scheduling, "What happens next" and Available until payday
+  // all correctly skip an unknown date, so Money kept offering a blank
+  // "Add an expected payday" — a duplicate-income invitation. Structured
+  // state only: type, active, the unknown flag and the cadence. An
+  // IRREGULAR income with an unknown date is the accepted canonical state
+  // ("never guess a payday") and is deliberately NOT treated as incomplete.
+  const unscheduledIncomes = useMemo(
+    () => data.recurringItems.filter((r) => r.type === 'income' && r.active && r.nextDueDateUnknown === true && r.frequency !== 'irregular'),
+    [data.recurringItems]
+  );
   const hasIncludedBalances = safeToSpend.includedMoneyBalanceAccounts.length > 0;
   const includedBalances = useMemo(
     () => summariseIncludedBalances(safeToSpend.includedMoneyBalanceAccounts, safeToSpend.includedMoneyBalance),
@@ -722,10 +743,30 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           safeToSpend={safeToSpend}
           hasActiveGoals={hasActiveGoals}
           onCreateGoal={() => setGoalModalVisible(true)}
+          // Correction B — completion before creation. One unscheduled
+          // income opens THAT record for editing (same stable id, updated in
+          // place); several open the chooser; none keeps the original blank
+          // add. Only an explicit Add-another-income action (the "+"
+          // workspace, or MoneyEngineCard's income list) creates a second
+          // record.
           onAddPayday={() => {
-            setEditIncome(null);
-            setIncomeModalVisible(true);
+            if (unscheduledIncomes.length === 1) {
+              setEditIncome(unscheduledIncomes[0]);
+              setIncomeModalVisible(true);
+            } else if (unscheduledIncomes.length > 1) {
+              setPaydayChooserVisible(true);
+            } else {
+              setEditIncome(null);
+              setIncomeModalVisible(true);
+            }
           }}
+          addPaydayLabel={
+            unscheduledIncomes.length === 1
+              ? `Finish setting up ${unscheduledIncomes[0].label} income`
+              : unscheduledIncomes.length > 1
+              ? 'Finish setting up your income'
+              : undefined
+          }
           onSelectBalances={() => setSelectBalancesVisible(true)}
           onReviewInWealth={() => navigation.navigate('Wealth')}
           heroCopy={heroCopy}
@@ -995,6 +1036,28 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         </>
       ) : null}
 
+      {/* Correction B — which existing income needs its payday? Rendered
+          only for MULTIPLE unscheduled records. OptionsSheet's own
+          onDismiss-deferred selection then opens the editor on the chosen
+          record's stable id — the established chooser->editor lifecycle. */}
+      <OptionsSheet
+        visible={paydayChooserVisible}
+        onClose={() => setPaydayChooserVisible(false)}
+        title="Which income needs a payday?"
+        subtitle="Completing one updates that existing record — nothing new is created."
+        options={unscheduledIncomes.map((item) => ({
+          key: item.id,
+          icon: (item.icon as never) ?? 'cash-outline',
+          label: item.label,
+          description: `${formatMoney(item.amount)} · ${frequencyAdverb(item.frequency)}`,
+        }))}
+        onSelect={(key) => {
+          const item = unscheduledIncomes.find((r) => r.id === key);
+          if (!item) return;
+          setEditIncome(item);
+          setIncomeModalVisible(true);
+        }}
+      />
       <AddIncomeModal
         visible={incomeModalVisible}
         editItem={editIncome}

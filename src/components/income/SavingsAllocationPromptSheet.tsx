@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
@@ -26,7 +29,13 @@ import { SavingsAllocationPickerBody, isValidSetting } from '../wealth/SavingsAl
  */
 export function SavingsAllocationPromptSheet({ visible, onDone }: { visible: boolean; onDone: () => void }) {
   const { data, updateUser } = useAppState();
-  const { colors, spacing, typography } = useTheme();
+  const { colors, spacing } = useTheme();
+  // Wave 9c visual/checklist correction (Correction I) — this journey's
+  // customer-visible text resolves the shipped semantic roles (Figtree /
+  // Noto Sans Thai via the live locale), replacing tokens.typography.*,
+  // which carries no fontFamily (the platform-font trap). Copy, behaviour
+  // and the savings-allocation rules are untouched.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const hasRecurringIncome = data.user.monthlyIncome > 0;
 
   const [draft, setDraft] = useState<SavingsAllocationSetting>({ mode: 'off' });
@@ -47,10 +56,10 @@ export function SavingsAllocationPromptSheet({ visible, onDone }: { visible: boo
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        intro: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.md },
+        intro: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.md },
         footerButton: { flex: 1 },
       }),
-    [colors, spacing, typography]
+    [colors, spacing, locale]
   );
 
   return (

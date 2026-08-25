@@ -1052,3 +1052,50 @@ TypeScript 0. Legacy **91 files / 7,246**. Rendered **41 suites / 363** (the new
 3. **Latent `projectBnplOccurrences` boundary** (`bnpl.ts`): it passes the raw `nextDueDate` timestamp as the generator's `from` while occurrences are quantised to local midnight, so any stored time-of-day would silently drop the FIRST BNPL instalment from the timeline and window sums. Every shipped writer is midnight-anchored, so customers are unaffected today; fixing the boundary needs its own authorisation because the file is a protected engine.
 4. **Income category-by-label matching** and the recurring-income `categoryId` persistence remain as recorded in the Wave 9a entry.
 5. **Wave 9c onboarding rebuild** (retire Main Money Goal/Money Confidence from onboarding, seven-state journey) not started at this checkpoint.
+
+# Change control — Wave 9c closure and checkpoint (25 August 2026)
+
+**Baseline** `ae9073c` (Wave 9b checkpoint). Approved by the owner's iOS device testing across four correction rounds (candidate, closure, final, visual/checklist, state-communication). Earlier entries above are left exactly as written.
+
+## Onboarding rebuild
+
+First launch is now the canonical seven-state journey — Welcome, Product preview, Name (required, no Skip), Age (optional), Pay cadence (optional), Initial money setup (optional), and the mandatory Disclosure. One shared `jumpToDisclosure()` is the only Skip path (states 3–5); consent is stamped exclusively by the disclosure state's own checkbox; the legally blocked disclosure wording is byte-identical and proven so at runtime. The retired Main Money Goal, Money Confidence and income-persona questions are gone from onboarding entirely (their stored fields remain on the model, unwritten), as are the "AI Financial Coach" claim and every emoji badge.
+
+## Continuous ambient canvas and Step 2 media frame
+
+All seven states render inside the ONE `OnboardingAmbientCanvas` — the "Light Ocean Aurora": the theme's own style-scoped `ambient` triple as a visibly pastel base with three soft-edged aurora fields from `featured`/`info`, welcome-only 14/17/20-second linear native-driver drift (~190–210pt travel), statically identical on every other state and under Reduced Motion, pointer-inert and hidden from accessibility, zero raw colour literals. The first shell's mint `accentSoft` base and imperceptible 24–32s drift were owner-rejected on device and replaced. Form states sit on a bordered surface card with the ambience visible around it; the welcome badge and CTA carry the canonical interactive colour, never the green accent. Step 2 hosts `OnboardingMediaFrame` — a stable 4:5 bordered, clipped, cover-cropping local-asset slot with accessible/decorative modes; the current skeleton illustration is the placeholder, so the owner's future product image swaps in with zero layout change.
+
+## Optional onboarding fields and atomic persistence
+
+The setup state offers three genuinely optional blocks — Regular income (canonical structured source selector shared with the real Add Income form, name, exact amount, the state-4 cadence, and a real next expected payday on the shared focused date picker; `nextDueDateUnknown` only for irregular income with no date), Everyday account (canonical Asset shape with optional provider; engine inclusion default untouched), and Savings. Validation is field-aware and calm: a field's own formatting error appears after ITS blur, missing siblings only after an attempted Continue, cleared blocks return to validly skipped, nothing is coerced to zero. Completion is WRITE-FIRST atomic through `completeOnboarding`: a forced persistence failure writes nothing, keeps every draft with an inline banner, and Retry commits the identical payload exactly once; rapid double-taps cannot duplicate.
+
+## Seven-item checklist, income scheduling and deferral behaviour
+
+The post-onboarding checklist is the realistic seven-step journey — **income → everyday account → savings → asset → bills → debt → goal** — with `{n} of 7 complete`, one full-width "Continue setup" resolved by the RN-free structured-priority resolver, and SEPARATED structured completion predicates (`lib/setupChecklist`): one record completes exactly one account step; Everyday no longer satisfies Assets, Savings no longer double-counts, Cash completes nothing. The onboarding income defect (every draft stamped `nextDueDateUnknown: true`, so a real salary never reached What happens next or the AUP cycle) is corrected at the source, and Money's "Add an expected payday" became completion-before-creation: an existing unscheduled income opens ITSELF in the canonical editor by stable id (a chooser for the impossible multi-record case), so following the prompt can never duplicate an income or double a total. Deferrals are honest and presentation-only (`confirmedGoalLater`, `confirmedEverydayLater` join their existing siblings): deferred rows read **Later**, never "Added"; completion is a calm customer-closed "Setup complete" state with no timer. The checklist's Add Asset opens preset to the canonical Vehicle type (checklist-scoped `initialKind` only — the global "+" tray is untouched), and a checklist income save returns directly, never auto-opening "Plan around your income?" (explicit caller context; every other income journey keeps its accepted prompt).
+
+## Direct workspace routing
+
+Checklist rows enter the ONE canonical AddAnythingSheet workspace directly at their destination via `initialKind` — the teaser-modal handoff (native sheet close → root flash → second modal) is retired, with one intent, one dismissal, and the existing embedded transition controller owning every lifecycle.
+
+## Typography corrections
+
+The debt chooser ("Tell us about any debt", shared vector debt-purpose icons, calm "I don't have any debt" with no red X), the checklist card, and the whole "Plan around your income?" tree (prompt sheet + the shared savings-allocation picker body) now resolve `typeStyle(role, locale)` with live locale, tabular numerals on figures, and no raw colours — with runtime flattened-style proof in English and Thai against the actually mounted trees. The Wealth empty state reads "Start building your net worth". The legacy lower-Today "Unlock your Nolie Score" surface is fully retired.
+
+## State-communication corrections (approved)
+
+Saving an Everyday account now toasts **"Everyday account added" / "Nolie can now use this account in your money picture."** — resolved at the existing celebration boundary from the same structured type predicates the checklist uses; the `added_first_asset` unlock rule, identity, tier and seen-tracking are byte-identical, and Savings/Vehicle keep their truthful event-specific copy. With zero goals, Today's compact Journey row and Grow's timeline present the goal milestone as UPCOMING — "Next milestone · Create your first goal" — through ONE shared presentation resolver (`upcomingMilestoneTitle`); the engine already held it correctly locked, only the fixed past-tense title lacked an upcoming qualifier. One real goal flips it to the achieved wording exactly once.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **96 files / 7,698**. Rendered **51 suites / 397**, green twice (and once more at this gate). Focused floors: onboarding 101, closure 82, final 115, visual/checklist 103, state-communication 46, checklist-priority 43, plus rendered onboarding journey/skip/fonts 12, closure 6, debt EN+TH 5, Money completion 3, visual 4, planner fonts 2, state-comms 2. Contrast, typography, iconography, navigation and accessibility gates green. Dependency and config diffs empty. `git diff --check` clean. Doctor 17/18 (the accepted pre-existing "2 packages out of date"). Both exports exit 0.
+
+**Protected financial engines unchanged**: safeToSpend, safeToSpendPresentation, luluScore, reminders, futureProjection, repaymentAccounting, goalAllocation, recurringSchedule, incomeEngine, moneyTimeline, liquidAssets and storage are byte-identical to `ae9073c`. The only calculations-directory change is `journeySnapshot.ts` — the presentation-contract module — gaining the shared upcoming-title resolver; its snapshot computation is pinned byte-level. Model additions are three additive optional presentation-only fields (`confirmedGoalLater`, `confirmedEverydayLater`; `incomeSource` written for the first time at setup); no migration, no cleared data. The one authorised canonical-journey behaviour change: picking a payment date on a predictable-cadence income now clears a lingering legacy `nextDueDateUnknown`, which is what makes in-place completion possible.
+
+**iOS: device-approved by the owner across the four correction rounds.** **Android: export-tested only — not device-tested.** Physical Android verification remains deferred to Wave 11.
+
+## Carry-overs (recorded, not authority to change)
+
+1. Wave 9b carry-overs 1–4 stand as written (MoneyPlanCard/SavingsAllocationDetailSheet legacy typography — the shared picker BODY is now migrated, the detail sheet is not; FloatingNavBar tab labels; the latent `projectBnplOccurrences` midnight boundary; income category-by-label matching).
+2. **"Diversified Portfolio" toast copy** — optional Wave 10 copy review; no factual defect surfaced in this wave's traces.
+3. A savings-only first save still fires the engine's "Added First Asset" unlock alongside "Added Savings" — pre-existing, outside the corrected defect.
+4. **Wave 10 not started.**

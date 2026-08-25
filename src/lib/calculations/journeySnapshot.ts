@@ -56,6 +56,35 @@ export interface JourneySnapshot {
   nextProgress: { current: number; target: number; formatted: string } | null;
 }
 
+/**
+ * Wave 9c state-communication correction B — how an UPCOMING milestone is
+ * titled.
+ *
+ * THE DEFECT (owner device test): with the optional goal deferred, the
+ * next not-yet-unlocked achievement is `created_first_goal`, whose FIXED
+ * title is the past-tense record "Created First Goal". Today's compact
+ * Journey row rendered that title with no upcoming-state qualifier, so a
+ * customer who had just declined to create a goal read a past-tense
+ * "Created First Goal" — a milestone the engine correctly holds LOCKED
+ * (`unlocked: data.goals.length > 0`; inspection, not inference). The
+ * structured state was right; only the tense of the presentation was
+ * wrong.
+ *
+ * This is the ONE shared presentation resolver both Today's compact row
+ * and Grow's full Journey timeline use for a milestone that is not yet
+ * achieved — the condition lives here exactly once, keyed on the
+ * achievement's structured id, never on its label, icon or position. The
+ * achieved/history wording (the achievement's own title) is untouched,
+ * and no engine, unlock rule or Score input changes.
+ */
+const UPCOMING_MILESTONE_TITLES: Readonly<Record<string, string>> = {
+  created_first_goal: 'Create your first goal',
+};
+
+export function upcomingMilestoneTitle(achievement: Pick<Achievement, 'id' | 'title'>): string {
+  return UPCOMING_MILESTONE_TITLES[achievement.id] ?? achievement.title;
+}
+
 export function computeJourneySnapshot(achievements: Achievement[]): JourneySnapshot {
   if (achievements.length === 0) {
     return { unavailable: true, totalCount: 0, completedCount: 0, allCompleted: false, next: null, nextProgress: null };

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { MoneyGoal } from '../types/models';
 import { LEARNING_CARDS, LearningCard } from './learningCards';
 
 export type LearningPathId = 'buying_a_home' | 'investing' | 'debt_free' | 'saving';
@@ -68,20 +67,7 @@ export function learningPathProgress(path: LearningPath, completedIds: string[])
   return { completed, total };
 }
 
-const GOAL_TO_PATH: Partial<Record<MoneyGoal, LearningPathId>> = {
-  build_investments: 'investing',
-  build_wealth: 'investing',
-  buy_home: 'buying_a_home',
-  pay_debt: 'debt_free',
-  save_more: 'saving',
-  understand_spending: 'saving',
-};
-
-/** The single path to lead with as "Lulu Pick" — driven by the user's own
- * onboarding answer (moneyGoal), never a guess (PRD ask: personalised, not
- * generic). Falls back to Saving as the most broadly useful starting point
- * when no goal has been set yet. */
-export function recommendedLearningPath(moneyGoal: MoneyGoal | undefined): LearningPath {
-  const id = (moneyGoal && GOAL_TO_PATH[moneyGoal]) || 'saving';
-  return LEARNING_PATHS.find((p) => p.id === id) ?? LEARNING_PATHS[0];
-}
+// Wave 9c — `recommendedLearningPath` and its GOAL_TO_PATH map were
+// retired: the resolver had ZERO production consumers (verified by
+// repository-wide search), and its only input was the retired Main Money
+// Goal profile enum. No replacement recommendation path was invented.

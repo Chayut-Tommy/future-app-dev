@@ -608,7 +608,15 @@ console.log('\n=== 17. Wave 5 closure B — the no-goal entry (Class C) ===');
 
   // Today's no-goal row.
   assert('17j. Today no longer uses the shared unlock panel for the goal slot', !/UNLOCK_COPY\.goal_tracking/.test(TODAY));
-  assert('17k. UnlockPromptCard itself is preserved and still used elsewhere on Today', exists('src/components/unlock/UnlockPromptCard.tsx') && /UNLOCK_COPY\.lulu_score/.test(TODAY));
+  // RECONCILED — Wave 9c closure, Correction F. OLD CLAUSE required Today
+  // to still render UnlockPromptCard with UNLOCK_COPY.lulu_score. SUPERSEDED
+  // BECAUSE the owner retired that legacy "Unlock your Nolie Score"
+  // promotion: the rebuilt setup checklist is the one first-run guide, and
+  // Grow's Score hero is the canonical Score surface. PRESERVED INTENT: the
+  // shared UnlockPromptCard component itself is retained on disk (other
+  // consumers may use it), and Today keeps NO leftover unlock wiring — no
+  // card, import, spacer or accessibility node.
+  assert('17k. the legacy Score-unlock promotion is fully retired from Today', exists('src/components/unlock/UnlockPromptCard.tsx') && !/UnlockPromptCard|UNLOCK_COPY/.test(TODAY.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')));
   assert('17l. the row title is "Plan a goal"', />Plan a goal</.test(TODAY));
   assert('17m. with the approved supporting copy', /Choose what you’re working towards and track progress over time\./.test(TODAY));
   assert('17n. and the trailing action reads "Create goal"', />Create goal</.test(TODAY));

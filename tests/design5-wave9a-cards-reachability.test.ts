@@ -408,8 +408,13 @@ console.log('\n=== 12. A $0 card is NOT debt, and is still a card (Class A) ==='
   assert('12j-v. the aggregate maths is unchanged', CH.includes('const utilisation = totalLimit > 0 ? totalUsed / totalLimit : 0;'));
   assert('12j-vi. the due-date calendar maths is unchanged', CH.includes('return calendarOrdinal(due) - calendarOrdinal(normalizedToday);'));
   assert('12j-vii. the repayment resolver is unchanged', CH.includes('if (isValidExpectedRepayment(card.expectedMonthlyRepayment)) return card.expectedMonthlyRepayment;'));
-  // The no-debt presentation itself is preserved verbatim.
-  for (const kept of ["Let's understand your debt first", 'Do you currently have any debt?', 'I have no debt', 'handleNoDebt']) {
+  // RECONCILED — Wave 9c FINAL correction pass, Correction D: the chooser's
+  // literal legacy copy ("Let's understand your debt first" etc.) was the
+  // owner-rejected presentation; the accepted replacement is the "Tell us
+  // about any debt" hierarchy. What 12k protects — the ask-first no-debt
+  // BRANCH, its handler and its calm answer — is unchanged and asserted
+  // against the current copy.
+  for (const kept of ['Tell us about any debt', "I don't have any debt", 'handleNoDebt']) {
     assert(`12k. no-debt presentation retained: ${kept}`, SHEET.includes(kept));
   }
 }

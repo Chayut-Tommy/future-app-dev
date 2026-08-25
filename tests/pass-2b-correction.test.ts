@@ -336,7 +336,10 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
   assert(
     "TodayScreen.tsx's achievement-unlock celebration effect is unconditional on any Journey-visibility state — it reads data.seenAchievementIds/achievements directly, not gated behind a JourneyTimeline mount check",
     /const newlyUnlocked = achievements\.find\(\(a\) => a\.unlocked && !data\.seenAchievementIds\.includes\(a\.id\)\);/.test(TODAY_SCREEN_SRC) &&
-      /celebrate\(\{ id: newlyUnlocked\.id, tier: isBig \? 'big' : 'small'/.test(TODAY_SCREEN_SRC) &&
+      // RECONCILED — Wave 9c state-communication correction A: the call
+      // gained the first-asset toast-copy resolution, so it is multiline;
+      // the id/tier contract is unchanged.
+      /celebrate\(\{\s*\n\s*id: newlyUnlocked\.id,\s*\n\s*tier: isBig \? 'big' : 'small',/.test(TODAY_SCREEN_SRC) &&
       /markAchievementsSeen\(\[newlyUnlocked\.id\]\);/.test(TODAY_SCREEN_SRC)
   );
   assert(
@@ -357,8 +360,17 @@ console.log('\n=== Section 3: component wiring, ownership, and celebration verif
     })()
   );
   assert(
-    "JourneyTimeline.tsx's own progressive-disclosure slicing (INITIAL_VISIBLE) is a private display concern of the full timeline component and is never imported by or referenced from journeySnapshot.ts",
-    !/journeySnapshot/.test(JOURNEY_TIMELINE_SRC)
+    // RECONCILED — Wave 9c state-communication correction B. The original
+    // clause banned ANY reference to journeySnapshot from the timeline; its
+    // PRESERVED INTENT is that the full timeline never consumes the
+    // SNAPSHOT computation, its counts or its display slice. The timeline
+    // now imports exactly one thing from that module: the shared
+    // upcomingMilestoneTitle presentation resolver — the single place the
+    // upcoming-tense condition lives, so Today's compact row and Grow's
+    // timeline can never drift (the same anti-drift principle this suite
+    // protects). The snapshot computation itself remains un-imported.
+    "JourneyTimeline.tsx's own progressive-disclosure slicing (INITIAL_VISIBLE) stays private, and the timeline consumes only the shared upcoming-title resolver — never the snapshot computation",
+    !/computeJourneySnapshot|JourneySnapshot\b/.test(JOURNEY_TIMELINE_SRC) && /upcomingMilestoneTitle/.test(JOURNEY_TIMELINE_SRC)
   );
 }
 

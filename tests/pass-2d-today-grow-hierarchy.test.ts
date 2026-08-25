@@ -142,13 +142,18 @@ console.log('=== TODAY HIERARCHY (Structural) ===');
     // presentation-order expectation only — no calculation, persistence or
     // behavioural expectation was altered. The checklist's new position is
     // protected by tests/design5-today-checklist-priority.test.ts.
-    'the locked-Score unlock prompt is genuinely preserved (same UNLOCK_COPY.lulu_score, same onAction/eligibility, no calculation or persistence change) and sits strictly after the goal snapshot — never interleaved between any of the six canonical sections',
+    // RECONCILED — Wave 9c closure, Correction F. OLD CLAUSE required the
+    // locked-Score UnlockPromptCard preserved after the goal snapshot.
+    // SUPERSEDED BECAUSE the owner retired that legacy promotion outright:
+    // the rebuilt setup checklist's income row completes the same condition
+    // it promoted, and Grow's Score hero is the canonical Score surface.
+    // PRESERVED INTENT: the six-section canonical order stays uninterleaved
+    // (still asserted around this), no unlock wiring lingers on Today, and
+    // the Score engine/persistence are untouched.
+    'the legacy locked-Score unlock prompt is fully retired from Today, with no lingering wiring between the six canonical sections',
     (() => {
-      const unlockScoreIdx = TODAY_SCREEN_SRC.indexOf('UNLOCK_COPY.lulu_score.icon');
-      return (
-        unlockScoreIdx > goalSnapshotIdx &&
-        /onAction=\{\(\) => setIncomeModalVisible\(true\)\}/.test(TODAY_SCREEN_SRC)
-      );
+      const stripped = TODAY_SCREEN_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      return !/UnlockPromptCard|UNLOCK_COPY|getUnlockStatus/.test(stripped);
     })()
   );
   assert('one compact goal snapshot follows the contextual-insight slot — a single primaryActiveGoal lookup (first active goal, unsorted, the existing canonical order), not a rendered list/map over multiple goals', /const primaryActiveGoal = data\.goals\.find\(\(g\) => g\.status === 'active'\) \?\? null;/.test(TODAY_SCREEN_SRC) && !/visibleGoals\.map|activeGoals\.map/.test(TODAY_SCREEN_SRC));

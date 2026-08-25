@@ -73,6 +73,7 @@ export function SafeToSpendHero({
   hasActiveGoals,
   onCreateGoal,
   onAddPayday,
+  addPaydayLabel = 'Add an expected payday',
   onSelectBalances,
   onReviewInWealth,
   heroCopy,
@@ -83,6 +84,13 @@ export function SafeToSpendHero({
   hasActiveGoals: boolean;
   onCreateGoal: () => void;
   onAddPayday?: () => void;
+  /** Wave 9c final correction pass, Correction B — the owning screen may
+   * replace the generic add wording with a factual COMPLETION label (e.g.
+   * "Finish setting up BOQ income") when an existing income record merely
+   * lacks its next expected payday; pressing the CTA then opens that same
+   * record rather than a blank add form. Presentation only — the hero's
+   * states, engine inputs and default behaviour are unchanged. */
+  addPaydayLabel?: string;
   /** Opens the flow to add or include a cash/savings balance — the action
    * for the "no recurring income, no included balance" empty state (PRD
    * ask, §Adaptive hero State 4). */
@@ -497,7 +505,7 @@ export function SafeToSpendHero({
       supportText: safeToSpend.includedMoneyBalanceAccounts.length > 0
         ? safeToSpend.includedMoneyBalanceAccounts.map((a) => `${a.label} (${formatMoney(a.value)})`).join(', ')
         : null,
-      cta: onAddPayday ? { label: 'Add an expected payday', onPress: onAddPayday, testID: 'money-aup-cta-payday' } : null,
+      cta: onAddPayday ? { label: addPaydayLabel, onPress: onAddPayday, testID: 'money-aup-cta-payday' } : null,
       showRail: false,
       children: presentation.amountVisible ? (
         <>

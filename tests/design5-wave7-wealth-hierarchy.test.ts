@@ -303,7 +303,11 @@ console.log('\n=== 8. Canonical order, and every figure\'s source (Class C) ==='
   }
   assert('8a. heading, hero, reconciliation, definitions, context, own, owe — in that order', ordered);
   assert('8a-i. an empty section carries exactly ONE Add — the header control is withheld', /\{assetRows\.length > 0 \? \(\s*\n\s*<TouchableOpacity/.test(SCREEN) && /\{liabilityRows\.length > 0 \? \(\s*\n\s*<TouchableOpacity/.test(SCREEN));
-  assert('8a-ii. and the empty state does not reproduce the global Add catalogue', (SCREEN.match(/emptyActionText/g) || []).length === 3 && !/AddIncomeModal[\s\S]{0,200}emptySection/.test(SCREEN));
+  // RECONCILED — Wave 9c closure, Correction G: the retired WealthGuideSteps
+  // block was replaced by ONE more empty-state composition using the same
+  // emptyActionText treatment, so the count is 4. The intent — no global Add
+  // catalogue reproduced inside an empty state — is unchanged and asserted.
+  assert('8a-ii. and the empty state does not reproduce the global Add catalogue', (SCREEN.match(/emptyActionText/g) || []).length === 4 && !/AddIncomeModal[\s\S]{0,200}emptySection/.test(SCREEN));
   assert('8b. exactly one hero on the screen', (SCREEN.match(/testID="wealth-hero"/g) || []).length === 1);
   assert('8c. own value is the same totalAssets the section totals', /testID="wealth-own-value">\{formatWealthAmount\(totalAssets\)\}/.test(SCREEN) && /testID="wealth-own-section-total">\{formatWealthAmount\(totalAssets\)\}/.test(SCREEN));
   assert('8d. owe value likewise', /testID="wealth-owe-value">\{formatWealthAmount\(totalLiabilities\)\}/.test(SCREEN) && /testID="wealth-owe-section-total">\{formatWealthAmount\(totalLiabilities\)\}/.test(SCREEN));
@@ -372,7 +376,15 @@ console.log('\n=== 10. Nothing financial, persistent or navigational was touched
   assert('10g. a card-backed liability still edits on the dedicated card form', /if \(linkedCard\) \{\s*\n\s*setEditCreditCard\(linkedCard\);/.test(SCREEN));
   assert('10h. linked repayments are read, never rewritten', /data\.recurringItems\.find\(\(r\) => r\.active && r\.linkedLiabilityId === l\.id\)/.test(SCREEN));
   assert('10i. and named as the customer named them', /Repaid by \$\{linkedRepayment\.label\}/.test(SCREEN));
-  assert('10j. the preserved Wealth cards are still mounted, not deleted', /<MoneyEngineCard data=\{data\} \/>/.test(SCREEN) && /<YourFutureCard \/>/.test(SCREEN) && /<WealthGuideSteps/.test(SCREEN));
+  // RECONCILED — Wave 9c closure, Correction G. OLD CLAUSE also required
+  // <WealthGuideSteps> mounted. SUPERSEDED BECAUSE the owner retired that
+  // pre-Wave-7 "Build your Wealth Map" guide for a net-worth-language empty
+  // state (same gate, same Add destination). PRESERVED INTENT: the living
+  // Wealth cards stay mounted, and the guide component is retained on disk,
+  // not deleted.
+  assert('10j. the preserved Wealth cards are still mounted, not deleted', /<MoneyEngineCard data=\{data\} \/>/.test(SCREEN) && /<YourFutureCard \/>/.test(SCREEN));
+  assert('10j-i. the retired guide file is retained on disk, unwired here', fs.existsSync(path.join(ROOT, 'src/components/wealth/WealthGuideSteps.tsx')) && !/<WealthGuideSteps/.test(SCREEN));
+  assert('10j-ii. the new empty state keeps the same Add destination', /wealth-empty-add/.test(SCREEN) && /Start building your net worth/.test(SCREEN));
 }
 
 console.log('\n=== 11. Visual and motion rules on the touched surface (Class C) ===');

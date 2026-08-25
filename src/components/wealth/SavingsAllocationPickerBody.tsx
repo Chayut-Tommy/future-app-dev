@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { SavingsAllocationSetting } from '../../types/models';
 
 const PERCENT_PRESETS = [0.05, 0.1, 0.15, 0.2];
@@ -48,7 +51,15 @@ export function SavingsAllocationPickerBody({
   hasRecurringIncome: boolean;
   monthlyIncome: number;
 }) {
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing } = useTheme();
+  // Wave 9c visual/checklist correction (Correction I) — the shared
+  // off/percent/fixed picker (rendered by BOTH the one-time "Plan around
+  // your income?" prompt and EditSavingsAllocationModal) resolves the
+  // shipped semantic type roles with the live locale; percentages and
+  // amounts stay tabular. Selection remains non-colour-only: the filled
+  // radio dot carries it structurally. No validation rule, copy line or
+  // allocation calculation changed.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const mode = value.mode;
 
   const [usingCustomPercent, setUsingCustomPercent] = useState(
@@ -131,15 +142,16 @@ export function SavingsAllocationPickerBody({
         radioOuterActive: { borderColor: colors.accent },
         radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent },
         optionTextBlock: { flex: 1 },
-        optionTitle: { ...typography.body, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-        optionSub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 16, marginTop: 2 },
+        optionTitle: { ...typeStyle('body', locale), fontWeight: '700', color: colors.textPrimary },
+        optionSub: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: 2, fontVariant: ['tabular-nums'] },
         subSection: { marginTop: spacing.xs, marginBottom: spacing.md },
         chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
         chip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         chipActive: { backgroundColor: colors.accentSoft },
-        chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
+        chipText: { ...typeStyle('meta', locale), color: colors.textSecondary, fontVariant: ['tabular-nums'] },
         chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
         input: {
+          ...typeStyle('body', locale),
           backgroundColor: colors.surfaceMuted,
           borderRadius: radius.control,
           paddingHorizontal: spacing.md,
@@ -147,11 +159,12 @@ export function SavingsAllocationPickerBody({
           fontSize: 18,
           color: colors.textPrimary,
           marginBottom: spacing.sm,
+          fontVariant: ['tabular-nums'],
         },
-        label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
-        calcOnlyText: { ...typography.caption, fontSize: 11, color: colors.textMuted, lineHeight: 15, marginBottom: spacing.sm },
+        label: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.xs },
+        calcOnlyText: { ...typeStyle('meta', locale), color: colors.textMuted, marginBottom: spacing.sm },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, locale]
   );
 
   return (

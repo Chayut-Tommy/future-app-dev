@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { brand } from './brand';
+import { Asset } from '../types/models';
+import { hasEverydayAccount, hasWealthAsset } from './setupChecklist';
 
 export type CelebrationTier = 'small' | 'medium' | 'big';
 
@@ -13,6 +15,39 @@ export interface CelebrationEvent {
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
+}
+
+/**
+ * Wave 9c state-communication correction A — the truthful copy for the
+ * `added_first_asset` unlock toast.
+ *
+ * THE DEFECT (owner device test, ~00:42): saving the checklist's Everyday
+ * ACCOUNT unlocked `added_first_asset` (its engine rule is
+ * `data.assets.length > 0` — every account lives in the Asset collection)
+ * and the toast announced "Added First Asset", contradicting the
+ * checklist's now-explicit account-vs-asset distinction.
+ *
+ * This resolver is PRESENTATION ONLY, at the existing celebration
+ * boundary: it decides toast copy from the same STRUCTURED type
+ * predicates the checklist uses (lib/setupChecklist — never a label,
+ * icon or free text) and changes no unlock rule, milestone, Score input
+ * or Wealth classification. It returns the account-specific copy exactly
+ * when the collection holds an Everyday account and NO genuine wealth
+ * asset — if a real asset exists, "Added First Asset" is truthful and the
+ * achievement's own copy stands (null). Savings keeps its own separate
+ * `added_savings` confirmation, unchanged.
+ */
+export function resolveFirstAssetCelebrationCopy(
+  assets: readonly Pick<Asset, 'type'>[]
+): { icon: keyof typeof Ionicons.glyphMap; title: string; body: string } | null {
+  if (hasEverydayAccount(assets) && !hasWealthAsset(assets)) {
+    return {
+      icon: 'card-outline',
+      title: 'Everyday account added',
+      body: `${brand.name} can now use this account in your money picture.`,
+    };
+  }
+  return null;
 }
 
 /** Every contribution gets a small reaction — the most frequent celebration,

@@ -2798,7 +2798,18 @@ interface AppStateContextValue {
    * were silently dropped (PRD bug report: "onboarding data does not
    * appear correctly, checklist asks user to add again"). One persist()
    * call combining the user patch and every new asset/liability. */
-  completeOnboarding: (userPatch: Partial<UserProfile>, assets: Omit<Asset, 'id'>[], liabilities: Omit<Liability, 'id'>[]) => void;
+  /** Wave 9c — returns the persistence promise and commits WRITE-FIRST:
+   * the disk write must succeed before in-memory state flips
+   * `hasSeenIntro`, so a failed write leaves the customer on the
+   * disclosure step with nothing persisted anywhere (see the callback's
+   * own doc comment). Optional income drafts persist through the same
+   * single atomic operation. */
+  completeOnboarding: (
+    userPatch: Partial<UserProfile>,
+    assets: Omit<Asset, 'id'>[],
+    liabilities: Omit<Liability, 'id'>[],
+    incomeItems?: Omit<RecurringItem, 'id'>[]
+  ) => Promise<void>;
   transferFunds: (fromAssetId: string, to: TransferTarget, amount: number) => TransferFundsResult;
   addSavingsComparison: (entry: Omit<SavingsComparisonEntry, 'id'>) => void;
   updateSavingsComparison: (id: string, patch: Partial<Omit<SavingsComparisonEntry, 'id'>>) => void;
@@ -3317,18 +3328,46 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [persist]
   );
 
+  // Wave 9c — recomposed WRITE-FIRST, using the same primitives persist()
+  // itself uses. The ordinary persist() commits in-memory state and then
+  // writes, which is right for every in-app mutation (the UI must not lag
+  // the customer's action) — but wrong for onboarding completion:
+  // RootNavigator switches on `hasSeenIntro`, so an in-memory-first commit
+  // would navigate to Today even when the disk write FAILS, and the
+  // disclosure contract requires that a failed completion persists nothing
+  // and leaves the customer on the disclosure step with their drafts. Here
+  // the write is awaited first and in-memory state commits only on
+  // success; a rejection leaves BOTH stores untouched and propagates to
+  // the caller, whose Retry re-invokes this same atomic payload.
+  //
+  // Optional income drafts (state 5) persist through this same single
+  // operation, shaped exactly as addRecurringItem persists them — same
+  // resolveScheduleAnchorDay derivation, same id generation.
   const completeOnboarding = useCallback(
-    (userPatch: Partial<UserProfile>, assets: Omit<Asset, 'id'>[], liabilities: Omit<Liability, 'id'>[]) => {
-      persist(
-        upsertNetWorthHistory({
-          ...data,
-          user: { ...data.user, ...userPatch },
-          assets: [...data.assets, ...assets.map((a) => ({ ...a, id: generateId() }))],
-          liabilities: [...data.liabilities, ...liabilities.map((l) => ({ ...l, id: generateId() }))],
-        })
-      );
+    async (
+      userPatch: Partial<UserProfile>,
+      assets: Omit<Asset, 'id'>[],
+      liabilities: Omit<Liability, 'id'>[],
+      incomeItems: Omit<RecurringItem, 'id'>[] = []
+    ): Promise<void> => {
+      const next = upsertNetWorthHistory({
+        ...data,
+        user: { ...data.user, ...userPatch },
+        assets: [...data.assets, ...assets.map((a) => ({ ...a, id: generateId() }))],
+        liabilities: [...data.liabilities, ...liabilities.map((l) => ({ ...l, id: generateId() }))],
+        recurringItems: [
+          ...data.recurringItems,
+          ...incomeItems.map((item) => ({ ...item, scheduleAnchorDay: resolveScheduleAnchorDay(null, item), id: generateId() })),
+        ],
+      });
+      const withIncome = syncIncomeAggregate(next);
+      const withScoreHistory = upsertLuluScoreHistory(withIncome);
+      const write = saveAppData(withScoreHistory);
+      trackWrite(write, 'ordinary');
+      await write;
+      commitData(withScoreHistory);
     },
-    [data, persist]
+    [data, commitData, trackWrite]
   );
 
   const addCreditCard = useCallback(

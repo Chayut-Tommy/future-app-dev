@@ -492,6 +492,22 @@ export interface UserProfile {
    * deferred rather than forcing entry before the user has bills handy
    * (PRD ask, §3B). */
   confirmedBillsLater?: boolean;
+  /** Wave 9c closure — the customer chose "Maybe later" on the checklist's
+   * optional goal row. Presentation-only, exactly like the confirmed*
+   * flags above: it lets the checklist reach its completed state without a
+   * goal, writes no goal, no target and no Score event, and old data
+   * without it simply shows the row as not yet answered. */
+  confirmedGoalLater?: boolean;
+  /** Wave 9c visual/checklist correction — the customer explicitly chose
+   * "I'll add one later" on the checklist's Everyday-account step.
+   * PRESENTATION PREFERENCE ONLY, exactly like the confirmed* flags above:
+   * completes that checklist step as "Later" (never "Added"), is read
+   * nowhere else, changes no eligibility or calculation (Available until
+   * payday keeps its own factual missing-balance state), and old data
+   * without it stays valid — absent simply means "not yet answered". No
+   * existing flag carries this meaning: `confirmedCashOnly` answers the
+   * ASSETS step ("I only have cash"), which is a different question. */
+  confirmedEverydayLater?: boolean;
   /** The user's optional, explicitly-chosen savings allocation — feeds
    * Available Until Payday, Money Allocation, and Your Future as a
    * forward-looking estimate input only (PRD ask: "one shared user-selected

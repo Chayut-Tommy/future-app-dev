@@ -238,8 +238,6 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
     'highestInterestDebt',
     'debtToIncomeRatio',
     'Educational estimate only',
-    "Let's understand your debt first",
-    'I have no debt',
     'buildDebtFreeCelebration',
     'AddWealthItemModal',
     'AddCreditCardModal',
@@ -262,7 +260,21 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
   // — all read from the file under test.
   assert('5i-d. the retired "real payoff scenarios" claim is gone', !DEBT_SHEET_CODE.includes('real payoff scenarios'));
   assert('5i-e. its approved replacement is rendered from the shared constant', DEBT_RAW.includes('DEBT_SCENARIO_PROMPT'));
-  assert('5i-f. the no-debt branch survives intact', ["Let's understand your debt first", 'Do you currently have any debt?', 'I have no debt', 'handleNoDebt'].every((k) => DEBT_RAW.includes(k)));
+  // -------------------------------------------------------------------
+  // RECONCILED — Wave 9c FINAL correction pass, Correction D.
+  // SUPERSEDED: 5i-c/5i-f pinned the chooser's LITERAL legacy copy
+  // ("Let's understand your debt first" / "Do you currently have any
+  // debt?" / "I have no debt" with its red X).
+  // WHY: the owner's device recording showed that presentation still in
+  // legacy typography with emoji tiles; the accepted replacement is the
+  // "Tell us about any debt" hierarchy with the shared vector icon
+  // resolver and a calm "I don't have any debt" answer.
+  // PRESERVED INTENT: the BRANCH itself — ask first, add a liability only
+  // when needed, celebrate the no-debt answer — survives with the same
+  // handler and the same four destinations, asserted here against the new
+  // copy.
+  // -------------------------------------------------------------------
+  assert('5i-f. the no-debt branch survives intact', ['Tell us about any debt', 'Add only what applies. You can update this later.', "I don't have any debt", 'handleNoDebt'].every((k) => DEBT_RAW.includes(k)));
   assert('5i-f-i. every debt-type option the customer could pick is still offered', ['credit_card', 'mortgage', 'car_loan', 'personal_loan'].every((t) => DEBT_RAW.includes(`type: '${t}'`)));
   assert('5i-f-ii. the educational disclosure still sits with the numbers', DEBT_RAW.includes('Educational estimate only.'));
   // And the addition is exactly one outbound route, to Cards.

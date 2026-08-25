@@ -143,10 +143,14 @@ describe('Wave 9a closure — a $0 card is not debt, but it is still a card', ()
     });
     const root = await render(<Host />);
 
-    // The no-debt presentation is preserved exactly — a $0 card is never
+    // The no-debt presentation is preserved — a $0 card is never
     // relabelled as debt, and no debt overview is fabricated for it.
-    await screen.findByText("Let's understand your debt first", {}, { timeout: 20000 });
-    expect(screen.getAllByText('Do you currently have any debt?').length).toBeGreaterThan(0);
+    // (RECONCILED — Wave 9c final correction pass, Correction D: the
+    // chooser's copy is now the accepted "Tell us about any debt"
+    // hierarchy; the $0-card eligibility rules this suite exists for are
+    // untouched.)
+    await screen.findByText('Tell us about any debt', {}, { timeout: 20000 });
+    expect(screen.getAllByText('Add only what applies. You can update this later.').length).toBeGreaterThan(0);
     expect(screen.queryAllByText('Your debt overview')).toHaveLength(0);
     expect(screen.queryAllByText(/remaining/)).toHaveLength(0);
 
@@ -164,7 +168,7 @@ describe('Wave 9a closure — a $0 card is not debt, but it is still a card', ()
     });
     const root = await render(<Host />);
 
-    await screen.findByText("Let's understand your debt first", {}, { timeout: 20000 });
+    await screen.findByText('Tell us about any debt', {}, { timeout: 20000 });
     await waitFor(() => expect(screen.queryAllByTestId('debt-overview-view-cards')).toHaveLength(1), { timeout: 20000 });
     // Three cards, one action — never one per card.
     expect(screen.getAllByLabelText('View credit cards')).toHaveLength(1);
@@ -180,11 +184,11 @@ describe('Wave 9a closure — a $0 card is not debt, but it is still a card', ()
     });
     const root = await render(<Host />);
 
-    await screen.findByText("Let's understand your debt first", {}, { timeout: 20000 });
+    await screen.findByText('Tell us about any debt', {}, { timeout: 20000 });
     expect(screen.queryAllByTestId('debt-overview-view-cards')).toHaveLength(0);
     expect(screen.queryAllByLabelText('View credit cards')).toHaveLength(0);
     // The no-debt affordances the customer does have are untouched.
-    expect(screen.getAllByText(/I have no debt/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/I don't have any debt/).length).toBeGreaterThan(0);
     expect(screen.getAllByText('Credit card').length).toBeGreaterThan(0);
     root.unmount();
   }, 60000);

@@ -3,7 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'r
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { ProgressBar } from '../shared/ProgressBar';
-import { JourneySnapshot } from '../../lib/calculations/journeySnapshot';
+import { JourneySnapshot, upcomingMilestoneTitle } from '../../lib/calculations/journeySnapshot';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -46,11 +46,17 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
         ? Math.min(1, Math.max(0, snapshot.completedCount / snapshot.totalCount))
         : 0;
 
+  // Wave 9c state-communication correction B — the stage line is always
+  // the NEXT (not-yet-achieved) milestone, so it renders the shared
+  // UPCOMING presentation (journeySnapshot.upcomingMilestoneTitle) under a
+  // "Next milestone" context, never a fixed past-tense record of an action
+  // the customer has not taken.
   const stageLine = snapshot.allCompleted
     ? 'All milestones completed'
     : snapshot.next
-      ? snapshot.next.title
+      ? upcomingMilestoneTitle(snapshot.next)
       : `${snapshot.completedCount} of ${snapshot.totalCount} milestones completed`;
+  const contextLine = !snapshot.allCompleted && snapshot.next ? 'Next milestone' : 'Your Journey';
 
   const metaLine = snapshot.nextProgress
     ? snapshot.nextProgress.formatted
@@ -103,7 +109,7 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
       activeOpacity={0.7}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Your Journey. ${stageLine}. ${metaLine}`}
+      accessibilityLabel={`Your Journey. ${contextLine}: ${stageLine}. ${metaLine}`}
       accessibilityHint="Opens the full Journey in Grow"
       testID="today-journey-row"
     >
@@ -112,7 +118,7 @@ export function TodayJourneySnapshotCard({ snapshot, onPress }: { snapshot: Jour
           <Ionicons name="compass-outline" size={15} color={semantic.interactive} />
         </View>
         <View style={styles.body}>
-          <Text style={styles.title}>Your Journey</Text>
+          <Text style={styles.title}>{contextLine}</Text>
           <Text style={styles.stage} numberOfLines={stackMeta ? 3 : 1}>
             {stageLine}
           </Text>

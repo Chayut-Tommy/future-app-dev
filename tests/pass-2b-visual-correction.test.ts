@@ -233,7 +233,13 @@ console.log('\n=== Section 4: component wiring and colour treatment (Structural)
   // recomputed: the bar's fraction is formed only from already-decided
   // pairs (nextProgress.current/target, or completedCount/totalCount), and
   // no milestone, target or recommendation is invented.
-  assert('TodayJourneySnapshotCard.tsx still renders the preserved snapshot fields verbatim — completedCount/totalCount/next/nextProgress — never recomputed', /snapshot\.completedCount/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.totalCount/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.next\.title/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.nextProgress\.formatted/.test(JOURNEY_SNAPSHOT_SRC) && !/computeAchievements|computeJourneySnapshot/.test(JOURNEY_SNAPSHOT_SRC.replace(/\/\*[\s\S]*?\*\//g, '')));
+  // RECONCILED — Wave 9c state-communication correction B: the card still
+  // consumes snapshot.next verbatim and recomputes nothing; the next
+  // milestone's TITLE now passes through journeySnapshot's own shared
+  // upcoming-presentation resolver (upcomingMilestoneTitle), so a fixed
+  // past-tense achievement title is never shown for an action the
+  // customer has not taken. Same field, same engine, presentation only.
+  assert('TodayJourneySnapshotCard.tsx still renders the preserved snapshot fields verbatim — completedCount/totalCount/next/nextProgress — never recomputed', /snapshot\.completedCount/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.totalCount/.test(JOURNEY_SNAPSHOT_SRC) && /upcomingMilestoneTitle\(snapshot\.next\)/.test(JOURNEY_SNAPSHOT_SRC) && /snapshot\.nextProgress\.formatted/.test(JOURNEY_SNAPSHOT_SRC) && !/computeAchievements|computeJourneySnapshot\(/.test(JOURNEY_SNAPSHOT_SRC.replace(/\/\*[\s\S]*?\*\//g, '')));
 
   // --- Score and Journey do not reuse the same trophy presentation, anywhere touched this pass ---
   assert(

@@ -6,6 +6,7 @@ import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 import { Achievement } from '../../lib/calculations/achievements';
+import { upcomingMilestoneTitle } from '../../lib/calculations/journeySnapshot';
 import { ProgressBar } from '../shared/ProgressBar';
 
 const NODE_SIZE = 40;
@@ -118,7 +119,15 @@ export function JourneyTimeline({
                 ) : null}
               </View>
               <View style={styles.textCol}>
-                <Text style={[styles.title, { color: a.unlocked || isNext ? colors.textPrimary : colors.textSecondary }]}>{a.title}</Text>
+                {/* Wave 9c state-communication correction B — an
+                    achieved milestone keeps its own history wording; a
+                    not-yet-achieved one renders the SAME shared upcoming
+                    presentation Today's compact row uses, so "Created
+                    First Goal" can never read as done before a goal
+                    exists. */}
+                <Text style={[styles.title, { color: a.unlocked || isNext ? colors.textPrimary : colors.textSecondary }]}>
+                  {a.unlocked ? a.title : upcomingMilestoneTitle(a)}
+                </Text>
                 <Text style={styles.subtitle}>{a.subtitle}</Text>
                 {isNext ? (
                   <View style={styles.nextBadge}>

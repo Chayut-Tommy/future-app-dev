@@ -359,7 +359,10 @@ describe('Design 5.1 Wave 5 — Today looks like page 7 (established customer)',
       ['date eyebrow', orderOf(texts, new RegExp(String(view.getByTestId('today-date-eyebrow').props.children)))],
       ['greeting', orderOf(texts, /^(Good|Hi|Hello)/)],
       ['briefing title', orderOf(texts, /^Your Today Briefing$/)],
-      ['journey', orderOf(texts, /^Your Journey$/)],
+      // (Wave 9c state-communication correction B: the row's small context
+      // reads "Next milestone" whenever a next milestone exists — the same
+      // row, same position; "Your Journey" still leads its a11y label.)
+      ['journey', orderOf(texts, /^(Your Journey|Next milestone)$/)],
       ['month', orderOf(texts, /so far$/)],
       ['goal', orderOf(texts, /^Your goal$/)],
       ['score footnote', orderOf(texts, /Not a credit score/)],
@@ -427,7 +430,11 @@ describe('Design 5.1 Wave 5 — Today in the fresh-setup state', () => {
     const joined = texts.join(' | ');
 
     // The checklist is the ONE setup ask.
-    expect(orderOf(texts, /money picture|Money picture|Complete your money/i)).toBeGreaterThanOrEqual(0);
+    // (Wave 9c closure renamed the card's header to "Finish your setup";
+    // the FINAL correction pass renamed it again to "Complete your money
+    // setup" with a Continue setup CTA — still the ONE setup ask, same
+    // completion sources of truth.)
+    expect(orderOf(texts, /Complete your money setup/i)).toBeGreaterThanOrEqual(0);
 
     // No second prompt, in any of its forms.
     expect(joined).not.toContain('unlock your monthly snapshot');
@@ -441,7 +448,8 @@ describe('Design 5.1 Wave 5 — Today in the fresh-setup state', () => {
     // The section collapses entirely — the Briefing is followed by the
     // journey row, with no month landmark of any kind between them.
     const heroIdx = orderOf(texts, /^Your Today Briefing$/);
-    const journeyIdx = orderOf(texts, /^Your Journey$/);
+    // Same Wave 9c correction-B wording note as test 13's landmark.
+    const journeyIdx = orderOf(texts, /^(Your Journey|Next milestone)$/);
     expect(journeyIdx).toBeGreaterThan(heroIdx);
     expect(texts.slice(heroIdx, journeyIdx).some((t) => /so far/.test(t))).toBe(false);
 
@@ -468,7 +476,11 @@ describe('Design 5.1 Wave 5 — Today in the fresh-setup state', () => {
     // The old pale unlock panel and its nested pill are gone from this slot.
     const texts = visibleTexts(view);
     expect(texts).not.toContain('Track a goal');
-    expect(texts).not.toContain('Add a goal');
+    // RECONCILED — Wave 9c closure: the setup checklist's goal row is
+    // legitimately titled "Add a goal" now, so the page-wide ban would flag
+    // a different, intended surface. The goal SLOT itself is pinned by the
+    // accessibilityLabel/testID assertions above; the old unlock panel's
+    // own phrasing stays banned.
     expect(texts).toEqual(expect.arrayContaining(['Plan a goal', 'Create goal']));
 
     // Pressing it opens the canonical Wave 4 goal form — all three of its

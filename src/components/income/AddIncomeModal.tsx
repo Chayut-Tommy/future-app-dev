@@ -16,6 +16,7 @@ import { resolveEligibleIncomeDestinations } from '../../lib/calculations/income
 import { IncomeDestinationPicker } from '../shared/IncomeDestinationPicker';
 import { generateId } from '../../lib/id';
 import { incomeSourceIcon } from '../../lib/addIcons';
+import { INCOME_SOURCE_IDS, INCOME_SOURCE_LABEL, INCOME_SOURCE_RECORD_ICON } from '../../lib/incomeSources';
 import { DateTriggerField } from '../shared/fields/DateTriggerField';
 import { InlineSelect } from '../shared/fields/InlineSelect';
 import { TextField } from '../shared/fields/TextField';
@@ -23,16 +24,10 @@ import { CurrencyField } from '../shared/fields/CurrencyField';
 import { brand } from '../../lib/brand';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
 
-const INCOME_SOURCE_IDS = ['cat-salary', 'cat-side-hustle', 'cat-investment-income', 'cat-rental-income', 'cat-gift', 'cat-other-income'];
-
-const INCOME_SOURCE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
-  'cat-salary': 'briefcase-outline',
-  'cat-side-hustle': 'laptop-outline',
-  'cat-investment-income': 'trending-up-outline',
-  'cat-rental-income': 'home-outline',
-  'cat-gift': 'gift-outline',
-  'cat-other-income': 'cash-outline',
-};
+// Wave 9c final correction pass — the ids, labels and saved-icon mapping
+// moved verbatim to lib/incomeSources.ts so onboarding's optional income
+// block can offer the SAME structured selector without a drifting copy.
+// Nothing about this journey's behaviour changed with the move.
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -106,9 +101,17 @@ export const AddIncomeModal = forwardRef<
     onTitleChange?: (title: string) => void;
     onSaveSuccess?: () => void;
     onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+    /** Wave 9c visual/checklist correction (Correction E) — explicit caller
+     * context: true only when this form was opened FROM THE TODAY
+     * CHECKLIST, whose flow returns straight to the checklist after Save.
+     * Suppresses only the one-time post-first-income "Plan around your
+     * income?" REQUEST for that save; the planner itself, its coordinator,
+     * every other caller's prompt behaviour, and all savings-allocation
+     * calculations are untouched. */
+    suppressSavingsAllocationPrompt?: boolean;
   }
 >(function AddIncomeModal(
-  { visible, onClose, editItem, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
+  { visible, onClose, editItem, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose, suppressSavingsAllocationPrompt = false },
   ref
 ) {
   const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem, addRecurringIncomeWithMidCycleOccurrence } = useAppState();
@@ -288,7 +291,7 @@ export const AddIncomeModal = forwardRef<
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   })();
   const incomeSourceOptions = useMemo(
-    () => INCOME_SOURCE_IDS.map((id) => ({ value: id, label: SOURCE_LABEL[id] ?? 'Income', icon: incomeSourceIcon(id) })),
+    () => INCOME_SOURCE_IDS.map((id) => ({ value: id, label: INCOME_SOURCE_LABEL[id] ?? 'Income', icon: incomeSourceIcon(id) })),
     []
   );
 
@@ -317,6 +320,7 @@ export const AddIncomeModal = forwardRef<
     // the disclosure has been handled or a real allocation already exists.
     const activeIncomeCountBefore = data.recurringItems.filter((r) => r.type === 'income' && r.active).length;
     const qualifiesForSavingsAllocationPrompt =
+      !suppressSavingsAllocationPrompt &&
       !editItem &&
       activeIncomeCountBefore === 0 &&
       !data.user.savingsAllocationPromptHandled &&
@@ -454,8 +458,8 @@ export const AddIncomeModal = forwardRef<
     // Identical prefill to the removed page: the icon follows the source,
     // and the name is only ever filled in when the customer has not typed
     // one — never overwritten.
-    setIcon(INCOME_SOURCE_ICON[nextSourceId] ?? 'cash-outline');
-    setLabel((prev) => prev || SOURCE_LABEL[nextSourceId] || 'Income');
+    setIcon(INCOME_SOURCE_RECORD_ICON[nextSourceId] ?? 'cash-outline');
+    setLabel((prev) => prev || INCOME_SOURCE_LABEL[nextSourceId] || 'Income');
   }
 
   function chooseFrequency(f: PayFrequency) {
@@ -633,7 +637,17 @@ export const AddIncomeModal = forwardRef<
             value={nextDueDate ? new Date(nextDueDate) : null}
             today={startOfTodayLocal}
             optional
-            onChange={(next) => setNextDueDate(next.toISOString())}
+            // Wave 9c final correction pass — picking a date must also clear
+            // a lingering `unknownDate`. A regular-cadence record can carry
+            // `nextDueDateUnknown: true` only from the legacy onboarding
+            // build (this branch has no unknown-date control of its own), and
+            // handleSave's payload trusts `unknownDate` over the picked date
+            // — so without this line, completing such a record's payday
+            // silently discarded the chosen date and kept it unscheduled.
+            onChange={(next) => {
+              setNextDueDate(next.toISOString());
+              setUnknownDate(false);
+            }}
             testID="income-next-due-date"
           />
         </>
@@ -693,12 +707,3 @@ export const AddIncomeModal = forwardRef<
     </KeyboardSheet>
   );
 });
-
-const SOURCE_LABEL: Record<string, string> = {
-  'cat-salary': 'Salary',
-  'cat-side-hustle': 'Side hustle',
-  'cat-investment-income': 'Dividends',
-  'cat-rental-income': 'Rental income',
-  'cat-gift': 'Gift',
-  'cat-other-income': 'Other',
-};

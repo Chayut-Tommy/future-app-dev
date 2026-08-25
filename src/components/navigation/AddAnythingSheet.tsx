@@ -41,6 +41,12 @@ export type AddAnythingKind =
   | 'investment'
   | 'property'
   | 'retirement'
+  /** Wave 9c visual/checklist correction — a DIRECT-ENTRY-ONLY kind for the
+   * checklist's "Add an asset" row: opens the one asset form preset to the
+   * canonical Vehicle type ('car'), fully changeable in the form's own
+   * type selector. Deliberately absent from GROUPS, so the global "+"
+   * chooser is unchanged — only an explicit `initialKind` reaches it. */
+  | 'vehicle'
   | 'liability'
   | 'creditCard'
   | 'goal';
@@ -136,6 +142,7 @@ const ASSET_PRESET_MAP: Partial<Record<AddAnythingKind, AssetType>> = {
   investment: 'etf',
   property: 'property',
   retirement: 'super',
+  vehicle: 'car',
 };
 
 // The seven destinations with a plain, unambiguous 1:1 tile<->route
@@ -257,6 +264,7 @@ export function AddAnythingSheet({
   onClose,
   onlyBalances,
   initialKind,
+  suppressIncomePlannerPrompt = false,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -281,6 +289,12 @@ export function AddAnythingSheet({
    * never re-fire. Ignored while `onlyBalances` is set (that scoped
    * journey has its own fixed entry: the balance-only chooser grid). */
   initialKind?: AddAnythingKind;
+  /** Wave 9c visual/checklist correction (Correction E) — explicit caller
+   * context from the Today checklist: an income saved from THAT flow must
+   * return straight to the checklist, so the embedded income form is told
+   * not to request the one-time "Plan around your income?" prompt. Every
+   * other host omits this and keeps the accepted prompt behaviour. */
+  suppressIncomePlannerPrompt?: boolean;
 }) {
   const { colors, semantic, radius, spacing, typography, cardShadow, minTouchTarget } = useTheme();
 
@@ -611,6 +625,8 @@ export function AddAnythingSheet({
           return 'Property';
         case 'super':
           return 'Retirement savings';
+        case 'car':
+          return 'Vehicle';
         default:
           return 'Asset';
       }
@@ -1689,6 +1705,7 @@ export function AddAnythingSheet({
             ref={incomeSourceModalRef}
             visible
             embedded
+            suppressSavingsAllocationPrompt={suppressIncomePlannerPrompt}
             onDirtyChange={incomeSourceState.setIsDirty}
             onCanSaveChange={incomeSourceState.setCanSave}
             onTitleChange={incomeSourceState.setTitle}

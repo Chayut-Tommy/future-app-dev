@@ -10,7 +10,6 @@ import { useCelebration } from '../../state/CelebrationContext';
 import { useCurrentLocalDate } from '../../hooks/useCurrentLocalDate';
 import { Screen } from '../../components/shared/Screen';
 import { ProgressBar } from '../../components/shared/ProgressBar';
-import { UnlockPromptCard } from '../../components/unlock/UnlockPromptCard';
 import { MonthSnapshotCard } from '../../components/today/MonthSnapshotCard';
 import { MoneyPictureChecklistCard } from '../../components/today/MoneyPictureChecklistCard';
 import { LoanBalanceReminderCard } from '../../components/today/LoanBalanceReminderCard';
@@ -38,8 +37,7 @@ import { ReminderOpenRequest, createReminderOpenRequest } from '../../lib/calcul
 import { selectTodayBriefingEventRows } from '../../lib/calculations/todayBriefing';
 import { selectScoreChipPresentation } from '../../lib/calculations/scoreChipPresentation';
 import { computeJourneySnapshot } from '../../lib/calculations/journeySnapshot';
-import { buildSavingCelebration, buildGoalMilestoneCelebration, buildProfileCompleteCelebration, computeScoreMilestoneCelebration } from '../../lib/celebrations';
-import { getUnlockStatus, UNLOCK_COPY } from '../../lib/unlock';
+import { buildSavingCelebration, buildGoalMilestoneCelebration, computeScoreMilestoneCelebration, resolveFirstAssetCelebrationCopy } from '../../lib/celebrations';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
 import { sendFocusEvent } from '../../lib/accessibilityFocus';
@@ -174,7 +172,6 @@ export function TodayScreen() {
   // read the exact same active-goal predicate primaryActiveGoal (below)
   // will also use for the goal-snapshot section, so "does the user have
   // an active goal" can never disagree between the two.
-  const unlockStatus = useMemo(() => getUnlockStatus(data), [data]);
   const achievements = useMemo(() => computeAchievements(data), [data]);
   const journeySnapshot = useMemo(() => computeJourneySnapshot(achievements), [achievements]);
   // Worth Knowing round — Cashflow Focus's Today presentation was retired
@@ -270,8 +267,20 @@ export function TodayScreen() {
     const newlyUnlocked = achievements.find((a) => a.unlocked && !data.seenAchievementIds.includes(a.id));
     if (!newlyUnlocked) return;
     const isBig = BIG_TIER_ACHIEVEMENT_IDS.has(newlyUnlocked.id);
+    // Wave 9c state-communication correction A — the first-asset unlock's
+    // toast copy resolves from structured asset types (see the resolver's
+    // own doc comment): an Everyday ACCOUNT announces itself truthfully
+    // instead of as "Added First Asset". Presentation only — the unlock
+    // itself, its id, tier and seen-tracking are byte-identical.
+    const firstAssetCopy = newlyUnlocked.id === 'added_first_asset' ? resolveFirstAssetCelebrationCopy(data.assets) : null;
     const fire = () => {
-      celebrate({ id: newlyUnlocked.id, tier: isBig ? 'big' : 'small', icon: newlyUnlocked.icon, title: newlyUnlocked.title, body: newlyUnlocked.subtitle });
+      celebrate({
+        id: newlyUnlocked.id,
+        tier: isBig ? 'big' : 'small',
+        icon: firstAssetCopy?.icon ?? newlyUnlocked.icon,
+        title: firstAssetCopy?.title ?? newlyUnlocked.title,
+        body: firstAssetCopy?.body ?? newlyUnlocked.subtitle,
+      });
       markAchievementsSeen([newlyUnlocked.id]);
     };
     if (!isBig) {
@@ -283,16 +292,14 @@ export function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  // "Lulu understands you better now" — fires once, the first time the
-  // profile (age + money goal + confidence) becomes fully complete.
-  useEffect(() => {
-    if (data.user.profileCompletionCelebrated) return;
-    if (data.user.age && data.user.moneyGoal && data.user.confidenceLevel) {
-      celebrate(buildProfileCompleteCelebration());
-      updateUser({ profileCompletionCelebrated: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.user.age, data.user.moneyGoal, data.user.confidenceLevel]);
+  // Wave 9c — the "profile complete" celebration was RETIRED. Its only
+  // trigger was age + moneyGoal + confidenceLevel, and the latter two
+  // questions no longer exist anywhere (onboarding and Settings both
+  // retired them), so the trio could never complete for a new customer and
+  // the celebration was dead wiring. Deliberately NOT retargeted at name,
+  // age or onboarding completion — finishing a form is not a money moment.
+  // The persisted `profileCompletionCelebrated` flag stays on the model
+  // untouched for customers who already earned it.
 
   // Building the initial money picture (income → savings → bills → assets)
   // can jump the Score several 10-point bands in minutes — that's score
@@ -873,16 +880,15 @@ export function TodayScreen() {
           nothing (and leaves no gap) when its own condition doesn't apply;
           none of their calculations, actions, or persistence changed —
           only their position on the page. */}
+      {/* Wave 9c closure — the legacy "Unlock your Nolie Score" promotion
+          card was removed outright: the rebuilt setup checklist above is
+          the one canonical first-run guide (its income row completes the
+          same condition this card promoted), and Grow's Score hero is the
+          canonical Score surface. Nothing else changed — the Score engine,
+          its lock gate and the Journey "Score unlocked" milestone are
+          untouched, and no spacer, wrapper or accessibility node remains
+          for the removed card. */}
       <View style={{ marginTop: spacing.lg }}>
-        {luluScore.locked ? (
-          <UnlockPromptCard
-            icon={UNLOCK_COPY.lulu_score.icon}
-            title={UNLOCK_COPY.lulu_score.title}
-            body={UNLOCK_COPY.lulu_score.body}
-            actionLabel={UNLOCK_COPY.lulu_score.actionLabel}
-            onAction={() => setIncomeModalVisible(true)}
-          />
-        ) : null}
         <LoanBalanceReminderCard />
       </View>
 

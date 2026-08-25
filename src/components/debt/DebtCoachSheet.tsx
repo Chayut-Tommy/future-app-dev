@@ -13,6 +13,8 @@ import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculatio
 import { buildDebtFreeCelebration } from '../../lib/celebrations';
 import { LiabilityType } from '../../types/models';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
+import { AddIcon } from '../shared/AddIcon';
+import { liabilityTypeIcon } from '../../lib/addIcons';
 import { AddCreditCardModal } from '../credit/AddCreditCardModal';
 import { brand } from '../../lib/brand';
 import { DEBT_SCENARIO_PROMPT } from '../../lib/creditCardPresentation';
@@ -30,11 +32,16 @@ function monthsLabel(months: number): string {
   return `${years} year${years === 1 ? '' : 's'} ${remMonths} month${remMonths === 1 ? '' : 's'}`;
 }
 
-const DEBT_TYPE_OPTIONS: { type: LiabilityType | 'credit_card'; label: string; emoji: string }[] = [
-  { type: 'credit_card', label: 'Credit card', emoji: '💳' },
-  { type: 'mortgage', label: 'Mortgage', emoji: '🏠' },
-  { type: 'car_loan', label: 'Car loan', emoji: '🚗' },
-  { type: 'personal_loan', label: 'Personal loan', emoji: '💰' },
+// Wave 9c final correction pass, Correction D — the emoji tiles are gone;
+// each row now renders the SHARED debt-purpose icon resolver's canonical
+// vector spec (lib/addIcons.ts `liabilityTypeIcon`, the same mapping every
+// other liability picker uses), so the chooser matches the app's icon
+// system in every theme.
+const DEBT_TYPE_OPTIONS: { type: LiabilityType | 'credit_card'; label: string }[] = [
+  { type: 'credit_card', label: 'Credit card' },
+  { type: 'mortgage', label: 'Mortgage' },
+  { type: 'car_loan', label: 'Car loan' },
+  { type: 'personal_loan', label: 'Personal loan' },
 ];
 
 /**
@@ -47,7 +54,7 @@ const DEBT_TYPE_OPTIONS: { type: LiabilityType | 'credit_card'; label: string; e
 export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { data, updateUser } = useAppState();
   const { celebrate } = useCelebration();
-  const { colors, semantic, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
@@ -116,12 +123,12 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
           maxHeight: '85%',
         },
         grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginBottom: spacing.md },
-        title: { ...typography.heading, fontSize: 18, color: colors.textPrimary, marginBottom: spacing.xs },
-        subtitle: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.lg },
+        title: { ...typeStyle('titleSection', locale), color: colors.textPrimary, marginBottom: spacing.xs },
+        subtitle: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.lg },
         debtRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.sm },
         debtTextBlock: { flex: 1 },
-        debtLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
-        debtSub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+        debtLabel: { ...typeStyle('body', locale), color: colors.textPrimary, fontWeight: '600' },
+        debtSub: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: 2, fontVariant: ['tabular-nums'] },
         // Wave 9a closure, Correction A. `typography.caption` from the token
         // set carries NO fontFamily, so it renders in the platform default —
         // the Wave 8 trap. This new surface resolves Figtree through the
@@ -144,18 +151,17 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
         cardsLinkText: { ...typeStyle('support', locale), fontWeight: '700', color: semantic.interactive, flexShrink: 1 },
         suggestionsBlock: { marginTop: spacing.sm, marginBottom: spacing.md },
         suggestionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.sm },
-        suggestionText: { ...typography.caption, fontSize: 13, color: colors.textPrimary, flex: 1, lineHeight: 18 },
+        suggestionText: { ...typeStyle('support', locale), color: colors.textPrimary, flex: 1 },
         optionGrid: { gap: spacing.sm, marginBottom: spacing.md },
-        optionTile: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.control, backgroundColor: colors.surfaceMuted },
-        optionEmoji: { fontSize: 20 },
-        optionLabel: { ...typography.body, fontSize: 15, color: colors.textPrimary },
-        noDebtRow: { alignItems: 'center', paddingVertical: spacing.md, borderRadius: radius.control, backgroundColor: colors.accentSoft, marginBottom: spacing.sm },
-        noDebtText: { ...typography.body, fontSize: 15, color: colors.accentStrong, fontWeight: '600' },
-        disclosure: { ...typography.micro, fontSize: 10, color: colors.textMuted, lineHeight: 14, marginTop: spacing.xs },
+        optionTile: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 56, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.control, backgroundColor: colors.surfaceMuted },
+        optionLabel: { ...typeStyle('body', locale), color: colors.textPrimary, flex: 1 },
+        noDebtRow: { alignItems: 'center', justifyContent: 'center', minHeight: 56, paddingVertical: spacing.sm, borderRadius: radius.control, backgroundColor: colors.accentSoft, marginBottom: spacing.sm },
+        noDebtText: { ...typeStyle('body', locale), color: colors.accentStrong, fontWeight: '600' },
+        disclosure: { ...typeStyle('meta', locale), color: colors.textMuted, marginTop: spacing.xs },
         closeButton: { alignSelf: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
-        closeText: { color: colors.textSecondary, fontWeight: '600' },
+        closeText: { ...typeStyle('labelButton', locale), color: colors.textSecondary },
       }),
-    [colors, semantic, radius, spacing, typography, insets.bottom, locale]
+    [colors, semantic, radius, spacing, insets.bottom, locale]
   );
 
   return (
@@ -167,7 +173,7 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
             <View style={styles.grabber} />
             {hasDebt ? (
               <>
-                <Text style={styles.title}>Your debt overview</Text>
+                <Text style={styles.title} accessibilityRole="header">Your debt overview</Text>
                 <ScrollView showsVerticalScrollIndicator={false}>
                   {summary.debts.map((d) => (
                     <View key={d.id} style={styles.debtRow}>
@@ -228,18 +234,35 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
               </>
             ) : (
               <>
-                <Text style={styles.title}>Let's understand your debt first</Text>
-                <Text style={styles.subtitle}>Do you currently have any debt?</Text>
+                <Text style={styles.title} accessibilityRole="header">Tell us about any debt</Text>
+                <Text style={styles.subtitle}>Add only what applies. You can update this later.</Text>
                 <View style={styles.optionGrid}>
                   {DEBT_TYPE_OPTIONS.map((o) => (
-                    <TouchableOpacity key={o.type} style={styles.optionTile} onPress={() => handleDebtType(o.type)}>
-                      <Text style={styles.optionEmoji}>{o.emoji}</Text>
+                    <TouchableOpacity
+                      key={o.type}
+                      style={styles.optionTile}
+                      onPress={() => handleDebtType(o.type)}
+                      accessibilityRole="button"
+                      accessibilityLabel={o.label}
+                      testID={`debt-choice-${o.type}`}
+                    >
+                      <AddIcon icon={liabilityTypeIcon(o.type)} tile />
                       <Text style={styles.optionLabel}>{o.label}</Text>
+                      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} accessibilityElementsHidden importantForAccessibility="no" />
                     </TouchableOpacity>
                   ))}
                 </View>
-                <TouchableOpacity style={styles.noDebtRow} onPress={handleNoDebt}>
-                  <Text style={styles.noDebtText}>❌ I have no debt</Text>
+                {/* The no-debt answer — calm and affirmative. Deliberately NO
+                    red X (red stays reserved for genuine urgency and
+                    destructive actions) and no emoji. */}
+                <TouchableOpacity
+                  style={styles.noDebtRow}
+                  onPress={handleNoDebt}
+                  accessibilityRole="button"
+                  accessibilityLabel="I don't have any debt"
+                  testID="debt-no-debt"
+                >
+                  <Text style={styles.noDebtText}>I don't have any debt</Text>
                 </TouchableOpacity>
               </>
             )}

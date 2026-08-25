@@ -748,15 +748,31 @@ export function WealthScreen() {
           are existing accepted surfaces backed by existing selectors; this
           wave neither rewrites nor deletes them. */}
       {!unlockStatus.wealth_projection ? (
+        /* Wave 9c closure — the legacy "Build your Wealth Map" guide
+           (WealthGuideSteps, legacy typography, pre-Wave-7 naming) is
+           retired in favour of one calm empty state in the product's
+           current language: the surface is Wealth and the figure is net
+           worth. Same gate (`unlockStatus.wealth_projection`, untouched),
+           same Add destination (`openModal('asset')`) — only the
+           presentation changed. Income/savings entry points remain
+           canonical on Today's checklist and Money. */
         <SectionCard>
-          <WealthGuideSteps
-            steps={[
-              { label: 'Add Income', done: data.user.monthlyIncome > 0, onPress: () => setIncomeModalVisible(true) },
-              { label: 'Add Savings', done: data.assets.some((a) => a.type === 'cash' || a.type === 'savings'), onPress: () => openModal('asset', 'savings') },
-              { label: 'Add Investments', done: unlockStatus.portfolio_insight, onPress: () => openModal('asset') },
-              { label: 'Build your Wealth Map', done: unlockStatus.wealth_projection, onPress: () => openModal('asset') },
-            ]}
-          />
+          <View style={styles.emptySection} testID="wealth-empty-state">
+            <Ionicons name="pie-chart-outline" size={22} color={semantic.interactive} accessibilityElementsHidden importantForAccessibility="no" />
+            <Text style={styles.emptyTitle} accessibilityRole="header">Start building your net worth</Text>
+            <Text style={styles.emptyBody}>
+              Add an account, asset or debt to see what you own, what you owe and your net worth in one place.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyAction}
+              onPress={() => openModal('asset')}
+              accessibilityRole="button"
+              accessibilityLabel="Add your first item"
+              testID="wealth-empty-add"
+            >
+              <Text style={styles.emptyActionText}>Add your first item</Text>
+            </TouchableOpacity>
+          </View>
         </SectionCard>
       ) : (
         <SectionCard>
