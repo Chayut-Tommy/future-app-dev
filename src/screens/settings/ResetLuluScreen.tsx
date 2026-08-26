@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { useAppState } from '../../state/AppStateContext';
 import { Screen } from '../../components/shared/Screen';
 import { Button } from '../../components/shared/Button';
 import { brand } from '../../lib/brand';
+import { hapticRigid, hapticWarning } from '../../lib/haptics';
 
 const DELETED_ITEMS = ['Income', 'Assets', 'Goals', 'Transactions', 'Bills', `${brand.name}'s progress`];
 
@@ -25,6 +26,14 @@ export function ResetLuluScreen() {
   const { colors, radius, spacing, typography } = useTheme();
   // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+
+  // Wave 10 closure — this screen IS the destructive confirmation surface
+  // (full-screen confirm with its own Cancel), so arriving on it is the
+  // "destructive confirm shown" warning event: once per presentation,
+  // never repeated by rerenders. Cancel (Back) fires nothing further.
+  useEffect(() => {
+    hapticWarning();
+  }, []);
 
   const styles = useMemo(
     () =>
@@ -54,6 +63,10 @@ export function ResetLuluScreen() {
   );
 
   function handleReset() {
+    // Wave 10 four-event matrix: a CONFIRMED reset is the `rigid` event —
+    // this screen is itself the deliberate confirmation surface (reached
+    // only through Settings' danger row, with its own Cancel).
+    hapticRigid();
     resetAllData();
   }
 

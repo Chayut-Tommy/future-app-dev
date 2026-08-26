@@ -16,6 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { MOTION_MS, MOTION_TRAVEL_PT, resolveDuration } from '../../theme/motion';
 
 export type ToastTone = 'success' | 'info' | 'warning';
@@ -36,20 +37,9 @@ export function Toast({
   testID?: string;
 }) {
   const { colors, radius, spacing, typography, cardShadow } = useTheme();
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Wave 10 — Reduced Motion from the ONE application authority.
+  const reduceMotion = useReduceMotion();
   const progress = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    let cancelled = false;
-    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (!cancelled) setReduceMotion(enabled);
-    });
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-    return () => {
-      cancelled = true;
-      sub.remove();
-    };
-  }, []);
 
   // The announcement is unconditional and happens on mount — never gated on
   // the animation, per motion hard rule 5.

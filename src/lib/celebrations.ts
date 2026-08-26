@@ -19,6 +19,30 @@ export interface CelebrationEvent {
   context?: string;
 }
 
+/** Wave 10 closure — the calm factual Save confirmation's copy shape,
+ * consumed by CelebrationContext's confirmSaveSuccess. Presentation only:
+ * no id (the context assigns a serial one), no tier (always the small
+ * toast), and deliberately NO `context` label — a routine confirmation is
+ * a fact, not a MILESTONE. */
+export interface SaveConfirmationCopy {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  body: string;
+}
+
+/** Builds the factual confirmation for one successful Save. The title
+ * derives from the destination's own canonical display name (the Add
+ * workspace's routeDisplayName authority — structured action identity,
+ * never free text), and the body states only what truthfully happened:
+ * no fabricated amount, cadence or date, and no Undo promise. */
+export function buildSaveConfirmation(displayName: string, verb: 'added' | 'recorded' = 'added'): SaveConfirmationCopy {
+  return {
+    icon: 'checkmark-circle',
+    title: `${displayName} ${verb}`,
+    body: 'Saved to your money picture.',
+  };
+}
+
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
 }

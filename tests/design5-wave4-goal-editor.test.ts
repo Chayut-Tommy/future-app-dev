@@ -84,7 +84,12 @@ console.log('\n=== 3. The modern edit experience (Class C) ===');
   // write; only its label and position changed.
   assert('3h. progress recording remains a separate, clearly-labelled action', /label="Update progress"/.test(EDIT) && /Record progress/.test(EDIT) && /it does not move money between accounts/.test(EDIT));
   assert('3i. and it still uses its own single, unchanged handler', /function handleAddContribution/.test(EDIT) && /function applyContribution/.test(EDIT));
-  assert('3j. Delete keeps its confirmation and its exact-once guard', /if \(deletingRef\.current\) return;\s*\n\s*deletingRef\.current = true;\s*\n\s*deleteGoal\(goal!\.id\);/.test(EDIT));
+  // RECONCILED (Wave 10 closure) — the confirmed deletion now dispatches
+  // the authorised rigid haptic between the exact-once latch and the
+  // delete itself (doc C: rigid = confirmed deletion or reset). Guard,
+  // confirmation and delete call are unchanged; the pin now allows that
+  // single post-confirmation dispatch and nothing else in between.
+  assert('3j. Delete keeps its confirmation and its exact-once guard', /if \(deletingRef\.current\) return;\s*\n\s*deletingRef\.current = true;\s*\n\s*hapticRigid\(\);\s*\n\s*deleteGoal\(goal!\.id\);/.test(EDIT));
 }
 
 console.log('\n=== 4. Metadata commits exactly once, atomically (Class C) ===');

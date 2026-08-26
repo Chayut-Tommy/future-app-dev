@@ -2,26 +2,21 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { AccessibilityInfo, Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
-import { MOTION_MS, MOTION_TRAVEL_PT, resolveDuration } from '../../theme/motion';
+import { MOTION_MS, MOTION_TRAVEL_PT, TOAST_LIFE_MILESTONE_MS, TOAST_LIFE_PLAIN_MS, resolveDuration } from '../../theme/motion';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { CelebrationEvent } from '../../lib/celebrations';
 
-/**
- * Structured presentation timing (visual-elevation pass): the previous
- * 2,200ms hold read as hurried on device. A plain confirmation holds
- * ~3,200ms; a structured milestone (`event.context`) holds ~3,600ms.
- * Manual dismissal remains available throughout; the total on-screen
- * budget is enter + hold.
- */
-export const PLAIN_VISIBLE_MS = 3200;
-export const MILESTONE_VISIBLE_MS = 3600;
+// Wave 10 — the approved structured dwell pair now lives with every other
+// named motion constant in theme/motion.ts; re-exported so the existing
+// evidence keeps one import site. Values and behaviour are byte-identical.
+export const PLAIN_VISIBLE_MS = TOAST_LIFE_PLAIN_MS;
+export const MILESTONE_VISIBLE_MS = TOAST_LIFE_MILESTONE_MS;
 
 /**
  * The lightest celebration tier — premium visual elevation of the
@@ -58,10 +53,10 @@ export const MILESTONE_VISIBLE_MS = 3600;
  *   role; nothing truncates — 320pt + 200% Dynamic Type grow vertically;
  * - the quiet 44pt Dismiss sits consistently top-right; only it
  *   intercepts touches (the `box-none` chain is preserved);
- * - haptics use the established expo-haptics helper and fire ONE light
- *   impact only for a structured milestone — a plain confirmation no
- *   longer vibrates, and a queued pair cannot double-fire (one mount,
- *   one effect, per event);
+ * - this renderer is haptically SILENT (Wave 10 closure): the action's
+ *   single shared softSuccess is dispatched once at the celebration
+ *   queue's own enqueue boundary, so a save that queues several events
+ *   can never vibrate more than once;
  * - decorative layers (gradient, bloom, accent, halo, glyphs) are hidden
  *   from accessibility; context, title and support are announced exactly
  *   once per event with focus never stolen.
@@ -101,10 +96,13 @@ export function SmallCelebrationToast({ event, onDone }: { event: CelebrationEve
 
   // ONE announcement per event — on mount, never gated on the animation,
   // never moving VoiceOver focus. The structured context is spoken once,
-  // ahead of the title. Haptics: a single light impact for a structured
-  // MILESTONE only — plain confirmations stay silent.
+  // ahead of the title.
   useEffect(() => {
-    if (event.context) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    // Wave 10 closure — this renderer is haptically SILENT. Each queued
+    // event gets its own keyed mount, so a per-mount dispatch fired once
+    // PER EVENT (two haptics from one save that unlocked two milestones —
+    // the confirmed defect). The action's single shared softSuccess now
+    // lives at CelebrationContext's enqueue boundary.
     const spoken = [event.context, event.title, event.body].filter(Boolean).join('. ');
     AccessibilityInfo.announceForAccessibility(spoken);
     // eslint-disable-next-line react-hooks/exhaustive-deps

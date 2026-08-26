@@ -3,6 +3,8 @@ import { Animated, Modal, PanResponder, Platform, StyleSheet, Text, TouchableOpa
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { MOTION_MS, SHEET_OFFSCREEN_TRAVEL_PT } from '../../theme/motion';
 import { sheetChromeStyles } from './sheetChrome';
 
 export interface SheetOption {
@@ -55,6 +57,7 @@ export function OptionsSheet({
   const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useReduceMotion();
   const pendingSelectionRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -68,14 +71,26 @@ export function OptionsSheet({
     onSelect(key);
   }
 
+  // Wave 10 — the slide-out now runs on the named sheet-exit token, and
+  // Reduced Motion commits the SAME final state immediately with zero
+  // travel (doc C RM build). `finish` is one shared completion: the
+  // deferred-onSelect lifecycle (the documented modal-freeze guard,
+  // including its Android fallback) is byte-identical on both paths —
+  // nothing here depends on the animation having run.
+  function finishDismiss() {
+    translateY.setValue(0);
+    onClose();
+    if (Platform.OS === 'android') {
+      setTimeout(runPendingSelection, ANDROID_DISMISS_FALLBACK_MS);
+    }
+  }
+
   function dismiss() {
-    Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
-      translateY.setValue(0);
-      onClose();
-      if (Platform.OS === 'android') {
-        setTimeout(runPendingSelection, ANDROID_DISMISS_FALLBACK_MS);
-      }
-    });
+    if (reduceMotion) {
+      finishDismiss();
+      return;
+    }
+    Animated.timing(translateY, { toValue: SHEET_OFFSCREEN_TRAVEL_PT, duration: MOTION_MS.sheetInfoOut, useNativeDriver: true }).start(finishDismiss);
   }
 
   function choose(key: string) {

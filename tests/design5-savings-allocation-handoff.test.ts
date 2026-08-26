@@ -93,7 +93,10 @@ console.log('\n=== 5. Allocation rules (pinned) and the REAL engine (Class A) ==
   assert('5e. a fixed amount passes through at exact value', resolveSavingsAllocationMonthly({ savingsAllocation: { mode: 'fixed', amount: 300.25 }, monthlyIncome: 5417 } as never) === 300.25);
   assert('5f. no allocation resolves $0', resolveSavingsAllocationMonthly({ savingsAllocation: { mode: 'off' }, monthlyIncome: 5417 } as never) === 0 && resolveSavingsAllocationMonthly({ savingsAllocation: undefined, monthlyIncome: 5417 } as never) === 0);
   assert('5g. no formula was recreated in a screen component', !/percent \* monthlyIncome|monthlyIncome \*/.test(MONEY) && !/percent \*/.test(SHEET));
-  assert('5h. the premium toast is frozen — its renderer, events and Today wiring untouched by this correction', /PLAIN_VISIBLE_MS = 3200/.test(read('src/components/celebrations/SmallCelebrationToast.tsx')) && /MILESTONE_VISIBLE_MS = 3600/.test(read('src/components/celebrations/SmallCelebrationToast.tsx')));
+  // RECONCILED — Wave 10 moved the approved dwell pair into
+  // theme/motion.ts (named-constant consolidation); the toast re-exports
+  // them with identical values, which is what this freeze pin protects.
+  assert('5h. the premium toast is frozen — its approved dwell pair unchanged (now via theme/motion.ts)', /PLAIN_VISIBLE_MS = TOAST_LIFE_PLAIN_MS/.test(read('src/components/celebrations/SmallCelebrationToast.tsx')) && /TOAST_LIFE_PLAIN_MS = 3200/.test(read('src/theme/motion.ts')) && /TOAST_LIFE_MILESTONE_MS = 3600/.test(read('src/theme/motion.ts')));
 }
 
 console.log(`\n${total - failures}/${total} passed.`);

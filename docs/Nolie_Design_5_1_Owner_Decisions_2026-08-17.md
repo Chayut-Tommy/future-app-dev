@@ -1117,3 +1117,32 @@ Confirmed device defect: every CTA in the Typical-money-flow category summary (a
 TypeScript 0. Legacy **98 files / 7,777**. Rendered **54 suites / 404**. Toast pure 48, handoff pure 31, rendered toast/handoff/save/statecomms floors green. `git diff --check` clean; dependency/lockfile/config diffs empty; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0. **No financial engine, schema, storage or calculation change** — `src/lib/calculations/**` untouched at this checkpoint.
 
 **iOS: device-approved by the owner.** **Android: export-tested only — physical Android remains deferred to Wave 11.**
+
+# Change control — Wave 10 closure and checkpoint (26 August 2026)
+
+**Baseline** `ca18518` (post-Wave-9c celebration and Savings Allocation closure). Approved by the owner's targeted iOS device testing: ordinary Save → one soft haptic and factual confirmation; Savings Save unlocking two milestones → one haptic total; a second separate Save while the first toast remained visible → one new haptic; destructive confirmation shown then cancelled → warning only; destructive confirmation accepted → warning then one rigid haptic. Earlier entries above are left exactly as written.
+
+## Motion tokens and Reduced Motion authority
+
+Wave 10's named motion constants live verbatim in `src/theme/motion.ts` (doc C's MOTION_MS/REDUCED_MOTION_MS with `resolveDuration`, plus the toast dwell 3,200/3,600ms, sheet-entrance 200ms and off-screen-travel constants consolidated from magic numbers). `hooks/useReduceMotion` is the ONE Reduced-Motion authority: correct initial resolution, live `reduceMotionChanged` updates, listener cleanup, no update after unmount; OptionsSheet, AskLuluSheet, Toast, AddAnythingSheet and BigCelebrationOverlay migrated off their local listeners; ThisMonthCard's flip stays retired; the unused CircularScore was left as-is (zero importers, pinned). Reduced Motion parity is proven for all 14 Add-catalogue tasks through the real pure transition reducer (forward settles front and Save-eligible, rapid repeat ignored, Back returns cleanly, stale completion a no-op — rule 5: nothing depends on an animation having run), complemented by the rendered RM parity suites. Confetti is removed from the big celebration; no looping decoration anywhere in the celebration renderers.
+
+## Action-scoped Save feedback (the exact haptic behaviour)
+
+Exactly four haptic events exist, dispatched only through `src/lib/haptics.ts` (the sole expo-haptics importer). **softSuccess is owned by the customer ACTION**: `CelebrationContext.confirmSaveSuccess` fires exactly one per successfully persisted Save, invoked from the action's own post-success boundary — the Add workspace's single shared `handleSaveSuccessClose` (all nine embedded destinations, covering the 14-kind catalogue plus direct-entry Vehicle), onboarding completion, and the persisted no-debt confirmation. Celebrations and all three renderers are haptically silent; queue advancement, toast mounts, rerenders and navigation fire nothing; a second Save landing while an earlier Save's toasts are still visible earns its own haptic (queue state is never Save identity); a rapid double-tap stays one guarded action; a failed Save fires no softSuccess. **warning** = blocked action/save failure (onboarding completion catch) and destructive confirm SHOWN (transaction/goal/Everyday/BNPL delete confirms; arriving on the Reset confirmation screen, once per presentation). **rigid** = confirmed deletion or reset only, at the post-confirmation boundary; a cancelled confirm fires nothing. **light** remains authorised but unused — doc C names no shipped canonical selection trigger, so it is not device-testable yet and the four-event matrix is not claimed fully exercised.
+
+## Routine Save confirmation
+
+A confirmed Save that unlocks no celebration now presents ONE calm factual confirmation on the existing celebration queue and the approved premium toast composition: title from the workspace's canonical `routeDisplayName` authority ("Everyday Account added", "Expense added", "Transfer recorded", …), body "Saved to your money picture.", no MILESTONE capsule, no Undo, no fabricated figures. A richer celebration unlocked by the same save claims and replaces the factual toast through a lifecycle-scoped commit handshake (no timers, no `Date.now`, no module flags), so milestone saves never show a duplicate plain confirmation and the shared FIFO one-visible queue is unchanged.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **99 files / 7,848**. Rendered **60 suites / 421** (green twice at the closure gate and again at this checkpoint gate). Wave 10 motion 71, toast pure 48, state-comms 46, full-workspace 62, transition controller 88, allocation handoff 31, deletion/reversal 96, repayment persistence 15; six rendered haptic/save-feedback suites including the pre-drain two-Saves and renderer-only-mount cases. `git diff --check` clean; dependency/lockfile/config diffs empty; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0. **No financial, schema or storage change**: all 69 protected files (`src/lib/calculations/**`, `storage.ts`, `types/models.ts`) are byte-identical to the Wave 10 baseline hashes.
+
+**iOS: device-approved by the owner (targeted haptic/confirmation checklist above).** **Android: export-tested only — physical Android verification remains deferred to Wave 11.**
+
+## Carry-overs (recorded, not authority to change)
+
+1. **Standalone edit journeys** (Wealth-list edits, standalone card/goal edits, QuickAdd transaction edits) do not yet route through the canonical action-scoped Save-feedback boundary — no haptic and no factual confirmation there; their unlock celebrations present silently.
+2. **Confirmation identity for the asset route** resolves from the workspace's entry preset via `routeDisplayName`; it must come to reflect the actual structured saved asset type when the customer switches type in-form before saving.
+3. Wave 9b/9c carry-overs stand as previously recorded.
+4. **Wave 11 not started.**

@@ -18,6 +18,10 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 import { AppStateProvider } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
+// Wave 10 closure — AddAnythingSheet now consumes useCelebration (the
+// shared save-success authority), so the harness carries the provider the
+// real app always mounts above the navigator.
+import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { FloatingNavBar } from '../../src/components/navigation/FloatingNavBar';
 import { TAB_DEFINITIONS } from '../../src/navigation/tabDefinitions';
 import { FloatingAddButton } from '../../src/components/navigation/FloatingAddButton';
@@ -44,8 +48,10 @@ function tree(activeIndex: number) {
     <SafeAreaProvider initialMetrics={METRICS}>
       <AppStateProvider>
         <ThemeProvider>
+          <CelebrationProvider>
           <FloatingNavBar tabs={dockTabs()} activeIndex={activeIndex} onSelectTab={() => undefined} reduceMotion={false} />
           <FloatingAddButton />
+          </CelebrationProvider>
         </ThemeProvider>
       </AppStateProvider>
     </SafeAreaProvider>

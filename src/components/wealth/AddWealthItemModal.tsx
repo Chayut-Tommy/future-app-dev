@@ -8,6 +8,7 @@ import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Chip } from '../shared/Chip';
 import { InlineSelect } from '../shared/fields/InlineSelect';
+import { hapticRigid, hapticWarning } from '../../lib/haptics';
 import { assetTypeIcon, liabilityTypeIcon } from '../../lib/addIcons';
 import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { DateTriggerField } from '../shared/fields/DateTriggerField';
@@ -1390,12 +1391,19 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // type in this file with a delete confirmation; every other existing
     // type's immediate-delete behavior below is deliberately unchanged.
     if (editAsset?.type === 'everyday') {
+      // Wave 10 closure — destructive confirm shown = one warning.
+      hapticWarning();
       Alert.alert('Remove this Everyday Account from Nolie?', 'Your Nolie totals will update, but this will not affect your real bank account.', [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
+            // Wave 10 closure — rigid at the confirmed removal only; the
+            // immediate-delete paths for other types stay silent (no
+            // destructive confirm is shown for them, so there is no
+            // confirmed-deletion boundary to mark).
+            hapticRigid();
             deleteAsset(editAsset.id);
             onClose();
           },
@@ -1404,6 +1412,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       return;
     }
     if (editLiability?.type === 'bnpl') {
+      hapticWarning();
       Alert.alert(
         'Remove this BNPL plan from Nolie?',
         'Future repayment estimates will stop. This will not change your account with the provider.',
@@ -1413,6 +1422,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             text: 'Remove',
             style: 'destructive',
             onPress: () => {
+              // Wave 10 closure — rigid at the confirmed removal.
+              hapticRigid();
               deleteLiability(editLiability.id);
               onClose();
             },

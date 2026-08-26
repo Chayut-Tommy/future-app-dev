@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { CelebrationEvent } from '../../lib/celebrations';
@@ -35,7 +34,9 @@ export function MediumCelebrationSheet({ event, onDismissed }: { event: Celebrat
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    // Wave 10 closure — haptically SILENT: the action's single shared
+    // softSuccess is dispatched at the celebration queue's enqueue
+    // boundary, never per-renderer (a queued pair must not double-fire).
     bounce.setValue(0);
     Animated.spring(bounce, { toValue: 1, useNativeDriver: true, friction: 5, tension: 90 }).start();
   }, [event.id, bounce]);

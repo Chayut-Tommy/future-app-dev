@@ -198,6 +198,28 @@ export const MOTION_HARD_RULES: readonly string[] = [
   'No behaviour may depend on an animation having run (guards, locks, focus and announcements are state-driven)',
 ];
 
+// ---------------------------------------------------------------------------
+// Wave 10 — consolidated presentation constants
+// ---------------------------------------------------------------------------
+
+/** The owner-approved celebration-toast dwell pair (post-Wave-9c device
+ * round): a plain confirmation holds 3,200ms, a structured milestone
+ * 3,600ms. Supersedes the doc-C `toastLife` (3,400) for the CELEBRATION
+ * tier only — the plain shared/Toast keeps `toastLife`. Named here so no
+ * component carries a raw dwell literal. */
+export const TOAST_LIFE_PLAIN_MS = 3200;
+export const TOAST_LIFE_MILESTONE_MS = 3600;
+
+/** KeyboardSheet's shipped content-entrance duration (device-tuned in the
+ * reminder work, transcribed from the implementation — not a doc-C token).
+ * Applies to the opt-in `animateContentEntrance` fade/settle only. */
+export const SHEET_CONTENT_ENTRANCE_MS = 200;
+
+/** Slide-a-sheet-fully-off-screen travel used by the self-animated bottom
+ * sheets (OptionsSheet, AskLuluSheet). Geometry, not feel — named so the
+ * literal lives in exactly one place. */
+export const SHEET_OFFSCREEN_TRAVEL_PT = 800;
+
 /** Four haptic events exist. Nothing else, ever. */
 export const HAPTICS = {
   light: 'selection (tile/chip/date/option)',

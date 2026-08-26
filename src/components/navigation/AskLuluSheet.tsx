@@ -3,6 +3,8 @@ import { Animated, Modal, PanResponder, StyleSheet, Text, TouchableOpacity, View
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { MOTION_MS, SHEET_OFFSCREEN_TRAVEL_PT } from '../../theme/motion';
 import { brand } from '../../lib/brand';
 
 const SAMPLE_QUESTIONS = [
@@ -26,13 +28,20 @@ export function AskLuluSheet({ visible, onClose }: { visible: boolean; onClose: 
   const { colors, semantic, radius, spacing, typography, aiAccentColor, aiAccentSoft } = useTheme();
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(0)).current;
+  const reduceMotion = useReduceMotion();
 
   useEffect(() => {
     if (visible) translateY.setValue(0);
   }, [visible, translateY]);
 
+  // Wave 10 — named sheet-exit token; Reduced Motion closes immediately
+  // with zero travel. Completion is the same call on both paths.
   function dismiss() {
-    Animated.timing(translateY, { toValue: 800, duration: 200, useNativeDriver: true }).start(() => {
+    if (reduceMotion) {
+      onClose();
+      return;
+    }
+    Animated.timing(translateY, { toValue: SHEET_OFFSCREEN_TRAVEL_PT, duration: MOTION_MS.sheetInfoOut, useNativeDriver: true }).start(() => {
       onClose();
     });
   }

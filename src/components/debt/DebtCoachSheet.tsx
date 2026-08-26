@@ -53,7 +53,7 @@ const DEBT_TYPE_OPTIONS: { type: LiabilityType | 'credit_card'; label: string }[
  */
 export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { data, updateUser } = useAppState();
-  const { celebrate } = useCelebration();
+  const { celebrate, confirmSaveSuccess } = useCelebration();
   const { colors, semantic, radius, spacing } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
@@ -100,6 +100,10 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
   function handleNoDebt() {
     updateUser({ confirmedNoDebt: true });
     onClose();
+    // Wave 10 closure — this persisted confirmation is the customer's
+    // action; its one softSuccess fires here and the debt-free celebration
+    // below is its (haptically silent) visual feedback.
+    confirmSaveSuccess();
     celebrate(buildDebtFreeCelebration());
   }
 

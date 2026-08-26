@@ -1,55 +1,23 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Dimensions, Modal, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { CelebrationEvent } from '../../lib/celebrations';
 import { Button } from '../shared/Button';
 import { ON_FEATURED, onFeaturedAlpha, scrimAt } from '../../theme/semanticTokens';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const CONFETTI_COUNT = 24;
-
-function ConfettiPiece({ index, colors }: { index: number; colors: string[] }) {
-  const progress = useRef(new Animated.Value(0)).current;
-  const left = useMemo(() => Math.random() * SCREEN_WIDTH, []);
-  const size = useMemo(() => 6 + Math.random() * 6, []);
-  const color = colors[index % colors.length];
-  const spin = useMemo(() => (Math.random() > 0.5 ? '540deg' : '-540deg'), []);
-  const delay = useMemo(() => Math.random() * 350, []);
-  const duration = useMemo(() => 1800 + Math.random() * 900, []);
-
-  useEffect(() => {
-    Animated.timing(progress, { toValue: 1, duration, delay, useNativeDriver: true }).start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [-20, SCREEN_HEIGHT * 0.85] });
-  const rotate = progress.interpolate({ inputRange: [0, 1], outputRange: ['0deg', spin] });
-  const opacity = progress.interpolate({ inputRange: [0, 0.85, 1], outputRange: [1, 1, 0] });
-
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        left,
-        top: 0,
-        width: size,
-        height: size * 1.6,
-        backgroundColor: color,
-        borderRadius: 2,
-        opacity,
-        transform: [{ translateY }, { rotate }],
-      }}
-    />
-  );
-}
-
-// See MediumCelebrationSheet.tsx for why this fallback exists (RN Modal's
-// onDismiss is iOS-only).
+/** Pre-existing Android dismissal fallback (RN's Modal fires no onDismiss
+ * there) — protected queue coordination, untouched by Wave 10. */
 const ANDROID_DISMISS_FALLBACK_MS = 350;
+
+// Wave 10 — the confetti field is REMOVED. Doc C's celebration rules are
+// explicit: no confetti, no decorative continuous motion, no rotation for
+// decoration, and no randomised motion. The full overlay keeps its scrim,
+// icon reveal, copy and single softSuccess haptic; the falling pieces
+// (24 randomly-timed spinning rectangles) were a pre-Design-5.1 artefact.
 
 /**
  * The biggest celebration tier — reserved for genuinely big moments (a
@@ -65,11 +33,21 @@ export function BigCelebrationOverlay({ event, onDismissed }: { event: Celebrati
   const { colors, scheme, radius, spacing, typography, glow } = useTheme();
   const insets = useSafeAreaInsets();
   const trophyBounce = useRef(new Animated.Value(0)).current;
-  const confettiColors = [colors.gold, colors.accent, colors.purple, colors.market, colors.successBright];
+  const reduceMotion = useReduceMotion();
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    // Wave 10 closure — haptically SILENT: the action's single shared
+    // softSuccess is dispatched at the celebration queue's enqueue
+    // boundary, never per-renderer.
+    // Reduced Motion presents the settled icon immediately — the reveal is
+    // presentation only and nothing waits on it (motion hard rule 5).
+    if (reduceMotionRef.current) {
+      trophyBounce.setValue(1);
+      return;
+    }
     trophyBounce.setValue(0);
     Animated.spring(trophyBounce, { toValue: 1, useNativeDriver: true, friction: 4, tension: 80, delay: 150 }).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,9 +96,6 @@ export function BigCelebrationOverlay({ event, onDismissed }: { event: Celebrati
       onDismiss={Platform.OS === 'ios' ? onDismissed : undefined}
     >
       <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        {Array.from({ length: CONFETTI_COUNT }).map((_, i) => (
-          <ConfettiPiece key={i} index={i} colors={confettiColors} />
-        ))}
         <View style={styles.content}>
           <Animated.View
             style={[

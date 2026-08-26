@@ -158,12 +158,21 @@ describe('Premium celebration toast — queue, copy, fonts and cleanup', () => {
     await screen.findByDisplayValue('4000');
     fireEvent.press(screen.getByText('Save'));
 
-    // No achievement unlocks here (first asset already seen) — but wait:
-    // the everyday save can still surface nothing; the approved copy path
-    // only fires on the added_first_asset unlock. So this save must show
-    // NO toast at all — proving no event is duplicated or re-fired.
+    // RECONCILED (Wave 10 closure). No achievement unlocks here (first
+    // asset already seen), and this save previously showed NOTHING — the
+    // routine-save feedback gap the closure was ordered to fix. The Add
+    // workspace's shared save-success authority now queues the calm
+    // factual confirmation on this SAME approved composition: canonical
+    // display-name title, factual body, no MILESTONE capsule, no Undo —
+    // and still no duplicated or re-fired milestone event.
     await waitFor(async () => expect((await stored()).assets).toHaveLength(2), { timeout: 20000 });
-    expect(screen.queryByTestId('celebration-toast')).toBeNull();
+    await screen.findByText('Everyday Account added', {}, { timeout: 20000 });
+    expect(screen.getByText('Saved to your money picture.')).toBeTruthy();
+    expect(screen.queryByText('MILESTONE')).toBeNull();
+    expect(screen.getAllByTestId('celebration-toast')).toHaveLength(1);
+    // Drain it so the next test starts from an empty queue.
+    fireEvent.press(screen.getByTestId('celebration-toast-dismiss'));
+    await waitFor(() => expect(screen.queryByTestId('celebration-toast')).toBeNull(), { timeout: 20000 });
   });
 
   test('navigating while a toast is visible leaves no stuck overlay', async () => {

@@ -12,6 +12,7 @@ import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction } from '.
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
+import { hapticRigid, hapticWarning } from '../../lib/haptics';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { categoryIcon, accountSourceIcon } from '../../lib/addIcons';
 import { brand } from '../../lib/brand';
@@ -793,8 +794,24 @@ export const QuickAddModal = forwardRef<
     else onClose();
   }
 
+  // Wave 10 closure — the rigid haptic belongs to the CONFIRMED deletion
+  // (doc C: rigid = confirmed deletion or reset), dispatched at the one
+  // post-confirmation boundary every confirm branch below funnels through.
+  // Showing a destructive confirm or cancelling it fires nothing here;
+  // reversal semantics (the `reverse` flag) are untouched.
+  function confirmedDeleteTransaction(reverse: boolean) {
+    if (!editTransaction) return;
+    hapticRigid();
+    deleteTransaction(editTransaction.id, reverse);
+    onClose();
+  }
+
   function handleDelete() {
     if (!editTransaction) return;
+    // Wave 10 closure — doc C: warning = destructive confirm SHOWN. Every
+    // branch below presents exactly one initial confirmation, so one
+    // dispatch here is one-per-show; cancelling fires nothing further.
+    hapticWarning();
     // Correction pass, §1 — a BNPL repayment transaction never goes through
     // the generic single-target describeReversalTarget/deleteTransaction
     // path below: that path only ever reverses the transaction's own
@@ -817,7 +834,7 @@ export const QuickAddModal = forwardRef<
           "Only the most recent BNPL repayment can be undone. Deleting this one will remove it from Transaction History, but won't change your BNPL balance or payment source — update the BNPL plan if its recorded balance is incorrect.",
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => confirmedDeleteTransaction(false) },
           ]
         );
         return;
@@ -829,7 +846,7 @@ export const QuickAddModal = forwardRef<
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Delete record only',
-            onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); },
+            onPress: () => confirmedDeleteTransaction(false),
           },
           {
             text: 'Delete & reverse',
@@ -859,7 +876,7 @@ export const QuickAddModal = forwardRef<
         'This repayment updated both your payment source and card balance. Deleting it will reverse both — your payment source will go back up and what you owe on the card will go back up by the same amount.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          { text: 'Delete record only', onPress: () => confirmedDeleteTransaction(false) },
           {
             text: 'Delete & reverse',
             style: 'destructive',
@@ -889,7 +906,7 @@ export const QuickAddModal = forwardRef<
           "Only the most recent repayment on this loan can be undone. Deleting this one will remove it from Transaction History, but won't change your recorded loan balance or payment source — update the loan's recorded balance directly if it's incorrect.",
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => confirmedDeleteTransaction(false) },
           ]
         );
         return;
@@ -902,7 +919,7 @@ export const QuickAddModal = forwardRef<
           : 'This repayment updated your payment source (your recorded loan balance was not changed by it). Deleting it will reverse your payment source.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          { text: 'Delete record only', onPress: () => confirmedDeleteTransaction(false) },
           {
             text: 'Delete & reverse',
             style: 'destructive',
@@ -934,7 +951,7 @@ export const QuickAddModal = forwardRef<
           "Only the most recent occurrence of this bill can be undone. Deleting this one will remove it from Transaction History, but won't change your payment source or restore its Reminder.",
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+            { text: 'Delete transaction', style: 'destructive', onPress: () => confirmedDeleteTransaction(false) },
           ]
         );
         return;
@@ -944,7 +961,7 @@ export const QuickAddModal = forwardRef<
         'This payment updated your payment source and completed a bill Reminder. Deleting it will reverse both — your payment source will go back up and the Reminder will return to due.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+          { text: 'Delete record only', onPress: () => confirmedDeleteTransaction(false) },
           {
             text: 'Delete & reverse',
             style: 'destructive',
@@ -976,7 +993,7 @@ export const QuickAddModal = forwardRef<
     if (!reversal) {
       Alert.alert('Delete transaction?', `Delete this transaction from ${brand.name}? No tracked balance will change.`, [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete transaction', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
+        { text: 'Delete transaction', style: 'destructive', onPress: () => confirmedDeleteTransaction(false) },
       ]);
       return;
     }
@@ -985,8 +1002,8 @@ export const QuickAddModal = forwardRef<
       `This transaction changed ${reversal.label} by ${formatMoney(reversal.amount)}. Would you like ${brand.name} to reverse that balance change?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete record only', onPress: () => { deleteTransaction(editTransaction.id, false); onClose(); } },
-        { text: 'Delete & reverse', style: 'destructive', onPress: () => { deleteTransaction(editTransaction.id, true); onClose(); } },
+        { text: 'Delete record only', onPress: () => confirmedDeleteTransaction(false) },
+        { text: 'Delete & reverse', style: 'destructive', onPress: () => confirmedDeleteTransaction(true) },
       ]
     );
   }

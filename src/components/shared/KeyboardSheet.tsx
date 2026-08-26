@@ -13,6 +13,7 @@ import {
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { shouldClaimSheetGesture, shouldDismissSheet } from './sheetDismissal';
 import { FocusedPickerProvider } from './fields/FocusedPickerHost';
+import { SHEET_CONTENT_ENTRANCE_MS } from '../../theme/motion';
 import { focusElement } from '../../lib/a11yFocus';
 
 
@@ -203,9 +204,9 @@ export function KeyboardSheet({
     contentTranslateY.setValue(14);
     backdropOpacity.setValue(0);
     Animated.parallel([
-      Animated.timing(contentOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      Animated.timing(contentTranslateY, { toValue: 0, duration: 200, useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.timing(contentOpacity, { toValue: 1, duration: SHEET_CONTENT_ENTRANCE_MS, useNativeDriver: true }),
+      Animated.timing(contentTranslateY, { toValue: 0, duration: SHEET_CONTENT_ENTRANCE_MS, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 1, duration: SHEET_CONTENT_ENTRANCE_MS, useNativeDriver: true }),
     ]).start();
     // Deliberately keyed only on `visible` (plus the stable refs/flags) —
     // this effect re-runs on the visible false->true transition (a genuine

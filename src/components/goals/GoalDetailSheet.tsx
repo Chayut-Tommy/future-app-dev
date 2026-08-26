@@ -12,6 +12,7 @@ import { GoalFormFields } from './GoalFormFields';
 import { CurrencyField } from '../shared/fields/CurrencyField';
 import { MOTION_MS, MOTION_TRAVEL_PT } from '../../theme/motion';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { hapticRigid, hapticWarning } from '../../lib/haptics';
 import { resolveGoalNameOnPurposeChange, resolveGoalPaceSummary, resolveGoalProgressState } from '../../lib/goalFormState';
 import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
@@ -770,6 +771,8 @@ export function GoalDetailSheet({
   // is a bare array filter with no cascade (confirmed in the approved
   // investigation), so no cascade-deletion behaviour is introduced here.
   function handleDelete() {
+    // Wave 10 closure — destructive confirm shown = one warning.
+    hapticWarning();
     Alert.alert(
       `Delete "${goal!.name}"?`,
       'This removes the goal from Nolie. It does not change any transactions, balances or history already recorded.',
@@ -778,9 +781,12 @@ export function GoalDetailSheet({
         {
           text: 'Delete',
           style: 'destructive',
+          // Wave 10 closure — rigid fires only on the CONFIRMED deletion,
+          // after the exact-once latch, never on show/cancel.
           onPress: () => {
             if (deletingRef.current) return;
             deletingRef.current = true;
+            hapticRigid();
             deleteGoal(goal!.id);
             onClose();
           },

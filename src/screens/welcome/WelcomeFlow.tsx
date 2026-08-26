@@ -28,6 +28,8 @@ import { FocusedPickerProvider } from '../../components/shared/fields/FocusedPic
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { Asset, PayFrequency, RecurringItem, UserProfile } from '../../types/models';
 import { brand } from '../../lib/brand';
+import { hapticWarning } from '../../lib/haptics';
+import { useCelebration } from '../../state/CelebrationContext';
 import { incomeSourceIcon } from '../../lib/addIcons';
 import { INCOME_SOURCE_IDS, INCOME_SOURCE_LABEL, INCOME_SOURCE_RECORD_ICON } from '../../lib/incomeSources';
 import { onFeaturedAlpha } from '../../theme/semanticTokens';
@@ -95,6 +97,7 @@ export const PAYDAY_SUPPORT_COPY = `This helps ${brand.name} place your income i
  */
 export function WelcomeFlow() {
   const { completeOnboarding } = useAppState();
+  const { confirmSaveSuccess } = useCelebration();
   const { colors, semantic, spacing, radius, aiCardGradient, cardShadow } = useTheme();
   const insets = useSafeAreaInsets();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
@@ -289,8 +292,16 @@ export function WelcomeFlow() {
       await completeOnboarding(userPatch, balanceDrafts(), [], incomes);
       // Success: RootNavigator switches on the committed hasSeenIntro —
       // navigation happens only after persistence succeeded.
+      // Wave 10 closure — completion IS an engine-confirmed save, so the
+      // action fires its one softSuccess here, at its own authoritative
+      // post-success boundary. No factual toast: the navigation change and
+      // the arrival milestone are this action's visual feedback (that
+      // later celebration is haptically silent, like every celebration).
+      confirmSaveSuccess();
     } catch {
       setCompletionError(true);
+      // Wave 10 four-event matrix: a save failure is the `warning` event.
+      hapticWarning();
       AccessibilityInfo.announceForAccessibility(COMPLETION_FAILURE_COPY);
     } finally {
       inFlightRef.current = false;

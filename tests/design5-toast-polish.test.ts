@@ -90,7 +90,9 @@ console.log('\n=== 5. Motion, structured duration and rule-5 timers ===');
   // the hold is still a named constant pair, still state-timer driven,
   // still keyed by event identity, still manually dismissable.
   // -------------------------------------------------------------------
-  assert('5d. structured holds: plain 3,200ms, milestone 3,600ms', /export const PLAIN_VISIBLE_MS = 3200;/.test(TOAST) && /export const MILESTONE_VISIBLE_MS = 3600;/.test(TOAST));
+  // RECONCILED — Wave 10 named-constant consolidation: the approved pair
+  // lives in theme/motion.ts and is re-exported here byte-identically.
+  assert('5d. structured holds: plain 3,200ms, milestone 3,600ms (via theme/motion.ts)', /export const PLAIN_VISIBLE_MS = TOAST_LIFE_PLAIN_MS;/.test(TOAST) && /TOAST_LIFE_PLAIN_MS = 3200/.test(read('src/theme/motion.ts')) && /TOAST_LIFE_MILESTONE_MS = 3600/.test(read('src/theme/motion.ts')));
   assert('5e. the hold is selected by the STRUCTURED context field only', /const holdMs = event\.context \? MILESTONE_VISIBLE_MS : PLAIN_VISIBLE_MS;/.test(TOAST));
   assert('5f. the lifetime is a state timer keyed on the event — never an animation callback', /setTimeout\(\(\) => dismissRef\.current\(\), MOTION_MS\.toastIn \+ holdMs\);/.test(TOAST) && !/\.start\(\(\{ finished/.test(TOAST));
   assert('5g. a parent rerender cannot reset it, and it clears on unmount', /return \(\) => clearTimeout\(timer\);/.test(TOAST) && /\}, \[event\.id\]\);/.test(TOAST));
@@ -103,7 +105,15 @@ console.log('\n=== 6. Accessibility and the haptic boundary ===');
 {
   assert('6a. context, title and support are announced exactly once, context first', /const spoken = \[event\.context, event\.title, event\.body\]\.filter\(Boolean\)\.join\('\. '\);/.test(TOAST) && /announceForAccessibility\(spoken\);/.test(TOAST));
   assert('6b. focus is never stolen', !/setAccessibilityFocus/.test(TOAST));
-  assert('6c. haptics use the ESTABLISHED helper, milestone-only, once per event', /if \(event\.context\) Haptics\.impactAsync\(Haptics\.ImpactFeedbackStyle\.Light\)/.test(TOAST) && (TOAST.match(/impactAsync/g) ?? []).length === 1);
+  // RECONCILED TWICE. Wave 10 first moved the milestone haptic onto the
+  // shared softSuccess dispatcher (a Light impact was the wrong semantic);
+  // the Wave 10 CLOSURE then proved renderer-mount dispatch was itself the
+  // defect — one Save queuing two events got two keyed mounts and vibrated
+  // twice. The customer action now owns its single haptic at
+  // CelebrationContext's enqueue boundary, so the toast renderer must be
+  // haptically SILENT (behavioural counts: design5-wave10-haptics*
+  // rendered suites; ownership pins: design5-wave10-motion §3).
+  assert('6c. the toast renderer is haptically silent — the save haptic lives at the queue boundary, never as a mount echo', !/haptic/i.test(TOAST) && !/expo-haptics/.test(TOAST));
   assert('6d. the Dismiss control keeps its label and reachability', /accessibilityLabel="Dismiss"/.test(TOAST) && /testID="celebration-toast-dismiss"/.test(TOAST));
 }
 

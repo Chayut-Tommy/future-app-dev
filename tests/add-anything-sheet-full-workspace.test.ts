@@ -208,7 +208,13 @@ console.log('\n=== 5. Stale-completion protection — every transition completio
   );
   assert('5b. the accessibility focus-consumption effect independently re-checks the SAME generation before acting (a second, later guard beyond runTransition\'s own)', /if \(pending\.generation !== generationRef\.current\) return; \/\/ stale — superseded since it was scheduled/.test(ADD_ANYTHING_SRC));
   assert('5c. handleRequestClose (the whole-sheet dismiss path) bumps generationRef, invalidating any in-flight transition before closing', /function handleRequestClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
-  assert('5d. handleSaveSuccessClose (every destination\'s successful-Save path, which bypasses handleRequestClose entirely) independently bumps the SAME generationRef and clears pendingFocusRef', /function handleSaveSuccessClose\(\) \{\s*\n\s*generationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
+  // RECONCILED (Wave 10 closure) — handleSaveSuccessClose is now ALSO the
+  // one shared successful-Save authority: it fires the action's single
+  // softSuccess and hands over the calm factual confirmation BEFORE the
+  // generation bump. The original contract this pin protects (bumps the
+  // SAME generationRef, clears pendingFocusRef, closes once) is unchanged
+  // and still pinned byte-for-byte at the tail.
+  assert('5d. handleSaveSuccessClose (every destination\'s successful-Save path, which bypasses handleRequestClose entirely) independently bumps the SAME generationRef and clears pendingFocusRef — and now fires the save\'s confirmSaveSuccess first', /function handleSaveSuccessClose\(\) \{[\s\S]{0,1200}?confirmSaveSuccess\([\s\S]{0,400}?\);\s*\n\s*generationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
 }
 
 console.log('\n=== 6. Reduced Motion — every transition replaces the animation with an immediate content swap, never skipped (Class C) ===');
@@ -217,7 +223,18 @@ console.log('\n=== 6. Reduced Motion — every transition replaces the animation
     '6a. runTransition\'s reduceMotionEnabled branch sets workspaceProgress directly to the target value and calls onSettled synchronously, with no Animated.timing call in that branch',
     /if \(reduceMotionEnabled\) \{\s*\n\s*workspaceProgress\.setValue\(toValue\);\s*\n\s*onSettled\(\);\s*\n\s*return;\s*\n\s*\}/.test(ADD_ANYTHING_SRC)
   );
-  assert('6b. reduceMotionEnabled is tracked via AccessibilityInfo.isReduceMotionEnabled() at mount and kept live via the reduceMotionChanged listener, unchanged from the Option B pilot', /AccessibilityInfo\.isReduceMotionEnabled\(\)\.then/.test(ADD_ANYTHING_SRC) && /AccessibilityInfo\.addEventListener\('reduceMotionChanged', setReduceMotionEnabled\)/.test(ADD_ANYTHING_SRC));
+  // -------------------------------------------------------------------
+  // RECONCILED — Wave 10. SUPERSEDED: 6b pinned the Option-B pilot's OWN
+  // AccessibilityInfo listener inside this sheet.
+  // WHY: the Wave 10 plan makes hooks/useReduceMotion THE single Reduced-
+  // Motion authority and explicitly consolidates this sheet's local
+  // pattern onto it (same initial resolution, same live reduceMotionChanged
+  // updates, same cleanup — now in exactly one place).
+  // PRESERVED INTENT: the sheet still tracks a live Reduced-Motion value,
+  // and runTransition's RM branch still commits the identical final state
+  // without any animation having run.
+  // -------------------------------------------------------------------
+  assert('6b. reduceMotionEnabled now comes from the ONE shared authority, kept live by its own listener', /const reduceMotionEnabled = useReduceMotion\(\);/.test(ADD_ANYTHING_SRC) && /workspaceProgress\.setValue\(toValue\);\s*\n\s*onSettled\(\);/.test(ADD_ANYTHING_SRC));
 }
 
 console.log('\n=== 7. Inactive-layer pointer/accessibility hiding — every layer, chooser included (Class C) ===');

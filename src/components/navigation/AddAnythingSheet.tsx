@@ -3,6 +3,9 @@ import { AccessibilityInfo, Alert, Animated, findNodeHandle, Platform, ScrollVie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { buildSaveConfirmation } from '../../lib/celebrations';
+import { useCelebration } from '../../state/CelebrationContext';
 import { brand } from '../../lib/brand';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { AddIcon } from '../shared/AddIcon';
@@ -342,9 +345,16 @@ export function AddAnythingSheet({
   // time (enforced by selectionLockRef), so one shared progress value is
   // sufficient and correct — never one Animated.Value per destination. ----
   const [transition, dispatchTransition] = useReducer(reduceAddWorkspaceTransition, initialAddWorkspaceTransitionState);
+  const { confirmSaveSuccess } = useCelebration();
   const generationRef = useRef(0);
   const workspaceProgress = useRef(new Animated.Value(0)).current;
-  const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
+  // Wave 10 — Reduced Motion now comes from the ONE application authority
+  // (hooks/useReduceMotion) instead of this sheet's own listener. The
+  // hook's conservative pre-resolution default (true) means the very first
+  // frames after mount favour no motion — every transition path already
+  // commits its final state identically with or without animation
+  // (runTransition's own RM branch), so behaviour is unchanged.
+  const reduceMotionEnabled = useReduceMotion();
   // A focus request scheduled by a transition's own completion (animated or
   // reduced-motion), consumed by the effect below only once `transition`
   // has genuinely settled AND only if nothing has superseded it since
@@ -423,18 +433,6 @@ export function AddAnythingSheet({
   // which tile's own ref to focus once the chooser is settled again.
   // Harmless for every tile never looked up by key.
   const assetTileRefs = useRef<Partial<Record<AddAnythingKind, React.ElementRef<typeof TouchableOpacity> | null>>>({});
-
-  useEffect(() => {
-    let mounted = true;
-    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (mounted) setReduceMotionEnabled(enabled);
-    });
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotionEnabled);
-    return () => {
-      mounted = false;
-      sub.remove();
-    };
-  }, []);
 
   // A fresh open must never carry over any stale in-progress transition,
   // selection lock, or preserved draft from a previous time this sheet was
@@ -1094,6 +1092,20 @@ export function AddAnythingSheet({
   // in-flight transition generation, exactly as backToChooser/the sheet's
   // own onClose already do for every other close path.
   function handleSaveSuccessClose() {
+    // Wave 10 closure — the ONE shared successful-Save authority for every
+    // Add task (all nine embedded destinations wire this exact callback,
+    // covering the full 14-kind catalogue plus the direct-entry Vehicle
+    // kind). Fires the action's single softSuccess and hands over the calm
+    // factual confirmation, whose title derives from the destination's own
+    // canonical display name; a richer celebration unlocked by this same
+    // save claims and replaces that toast (see CelebrationContext).
+    const savedRoute = transition.current;
+    confirmSaveSuccess(
+      buildSaveConfirmation(
+        routeDisplayName(savedRoute),
+        savedRoute === 'transfer' || savedRoute === 'incomeReceived' ? 'recorded' : 'added'
+      )
+    );
     generationRef.current++;
     pendingFocusRef.current = null;
     onClose();
