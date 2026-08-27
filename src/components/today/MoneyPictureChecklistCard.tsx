@@ -104,9 +104,9 @@ export function MoneyPictureChecklistCard() {
   useEffect(() => {
     if (wasOpenRef.current && !anyTaskOpen) {
       // The card can recompose while a task is open (a save changes the
-      // compact subset), leaving the captured origin unmounted —
-      // findNodeHandle throws on that, so restoration is best-effort and
-      // silently skips a stale node rather than ever breaking the tree.
+      // compact subset), leaving the captured origin unmounted — the
+      // consolidated focus authority already tolerates that silently; the
+      // local try/catch is belt-and-braces for any future mechanism.
       try {
         focusElement(originRef.current);
       } catch {

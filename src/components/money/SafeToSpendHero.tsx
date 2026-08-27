@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { spokenSignedDisplay } from '../../lib/a11yStrings';
 import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
 import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
 import { InfoSheet } from '../shared/InfoSheet';
@@ -29,12 +30,8 @@ const CHOOSE_BALANCES_SUPPORT =
   'Select the cash, savings or everyday accounts Nolie should include. This changes this estimate only — not your Wealth total.';
 const CHOOSE_BALANCES_CTA = 'Choose balances';
 
-/** A negative amount must be SPOKEN as "minus", never left as a glyph a
- * screen reader may skip or read as a hyphen. The visible string is
- * untouched — this only affects what is announced. */
-function spokenMoney(display: string): string {
-  return display.replace(/^[-\u2212]/, 'minus ');
-}
+// Wave 11 — the local minus-glyph helper moved verbatim into the shared
+// pure spoken-string authority (lib/a11yStrings.spokenSignedDisplay).
 
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
   const { colors, spacing } = useTheme();
@@ -514,7 +511,7 @@ export function SafeToSpendHero({
             style={styles.heroFigure}
             maxFontSizeMultiplier={heroFigureType.maxFontSizeMultiplier}
             numberOfLines={1}
-            accessibilityLabel={`${presentation.heading}, ${spokenMoney(presentation.displayAmount!)}`}
+            accessibilityLabel={`${presentation.heading}, ${spokenSignedDisplay(presentation.displayAmount!)}`}
             testID="money-aup-hero-figure"
           >
             {presentation.displayAmount}
@@ -572,7 +569,7 @@ export function SafeToSpendHero({
           style={styles.heroFigure}
           maxFontSizeMultiplier={heroFigureType.maxFontSizeMultiplier}
           numberOfLines={1}
-          accessibilityLabel={`Estimated remaining, ${spokenMoney(presentation.displayAmount!)}`}
+          accessibilityLabel={`Estimated remaining, ${spokenSignedDisplay(presentation.displayAmount!)}`}
           testID="money-aup-hero-figure"
         >
           {presentation.displayAmount}

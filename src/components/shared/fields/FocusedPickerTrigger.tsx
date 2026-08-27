@@ -63,6 +63,8 @@ export function FocusedPickerTrigger<T>({
 }) {
   const { colors, radius, spacing, typography } = useTheme();
   const picker = useFocusedPicker();
+  // Wave 11 — the row node focus returns to when the picker closes.
+  const rowRef = useRef<React.Component<unknown> | null>(null);
   /**
    * Wave 4 closure — three phases, not a boolean. `activating` is the new
    * one: the overlay shell is already mounted and the sheet's gestures are
@@ -93,6 +95,7 @@ export function FocusedPickerTrigger<T>({
   useEffect(() => {
     if (phase === 'idle' || !picker) return;
     picker.open({
+      getReturnFocusNode: () => rowRef.current,
       // While activating, the shell is mounted but the body is not yet
       // interactive — the host renders it collapsed and expands it in step
       // with the keyboard.
@@ -194,6 +197,9 @@ export function FocusedPickerTrigger<T>({
   return (
     <FieldShell label={label} message={message} required={required} style={containerStyle}>
       <TouchableOpacity
+        ref={(node: React.Component<unknown> | null) => {
+          rowRef.current = node;
+        }}
         style={styles.trigger}
         onPress={handleActivate}
         activeOpacity={0.75}

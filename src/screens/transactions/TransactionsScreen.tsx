@@ -12,6 +12,7 @@ import { Screen } from '../../components/shared/Screen';
 import { SectionCard } from '../../components/shared/SectionCard';
 import { EmptyState } from '../../components/shared/EmptyState';
 import { Button } from '../../components/shared/Button';
+import { monthHeaderAccessibilityLabel, monthSummaryAccessibilityLabel, transactionAccessibilityLabel } from '../../lib/a11yStrings';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
 import { resolveTransactionAggregateSpendingAmount } from '../../lib/calculations/repaymentAccounting';
 import { AppData, Transaction } from '../../types/models';
@@ -256,12 +257,24 @@ export function TransactionsScreen() {
           const expanded = expandedMonths.has(group.key);
           return (
             <View style={styles.monthCard}>
-              <TouchableOpacity style={styles.monthHeader} onPress={() => toggleMonth(group.key)} activeOpacity={0.7}>
+              {/* Wave 11 — one button with a truthful expanded state; the
+                  chevron is decoration inside it. */}
+              <TouchableOpacity
+                style={styles.monthHeader}
+                onPress={() => toggleMonth(group.key)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                accessibilityLabel={monthHeaderAccessibilityLabel(group.label, expanded)}
+                accessibilityHint={expanded ? 'Collapses this month.' : 'Shows this month\u2019s transactions.'}
+              >
                 <Text style={styles.monthLabel}>{group.label}</Text>
-                <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+                <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} accessibilityElementsHidden importantForAccessibility="no" />
               </TouchableOpacity>
 
-              <View style={styles.summaryRow}>
+              {/* Wave 11 — the +/- glyphs and green/red colour stay visual;
+                  the spoken summary uses direction WORDS, said once. */}
+              <View style={styles.summaryRow} accessible accessibilityLabel={monthSummaryAccessibilityLabel(group)}>
                 <View style={styles.summaryBlock}>
                   <Text style={styles.summaryLabel}>Income</Text>
                   <Text style={[styles.summaryValue, { color: colors.success }]}>+${group.income.toLocaleString()}</Text>
@@ -293,6 +306,16 @@ export function TransactionsScreen() {
                           setEditTransaction(item);
                           setVisible(true);
                         }}
+                        accessibilityRole="button"
+                        accessibilityLabel={transactionAccessibilityLabel({
+                          type: item.type,
+                          label: displayLabel,
+                          amount: item.amount,
+                          categoryName: category?.name ?? 'Other',
+                          dateLabel: new Date(item.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+                          badgeLabel: badge,
+                        })}
+                        accessibilityHint="Opens this transaction."
                       >
                         <View style={styles.txnLeft}>
                           {displayLabel ? <Text style={styles.txnDescription}>{displayLabel}</Text> : null}
@@ -308,7 +331,7 @@ export function TransactionsScreen() {
                           <Text style={[styles.rowAmount, { color: item.type === 'income' ? colors.success : colors.danger }]}>
                             {item.type === 'income' ? '+' : '-'}${item.amount.toLocaleString()}
                           </Text>
-                          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} accessibilityElementsHidden importantForAccessibility="no" />
                         </View>
                       </TouchableOpacity>
                     );

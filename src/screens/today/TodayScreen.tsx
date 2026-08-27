@@ -40,7 +40,7 @@ import { computeJourneySnapshot } from '../../lib/calculations/journeySnapshot';
 import { buildSavingCelebration, buildGoalMilestoneCelebration, computeScoreMilestoneCelebration, resolveFirstAssetCelebrationCopy } from '../../lib/celebrations';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
 import { Asset, AssetType } from '../../types/models';
-import { sendFocusEvent } from '../../lib/accessibilityFocus';
+import { sendFocusEvent } from '../../lib/a11yFocus';
 import { TodayAmbientField } from '../../components/today/TodayAmbientField';
 import { formatHeroTimeframe } from '../../lib/calculations/briefingPriorityRows';
 import { formatTodayDateEyebrow, goalPercentageIsTrailing, isAccessibilityText, isMonthSectionEligible, ROW_ICON_TILE_SIZE } from '../../lib/calculations/todayComposition';

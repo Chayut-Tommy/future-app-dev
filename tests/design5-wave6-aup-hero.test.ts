@@ -221,12 +221,11 @@ console.log('\n=== 5. Payday context comes from the engine (Class A) ===');
 
 console.log('\n=== 6. Accessibility (Class A + C) ===');
 {
-  assert('6a. the amount is announced with its measure label', /accessibilityLabel=\{`Estimated remaining, \$\{spokenMoney\(presentation\.displayAmount!\)\}`\}/.test(CODE));
-  assert('6b. a negative amount is spoken as "minus", never left as a glyph', (() => {
-    const src = read('src/components/money/SafeToSpendHero.tsx');
-    const fn = src.slice(src.indexOf('function spokenMoney'), src.indexOf('}', src.indexOf('function spokenMoney')) + 1);
-    return /replace\(\/\^\[-\\u2212\]\/, 'minus '\)/.test(fn);
-  })());
+  // RECONCILED (Wave 11): the local spokenMoney helper moved verbatim into
+  // the shared pure authority (lib/a11yStrings.spokenSignedDisplay) — same
+  // rewrite, now Class A tested in design5-wave11-a11y.
+  assert('6a. the amount is announced with its measure label', /accessibilityLabel=\{`Estimated remaining, \$\{spokenSignedDisplay\(presentation\.displayAmount!\)\}`\}/.test(CODE));
+  assert('6b. a negative amount is spoken as "minus", never left as a glyph — via the shared sign authority', /spokenSignedDisplay/.test(CODE) && /replace\(\/\^\[-−\]\/, 'minus '\)/.test(read('src/lib/a11yStrings.ts')));
   assert('6c. the information control is labelled and hinted', /accessibilityLabel="How this was calculated"/.test(CODE) && /accessibilityHint="Opens every line behind this estimate"/.test(CODE));
   assert('6d. and is 44x44 in its own right, not via hitSlop', /heroInfoButton: \{[\s\S]{0,200}width: designLayout\.touchTargetMin,[\s\S]{0,60}height: designLayout\.touchTargetMin/.test(CODE));
   assert('6e. the payday rail carries one complete spoken equivalent', /accessible accessibilityLabel=\{progress\.spoken\}/.test(BAR));

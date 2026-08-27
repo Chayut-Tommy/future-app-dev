@@ -164,8 +164,14 @@ console.log('\n=== 5. The picker is visible by construction — no form scrollin
   // Code only — DateTriggerField's doc comment names `scrollTo` precisely to
   // record that it no longer does it.
   assert('5b-i. and no field measures its own position any more', [DAY_FIELD, DATE_FIELD, MONTH_YEAR_FIELD].every((f) => !/onLayout|scrollTo|scrollRef/.test(stripComments(f))));
-  assert('5c. accessibility focus moves to the picker heading on reveal', /const node = findNodeHandle\(headingRef\.current\);\s*\n\s*if \(node\) AccessibilityInfo\.setAccessibilityFocus\(node\);/.test(host));
-  assert('5d. and returns to the originating trigger on close', /const node = returnFocusRef\.current;\s*\n\s*if \(node\) AccessibilityInfo\.setAccessibilityFocus\(node\);/.test(host));
+  // RECONCILED (Wave 11 focus consolidation): both moves now go through
+  // the ONE focus authority (a11yFocus.sendFocusEvent/focusElement — the
+  // supported cross-platform mechanism, no findNodeHandle, no deprecated
+  // setAccessibilityFocus). 5d's old pin matched code that read a ref NO
+  // writer ever set — the return move was silently dead since Wave 4; the
+  // trigger now passes its own row node and the host focuses it at close.
+  assert('5c. accessibility focus moves to the picker heading on reveal, through the one authority', /sendFocusEvent\(headingRef\);/.test(host));
+  assert('5d. and genuinely returns to the originating trigger on close (node re-checked at use)', /focusElement\(active\.getReturnFocusNode\?\.\(\)\);/.test(host) && /getReturnFocusNode: \(\) => rowRef\.current,/.test(stripComments(read('src/components/shared/fields/FocusedPickerTrigger.tsx'))));
   assert('5e. the panel has an explicit heading', /<Text ref=\{headingRef\} style=\{styles\.heading\} accessibilityRole="header">/.test(host));
   assert('5f. and both Done and Cancel controls', /label="Cancel"/.test(host) && /label="Done"/.test(host));
   assert('5g. the PICKER scrolls internally if it must, never the form behind it', /<ScrollView style=\{styles\.body\}/.test(host) && /maxHeight: '90%'/.test(host));

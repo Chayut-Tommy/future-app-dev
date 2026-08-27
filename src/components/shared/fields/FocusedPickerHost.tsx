@@ -31,8 +31,9 @@
  * focus and the Done/Cancel contract.
  */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, findNodeHandle, Keyboard, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Keyboard, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../../theme/ThemeContext';
+import { focusElement, sendFocusEvent } from '../../../lib/a11yFocus';
 import { Button } from '../Button';
 import { MOTION_MS, MOTION_TRAVEL_PT, STANDARD_BEZIER } from '../../../theme/motion';
 import { useReduceMotion } from '../../../hooks/useReduceMotion';
@@ -56,6 +57,11 @@ export interface FocusedPickerRequest {
    * form is out of the accessibility tree) but not yet interactive, which is
    * what removes the visible gap between the two surfaces. */
   activating?: boolean;
+  /** Wave 11 — the node accessibility focus returns to after Done/Cancel
+   * (the trigger row). A GETTER, re-checked at close, so an unmounted or
+   * replaced trigger silently gets nothing (null-check-at-use safeguard).
+   * Optional: requests without it simply skip the return move. */
+  getReturnFocusNode?: () => unknown;
   testID?: string;
 }
 
@@ -97,10 +103,7 @@ export function FocusedPickerProvider({
   const keyboardDurationRef = useRef<number | undefined>(undefined);
   const headingRef = useRef<Text>(null);
   /** Whoever was focused when the picker opened, so focus can go back. */
-  const returnFocusRef = useRef<number | null>(null);
-
   const open = useCallback((next: FocusedPickerRequest) => {
-    returnFocusRef.current = null;
     setRequest(next);
   }, []);
 
@@ -133,8 +136,8 @@ export function FocusedPickerProvider({
   const announcedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!request || request.activating) return;
-    const node = findNodeHandle(headingRef.current);
-    if (node) AccessibilityInfo.setAccessibilityFocus(node);
+    // Wave 11 — through the ONE focus authority.
+    sendFocusEvent(headingRef);
     if (announcedForRef.current === request.title) return;
     announcedForRef.current = request.title;
     AccessibilityInfo.announceForAccessibility(`${request.title} opened`);
@@ -203,8 +206,10 @@ export function FocusedPickerProvider({
     // Exactly one of the two, exactly once.
     if (commit) active.onDone();
     else active.onCancel();
-    const node = returnFocusRef.current;
-    if (node) AccessibilityInfo.setAccessibilityFocus(node);
+    // Wave 11 — the return half of the trigger's focus contract, now real:
+    // the previous implementation read a ref no code ever wrote (dead
+    // since Wave 4). Through the ONE authority, node re-checked at use.
+    focusElement(active.getReturnFocusNode?.());
   }
 
   return (

@@ -1180,3 +1180,64 @@ The asset/account form's label placeholder resolves through ONE exhaustive `Reco
 TypeScript 0. Legacy **100 files / 7,927**. Rendered **63 suites / 431**, green twice at this gate. Checklist composition 79 (locked order, zero/single/mixed/deferral/no-debt/all-resolved matrix, honest progress copy, next-task resolution, contained-group anatomy, seven-footer matrix, supersede lifecycle, exhaustive placeholder mapping); checklist rendered journeys 10 across three suites plus the acknowledgement/supersede arc; Save-feedback/haptic, accessibility/focus, Today hierarchy, Add origin/transition, deletion/reset/persistence and financial regression suites all green. `git diff --check` clean; **no dependency, configuration or lockfile change**; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0. **No financial calculation change**: 68 of the 69 protected files are byte-identical; the single difference is `types/models.ts` — exactly the authorised optional `confirmedNoSavings` field.
 
 **iOS: device-approved by the owner.** **Android: export/compile evidence only — physical Android verification is formally deferred to a future Android certification phase (Nolie launches on iOS first).** **Wave 11 not started.**
+
+# Change control — Android certification backlog (deferred by owner decision, 27 August 2026)
+
+**Owner decision**: Nolie launches on iOS first, and the owner cannot test Android. Every Android-specific implementation, correction and physical-verification item is therefore FORMALLY DEFERRED to a future Android certification phase. This supersedes the original Wave 11 plan sections that made Android physical verification a Wave 11 acceptance gate. **None of the items below was implemented or physically tested in Wave 11**; the Android export remains COMPILE EVIDENCE ONLY. This backlog must be completed before any Android beta, production build or public release — and it does not block the iOS Design 5.1 closure.
+
+## Deferred Android certification backlog
+
+1. TalkBack end-to-end journeys (onboarding, checklist, all 14 Add tasks, Money/Wealth/Grow, Settings).
+2. TalkBack focus and hidden-layer audit (importantForAccessibility semantics, obscured layers, dismissed surfaces).
+3. Android hardware Back matrix (every sheet, workspace step, picker, confirmation and nested handoff).
+4. Predictive Back decision and verification.
+5. Android keyboard behaviour and keyboard-to-picker handoff (the iOS keyboardDidHide-driven reveal has no verified Android counterpart).
+6. Android modal/transition stress (the post-hidden commit effects and ANDROID_DISMISS_FALLBACK coordination are implemented but never device-verified).
+7. Android rapid-tap/freeze testing (first-action-wins under Android dispatch timing).
+8. Android Reduced Motion (Animator duration scale) behaviour.
+9. Android system bars (status/navigation bar treatment across all six themes).
+10. Android themes and contrast verified on device (OLED dark rendering included).
+11. Android blur/elevation fallback audit.
+12. Android small-phone and tablet layouts.
+13. Android font rendering, including Noto Sans Thai shaping and metrics.
+14. Android accessibility announcements (announceForAccessibility timing and reliability under TalkBack).
+15. Physical Android Save, deletion and haptic behaviour (the four-event matrix on real hardware).
+
+No Android implementation plan beyond this record was created, and no report may describe Nolie as Android-tested, Android-accessible, cross-platform certified or ready for Android release until this phase completes.
+
+# Change control — Wave 11 closure and Design 5.1 completion (27 August 2026)
+
+**Baseline** `f705012` (complete post-onboarding setup checklist closure). Earlier entries above, including the Android certification backlog, are left exactly as written. **This is the final Design 5.1 wave. There is no Wave 12.**
+
+## Device and simulator evidence — recorded exactly, deferral is not a pass
+
+* **Physical iPhone Wave 11 device testing: PASSED by the owner on 27 August 2026** (the Wave 11 iOS device checklist). No device model, iOS version or per-item observation beyond that confirmation was supplied, and none is recorded.
+* **Automated 320pt structural evidence: PASSED** (every rendered root runs at 320pt; the reflow, width-cap and clearance contracts are enforced in the batteries).
+* **iPhone Simulator visual sweep: NOT EXECUTED** — the build Mac has no Xcode or Simulator environment. Explicitly deferred by the owner.
+* **iPad portrait/landscape sweep: NOT EXECUTED** — same cause, same explicit deferral.
+* **Android implementation and physical testing: DEFERRED** (see the Android certification backlog entry above).
+* **iOS and Android exports: compile/export evidence only.**
+
+Design 5.1 is NOT described as having a complete iOS device matrix. It is closed for the current iPhone-first design scope, with simulator and iPad certification transferred to the mandatory iOS pre-release gate below.
+
+## MANDATORY iOS pre-release gate (launch certification — not Wave 12)
+
+Before any external TestFlight beta, App Store submission or public release, Nolie must have access to an Xcode/Simulator environment and complete: (1) smallest supported iPhone portrait testing; (2) 100% and accessibility-size text; (3) iPad portrait and landscape if iPad remains a supported device family; (4) dock and content-width validation; (5) keyboard, picker, toast and sheet layout; (6) a six-theme representative sweep; (7) a Reduced Motion representative journey; (8) a final release-candidate physical iPhone regression.
+
+Separate pre-release backlogs retained: **optimistic/fire-and-forget task persistence** (normal task saves update optimistically; a rejected disk write does not reopen the task — pre-existing, not introduced by Wave 11, not represented as resolved); **full Thai localisation** (the accepted surface remains exactly 26 strings); **Android certification** before any Android beta or release.
+
+## What Wave 11 delivered (iOS accessibility, resilience and verification)
+
+**One consolidated focus authority** (`lib/a11yFocus`): a single supported mechanism on both platforms (`sendAccessibilityEvent 'focus'`), null-checked at use, throw-tolerant of vanished targets, presentation-only; the duplicate `accessibilityFocus` module deleted with zero surviving imports; all eleven consumers migrated including the three formerly direct sites (WelcomeFlow step headings, GoalDetailSheet completion heading, FocusedPickerHost); the deprecated `setAccessibilityFocus`/`findNodeHandle` pair now appears nowhere in src. The focused picker's Done/Cancel **return-to-trigger focus contract was found dead** (its ref had no writer since Wave 4, under a green structural pin) and is now real: every shared trigger registers its row and the host focuses it at close — rendered-proven, along with heading focus, once-per-opening announcement, checklist origin restoration and no-late-focus/announcement after unmount.
+
+**Financial spoken-string authority** (`lib/a11yStrings`, pure): `spokenCurrency` (dollars/cents once, "minus" as a word, invalid → "amount not available", never a fabricated zero), the display-sign rewrite consolidated verbatim from SafeToSpendHero, and the transaction/month builders — all from structured values. The protected composition modules remain the spoken authorities for their own surfaces, re-proven by real import. **Transactions screen corrected from zero accessibility**: month disclosures are buttons with truthful expanded state, summaries speak direction words instead of +/− glyphs and colour, every row is a labelled button with a hint, chevrons hidden.
+
+Re-proven at this gate: hidden-layer isolation (`accessibilityViewIsModal` on tray/picker/reset), announce-once behaviour, six-theme contrast floors through the real resolver, effective ≥44pt targets across the shared primitives, Dynamic Type/320pt structural contracts, the limited 26-string Thai surface with Noto Sans Thai role resolution, the persistence-failure seam (onboarding completion) and double-tap latches, iOS modal-stress and first-action-wins gates, and Reduced Motion parity incl. the exhaustive pure 14-task matrix. **Zero financial calculation changes** — all 75 protected authority files byte-identical; no dependency, configuration or lockfile change; no Android-specific code added (`Platform.OS === 'android'` count pinned unchanged).
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **101 files / 7,991**. Rendered **64 suites / 434**, green twice. Wave 11 a11y suite 64/64; Wave 11 focus rendered 3/3; five documented assertion reconciliations (embedded-pilot 7a, date-and-balance 5c/5d, goal-integrity 5e, aup-hero 6a/6b). `git diff --check` clean; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0, run separately from Jest.
+
+**Authoritative Wave 11 inventory (from `git diff --name-status`): 14 production paths — 12 modified, 1 deleted, 1 new — plus 7 test paths (5 modified, 2 new) and this change-control document: 22 paths.** (Supersedes the earlier report's contradictory "13 production paths" wording.)
+
+**Design 5.1 ends at Wave 11. No Wave 12 is planned.**

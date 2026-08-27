@@ -152,8 +152,13 @@ console.log('\n=== 6. The asset-type transition controller module is genuinely p
 console.log('\n=== 7. Correction pass (§2) — accessibility focus wiring for the Add Asset heading and per-tile refs (Class C) ===');
 {
   assert(
-    "7a. focusElement (now in the shared src/lib/a11yFocus.ts module, floating navigation design pass — see that file's own doc comment) uses AccessibilityInfo.setAccessibilityFocus on iOS and AccessibilityInfo.sendAccessibilityEvent(..., 'focus') on Android — and accessibilityLiveRegion is never used as an actual JSX prop anywhere in AddAnythingSheet.tsx (only mentioned in an explanatory comment, which is fine)",
-    /if \(Platform\.OS === 'ios'\) \{\s*\n\s*const tag = findNodeHandle\(node as never\);\s*\n\s*if \(tag != null\) AccessibilityInfo\.setAccessibilityFocus\(tag\);\s*\n\s*\} else \{\s*\n\s*AccessibilityInfo\.sendAccessibilityEvent\(node as never, 'focus'\);\s*\n\s*\}/.test(A11Y_FOCUS_SRC) &&
+  // RECONCILED (Wave 11 focus consolidation): ONE supported mechanism on
+  // both platforms — sendAccessibilityEvent(host, 'focus') — replaced the
+  // per-platform branch and the deprecated iOS setAccessibilityFocus /
+  // throw-prone findNodeHandle pair.
+    "7a. focusElement (the ONE consolidated a11yFocus authority) uses the supported sendAccessibilityEvent 'focus' mechanism on BOTH platforms — no deprecated API, no Platform branch — and accessibilityLiveRegion is never used as an actual JSX prop anywhere in AddAnythingSheet.tsx",
+    /AccessibilityInfo\.sendAccessibilityEvent\(node as never, 'focus'\);/.test(A11Y_FOCUS_SRC) &&
+      !/setAccessibilityFocus|findNodeHandle|Platform/.test(A11Y_FOCUS_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')) &&
       !/accessibilityLiveRegion=/.test(ADD_ANYTHING_SRC)
   );
   assert('7b. exactly one announceForAccessibility call exists, gated behind the single shared focus-consumption effect (never a second, redundant announcement source)', (ADD_ANYTHING_SRC.match(/AccessibilityInfo\.announceForAccessibility\(/g) || []).length === 1);

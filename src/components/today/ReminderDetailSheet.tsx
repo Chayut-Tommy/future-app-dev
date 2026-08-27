@@ -29,7 +29,7 @@ import {
   occurrenceKeyOf,
 } from '../../lib/calculations/reminderInteractionLifecycle';
 import { AppData } from '../../types/models';
-import { sendFocusEvent } from '../../lib/accessibilityFocus';
+import { sendFocusEvent } from '../../lib/a11yFocus';
 
 const CLOSED_STATE: ReminderLifecycleState = { kind: 'closed' };
 

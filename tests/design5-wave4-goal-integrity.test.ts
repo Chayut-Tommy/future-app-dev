@@ -216,7 +216,9 @@ console.log('\n=== 5. Progress and completion (Class A + Class C) ===');
   // the metadata block. Same guarantee: no progress editor on a completed
   // goal, so nothing can be pushed past the target from that view.
   assert('5d. so progress can never be pushed past the target from the completed view', /\{isReadOnlyCompleted \? null : progressEditorOpen \? \(/.test(EDIT) && /testID="goal-update-progress"/.test(EDIT));
-  assert('5e. the keyboard is dismissed BEFORE the completion state is announced', /Keyboard\.dismiss\(\);\s*\n\s*const node = findNodeHandle\(completionHeadingRef\.current\);/.test(EDIT));
+  // RECONCILED (Wave 11): the heading focus now goes through the ONE
+  // consolidated authority; the dismissal-before-announcement order holds.
+  assert('5e. the keyboard is dismissed BEFORE the completion state is announced', /Keyboard\.dismiss\(\);[\s\S]{0,200}?sendFocusEvent\(completionHeadingRef\);/.test(EDIT));
   assert('5f. focus moves to a single completion heading', /<Text ref=\{completionHeadingRef\} style=\{styles\.completedTitle\} accessibilityRole="header">/.test(EDIT));
   assert('5g. and completion is announced exactly once per goal', /if \(announcedCompletionForRef\.current === goal\.id\) return;/.test(EDIT));
   assert('5h. the action hierarchy is Done, Create another, then Extend', /testID="goal-completed-done"/.test(EDIT) && /testID="goal-completed-create-another"/.test(EDIT) && /testID="goal-completed-extend"/.test(EDIT));

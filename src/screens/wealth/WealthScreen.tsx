@@ -46,7 +46,7 @@ import { EducationalNote } from '../../components/shared/EducationalNote';
 import { InfoSheet } from '../../components/shared/InfoSheet';
 import { getUnlockStatus } from '../../lib/unlock';
 import { tabScrollRefs } from '../../navigation/tabScrollRefs';
-import { sendFocusEvent } from '../../lib/accessibilityFocus';
+import { sendFocusEvent } from '../../lib/a11yFocus';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';

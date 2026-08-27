@@ -111,7 +111,7 @@ function TodayBriefingHarness({ today }: { today: Date }) {
   const reminderTileRef = useRef<any>(null);
   const briefingHeadingRef = useRef<any>(null);
   function handleReminderSheetFullyClosed() {
-    const { sendFocusEvent } = require('../../src/lib/accessibilityFocus');
+    const { sendFocusEvent } = require('../../src/lib/a11yFocus');
     if (topReminder) {
       sendFocusEvent(reminderTileRef);
     } else {

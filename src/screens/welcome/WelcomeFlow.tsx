@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
-  findNodeHandle,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -30,6 +29,7 @@ import { Asset, PayFrequency, RecurringItem, UserProfile } from '../../types/mod
 import { brand } from '../../lib/brand';
 import { hapticWarning } from '../../lib/haptics';
 import { useCelebration } from '../../state/CelebrationContext';
+import { sendFocusEvent } from '../../lib/a11yFocus';
 import { incomeSourceIcon } from '../../lib/addIcons';
 import { INCOME_SOURCE_IDS, INCOME_SOURCE_LABEL, INCOME_SOURCE_RECORD_ICON } from '../../lib/incomeSources';
 import { onFeaturedAlpha } from '../../theme/semanticTokens';
@@ -141,8 +141,9 @@ export function WelcomeFlow() {
   // Focus + one announcement per state change: the heading receives
   // accessibility focus and the truthful "Step N of 7" is spoken once.
   useEffect(() => {
-    const handle = headingRef.current ? findNodeHandle(headingRef.current) : null;
-    if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle);
+    // Wave 11 — through the ONE focus authority (safe on a not-yet-mounted
+    // heading), announcement unchanged.
+    sendFocusEvent(headingRef);
     AccessibilityInfo.announceForAccessibility(progressLabel(step));
   }, [step]);
 

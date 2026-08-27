@@ -1,28 +1,36 @@
-import { AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
+import { AccessibilityInfo } from 'react-native';
+import type { RefObject } from 'react';
 
 /**
- * Moves native accessibility focus to a mounted element. iOS VoiceOver and
- * Android TalkBack need genuinely different native calls (there is no
- * single RN API that moves focus correctly on both):
- * AccessibilityInfo.setAccessibilityFocus posts a real UIAccessibility
- * focus notification but is iOS-only and needs a legacy numeric node
- * handle (findNodeHandle); AccessibilityInfo.sendAccessibilityEvent(handle,
- * 'focus') is the modern, correctly-typed way to dispatch a native
- * TalkBack focus event on Android, taking the host instance directly.
- * Deliberately not using accessibilityLiveRegion for either platform — that
- * alone does not reliably move iOS focus.
+ * Wave 11 — the ONE focus-helper authority (consolidates the former
+ * a11yFocus.ts and accessibilityFocus.ts pair, per the Design 5.1 Motion
+ * and Accessibility source's focus map note).
  *
- * Originally written for AddAnythingSheet.tsx's own destination-switch
- * focus movement; extracted here so QuickActionsTray.tsx (floating
- * navigation design pass) can reuse the exact same logic rather than a
- * second, duplicate implementation.
+ * One mechanism on both platforms: React Native 0.81's supported
+ * AccessibilityInfo.sendAccessibilityEvent(host, 'focus') — never the
+ * deprecated iOS-only setAccessibilityFocus and never findNodeHandle,
+ * whose dev-mode throw on an unmounted/replaced node was a real crash
+ * class (reproduced from the checklist's focus restoration). Presentation
+ * only: no navigation, no timers, no global state, no elapsed-time
+ * deduplication, nothing scheduled — a call either dispatches immediately
+ * against a live node or silently does nothing, so there is no listener or
+ * pending work to clean up and no state write after unmount. Reduced
+ * Motion never alters this behaviour (focus is not motion).
  */
-export function focusElement(node: React.Component<unknown> | React.ElementRef<any> | null) {
+export function focusElement(node: unknown): void {
+  // Null-checked immediately before the native call (safeguard: every
+  // focus target is re-checked at use, not at capture).
   if (!node) return;
-  if (Platform.OS === 'ios') {
-    const tag = findNodeHandle(node as never);
-    if (tag != null) AccessibilityInfo.setAccessibilityFocus(tag);
-  } else {
+  try {
     AccessibilityInfo.sendAccessibilityEvent(node as never, 'focus');
+  } catch {
+    // The target was replaced or unmounted between capture and dispatch —
+    // a focus move is a courtesy, never a failure path.
   }
+}
+
+/** Ref-shaped convenience over the same single mechanism — kept because
+ * half the consumers hold refs, not nodes. No behavioural difference. */
+export function sendFocusEvent(ref: RefObject<unknown> | null | undefined): void {
+  focusElement(ref?.current ?? null);
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, Animated, Easing, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View, findNodeHandle } from 'react-native';
+import { AccessibilityInfo, Alert, Animated, Easing, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { typeStyle } from '../../theme/textStyle';
@@ -14,6 +14,7 @@ import { MOTION_MS, MOTION_TRAVEL_PT } from '../../theme/motion';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { hapticRigid, hapticWarning } from '../../lib/haptics';
 import { useCelebration } from '../../state/CelebrationContext';
+import { sendFocusEvent } from '../../lib/a11yFocus';
 import { resolveGoalNameOnPurposeChange, resolveGoalPaceSummary, resolveGoalProgressState } from '../../lib/goalFormState';
 import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
@@ -294,8 +295,8 @@ export function GoalDetailSheet({
     if (announcedCompletionForRef.current === goal.id) return;
     announcedCompletionForRef.current = goal.id;
     Keyboard.dismiss();
-    const node = findNodeHandle(completionHeadingRef.current);
-    if (node) AccessibilityInfo.setAccessibilityFocus(node);
+    // Wave 11 — through the ONE focus authority.
+    sendFocusEvent(completionHeadingRef);
     AccessibilityInfo.announceForAccessibility(`${goal.name} completed`);
   }, [goal?.id, goal?.status, goal?.name]);
 
