@@ -690,6 +690,18 @@ export const QuickAddModal = forwardRef<
   // editing entirely is the smallest safe MVP treatment now that a
   // dedicated atomic reversal exists for deletion — see handleDelete.
   const isEditingBnplRepayment = !!editTransaction && isBnplRepaymentTransaction(data, editTransaction);
+  // P0 repayment edit-integrity — the credit-card and loan/mortgage siblings
+  // of the BNPL lock above. All three record a SECOND, card/liability-side
+  // balance effect that only their dedicated atomic reversal (handleDelete)
+  // can undo; the generic edit path (applyTransactionUpdate) reverses and
+  // re-applies ONLY the funding-asset side, silently desyncing the card/loan
+  // balance (and, for a card, stripping creditCardId so it stops being a
+  // repayment at all). Making the record view-only — exactly as BNPL already
+  // is — is the smallest safe fix; Delete still routes through the two-sided
+  // reversal, and the customer re-records through the normal supported flow.
+  const isEditingCreditCardRepayment = !!editTransaction && isCreditCardRepaymentTransaction(editTransaction);
+  const isEditingLoanRepayment = !!editTransaction && isLoanRepaymentTransaction(data, editTransaction);
+  const isEditingLockedRepayment = isEditingBnplRepayment || isEditingCreditCardRepayment || isEditingLoanRepayment;
   const hadExistingNote = !!editTransaction?.note;
   const requiresTransactionName = !isEditingRecurringLinked && (!isEditing || hadExistingNote);
   // Everyday Account expense routing — negative balances are unsupported
@@ -701,7 +713,7 @@ export const QuickAddModal = forwardRef<
   const insufficientEverydayFunds =
     paymentSource === 'everyday' && !!selectedEverydayAccount && !isNaN(amountValue) && amountValue > (everydayAvailableBalance ?? 0);
   const canSave =
-    !isEditingBnplRepayment &&
+    !isEditingLockedRepayment &&
     !isNaN(amountValue) &&
     amountValue > 0 &&
     !!categoryId &&
@@ -724,7 +736,7 @@ export const QuickAddModal = forwardRef<
   }, [canSave, onCanSaveChange]);
 
   function handleSave() {
-    if (isEditingBnplRepayment) return;
+    if (isEditingLockedRepayment) return;
     if (!canSave || !categoryId) return;
     if (type === 'expense' && !sourceChosen) return;
     // Must be checked+set synchronously before anything else touches state
@@ -1082,22 +1094,35 @@ export const QuickAddModal = forwardRef<
       ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
       : null;
 
-  // Correction pass, §1 — a BNPL repayment transaction is view-only here:
-  // no amount/date/paid-from/category field is rendered at all, so there
-  // is no path through this screen that can edit its amount without also
-  // updating the linked liability and schedule (which only confirm/reverse
-  // are allowed to do). Delete remains available, routed through
-  // handleDelete's own BNPL-aware branch above.
-  if (isEditingBnplRepayment && editTransaction) {
-    const bnplLockedContent = (
+  // A recorded repayment (BNPL, credit-card, or loan/mortgage) is view-only
+  // here: no amount/date/paid-from/category field is rendered at all, so
+  // there is no path through this screen that can edit its amount without
+  // also updating the linked card/liability and schedule (which only the
+  // dedicated confirm/reverse transitions are allowed to do). Delete remains
+  // available, routed through handleDelete's own repayment-aware branches
+  // above. BNPL keeps its exact established wording and accessibility; the
+  // credit-card and loan siblings use the shared calm "recorded — delete to
+  // change" copy (P0).
+  if (isEditingLockedRepayment && editTransaction) {
+    const lockedSourceLabel = isEditingBnplRepayment
+      ? editTransactionDisplayLabel ?? 'BNPL repayment'
+      : isEditingCreditCardRepayment
+        ? data.creditCards.find((c) => c.id === editTransaction.creditCardId)?.label ?? 'Card repayment'
+        : editTransactionDisplayLabel ?? 'Loan repayment';
+    const lockedHint = isEditingBnplRepayment
+      ? "This repayment updated both your payment source and BNPL balance. It can't be edited here — update the BNPL plan if its recorded balance is incorrect."
+      : 'This repayment is recorded. To change it, delete it and record it again.';
+    const lockedContent = (
       <>
         <Text style={styles.sourceLabel}>
-          Source: <Text style={styles.sourceLabelValue}>{editTransactionDisplayLabel ?? 'BNPL repayment'}</Text>
+          Source: <Text style={styles.sourceLabelValue}>{lockedSourceLabel}</Text>
         </Text>
         <Text style={styles.amountInput}>{formatMoney(editTransaction.amount)}</Text>
-        <Text style={styles.hintText}>
-          This repayment updated both your payment source and BNPL balance. It can't be edited here — update the BNPL plan if its recorded
-          balance is incorrect.
+        <Text
+          style={styles.hintText}
+          accessibilityLabel={isEditingBnplRepayment ? undefined : `Repayment recorded, ${formatMoney(editTransaction.amount)}. ${lockedHint}`}
+        >
+          {lockedHint}
         </Text>
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
           <Text style={styles.deleteText}>Delete transaction</Text>
@@ -1105,7 +1130,7 @@ export const QuickAddModal = forwardRef<
       </>
     );
 
-    if (embedded) return bnplLockedContent;
+    if (embedded) return lockedContent;
 
     return (
       <KeyboardSheet
@@ -1115,7 +1140,7 @@ export const QuickAddModal = forwardRef<
         title="Edit transaction"
         footer={<Button label="Close" variant="secondary" onPress={onClose} style={styles.footerButton} />}
       >
-        {bnplLockedContent}
+        {lockedContent}
       </KeyboardSheet>
     );
   }
