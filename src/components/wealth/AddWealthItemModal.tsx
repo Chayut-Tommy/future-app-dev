@@ -9,6 +9,9 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Chip } from '../shared/Chip';
 import { InlineSelect } from '../shared/fields/InlineSelect';
 import { hapticRigid, hapticWarning } from '../../lib/haptics';
+import { buildSaveConfirmation } from '../../lib/celebrations';
+import { ASSET_LABEL_PLACEHOLDER } from '../../lib/assetPlaceholders';
+import { useCelebration } from '../../state/CelebrationContext';
 import { assetTypeIcon, liabilityTypeIcon } from '../../lib/addIcons';
 import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { DateTriggerField } from '../shared/fields/DateTriggerField';
@@ -76,6 +79,15 @@ export const LIABILITY_DISPLAY_NAME: Record<LiabilityType, string> = {
   other: 'Liability',
   bnpl: 'Buy Now, Pay Later Plan',
 };
+
+/** B9 identity closure — the customer-facing name of an ACTUAL saved
+ * asset type, from this form's own canonical type table (the same labels
+ * the type selector shows), shared with the Add workspace host so a
+ * confirmation can never name the entry preset once the real saved type
+ * exists. */
+export function assetDisplayName(type: AssetType): string {
+  return ASSET_TYPES.find((t) => t.value === type)?.label ?? 'Asset';
+}
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -354,7 +366,10 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   /** Called instead of `onClose` on a successful Save, only when embedded —
    * lets the host close its own persistent sheet exactly once, the same way
    * TransferForm's onSaveSuccess does for the embedded Transfer route. */
-  onSaveSuccess?: () => void;
+  /** Called on a successful embedded save, carrying the ACTUAL saved
+   * structured type (asset or liability) so the host's confirmation names
+   * what was really saved — never the entry preset. */
+  onSaveSuccess?: (savedType?: AssetType | LiabilityType) => void;
   /** Called instead of `onClose`, only when embedded, once a requested close
    * has been confirmed (or immediately for `reason === 'back'`, which never
    * confirms — see AddWealthItemModalHandle.requestClose above). */
@@ -524,6 +539,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // form session begins (opening fresh, opening to edit a different item,
   // or reopening after close) — never for a re-render of the same open
   // session.
+  const { confirmSaveSuccess } = useCelebration();
   const submittingRef = useRef(false);
   // First-accepted-tap-wins deferred credit-card handoff (Stream D, D1,
   // corrected). On iOS, runPendingCreditCardHandoff is passed to
@@ -1368,8 +1384,18 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       // never passes `embedded`, so this is unconditionally onClose() for
       // them, byte-identical to before this pilot.
       if (embedded) {
-        onSaveSuccess?.();
+        onSaveSuccess?.(kind === 'asset' ? assetType : liabilityType);
       } else {
+        // B9 closure — a standalone Wealth save is the same customer
+        // action: one softSuccess and one factual confirmation through the
+        // one canonical boundary, named from the ACTUAL saved type. The
+        // catch below never reaches here, so a failed save signals nothing.
+        confirmSaveSuccess(
+          buildSaveConfirmation(
+            kind === 'asset' ? assetDisplayName(assetType) : LIABILITY_DISPLAY_NAME[liabilityType],
+            editAsset || editLiability ? 'updated' : 'added'
+          )
+        );
         onClose();
       }
     } catch (err) {
@@ -1691,13 +1717,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           <TextField
             label={kind === 'liability' && nameField ? nameField.field : kind === 'asset' && assetType === 'everyday' ? 'Account name' : 'Label'}
             required
-            placeholder={
-              kind === 'asset'
-                ? assetType === 'everyday'
-                  ? 'e.g. Main everyday account'
-                  : 'e.g. Vanguard ETF'
-                : nameField?.placeholder ?? 'e.g. Home loan'
-            }
+            placeholder={kind === 'asset' ? ASSET_LABEL_PLACEHOLDER[assetType] : nameField?.placeholder ?? 'e.g. Home loan'}
             value={label}
             onChangeText={setLabel}
           />

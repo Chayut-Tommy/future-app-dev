@@ -1,4 +1,4 @@
-import { Asset } from '../types/models';
+import { AppData, Asset } from '../types/models';
 
 /**
  * Wave 9c visual/checklist correction — the checklist's canonical
@@ -62,4 +62,100 @@ export function resolveNextSetupStep<T extends { key: string; done: boolean }>(s
     if (step && !step.done) return step;
   }
   return null;
+}
+
+/**
+ * Post-Wave-10 checklist UX closure — the PURE composition the Today card
+ * renders from. Presentation-only: it consumes the structured per-step
+ * state the existing predicates/flags produce and decides order, progress
+ * copy, the compact subset and grouping. It owns NO completion rule, no
+ * storage and no routing — one data model, one set of predicates.
+ */
+export interface SetupStepComposition {
+  key: (typeof SETUP_STEP_PRIORITY)[number];
+  /** Data-backed completion — a real record satisfies the predicate. */
+  completed: boolean;
+  /** Explicit deferral or "not applicable" acknowledgement (a persisted
+   * confirmed* flag) WITHOUT backing data. Never called complete. */
+  acknowledged: boolean;
+}
+
+export interface SetupChecklistComposition {
+  /** The locked seven-task order. */
+  order: readonly (typeof SETUP_STEP_PRIORITY)[number][];
+  /** First four tasks / the "Add when it applies" group. */
+  coreKeys: readonly (typeof SETUP_STEP_PRIORITY)[number][];
+  whenItAppliesKeys: readonly (typeof SETUP_STEP_PRIORITY)[number][];
+  /** completed + acknowledged (a step is resolved either way). */
+  resolvedCount: number;
+  completedCount: number;
+  total: number;
+  /** Honest progress copy: "complete" ONLY while every resolved step is
+   * data-backed; any acknowledgement in the numerator switches the word
+   * to "reviewed" — a deferred step is never called complete. */
+  progressLabel: string;
+  progressRatio: number;
+  /** Nothing resolved yet — the card renders fully expanded. */
+  zeroProgress: boolean;
+  /** Every step resolved — the existing setup-complete outcome shows. */
+  allResolved: boolean;
+  /** First unresolved task in the locked order (the Continue target). */
+  nextKey: (typeof SETUP_STEP_PRIORITY)[number] | null;
+  /** The compact card's rows: the next (up to) two unresolved tasks. */
+  compactKeys: readonly (typeof SETUP_STEP_PRIORITY)[number][];
+}
+
+export function composeSetupChecklist(steps: readonly SetupStepComposition[]): SetupChecklistComposition {
+  const byKey = new Map(steps.map((s) => [s.key, s]));
+  const order = SETUP_STEP_PRIORITY.filter((k) => byKey.has(k));
+  const resolved = (k: (typeof SETUP_STEP_PRIORITY)[number]) => {
+    const s = byKey.get(k)!;
+    return s.completed || s.acknowledged;
+  };
+  const completedCount = order.filter((k) => byKey.get(k)!.completed).length;
+  const resolvedCount = order.filter(resolved).length;
+  const anyAcknowledgedOnly = order.some((k) => !byKey.get(k)!.completed && byKey.get(k)!.acknowledged);
+  const total = order.length;
+  const unresolved = order.filter((k) => !resolved(k));
+  return {
+    order,
+    coreKeys: order.slice(0, 4),
+    whenItAppliesKeys: order.slice(4),
+    resolvedCount,
+    completedCount,
+    total,
+    progressLabel: `${resolvedCount} of ${total} ${anyAcknowledgedOnly ? 'reviewed' : 'complete'}`,
+    progressRatio: total === 0 ? 0 : resolvedCount / total,
+    zeroProgress: resolvedCount === 0,
+    allResolved: resolvedCount === total && total > 0,
+    nextKey: unresolved[0] ?? null,
+    compactKeys: unresolved.slice(0, 2),
+  };
+}
+
+/**
+ * Checklist consistency correction — REAL DATA WINS, permanently. Applied
+ * inside the persist pipeline (AppStateContext, next to
+ * syncIncomeAggregate) so the moment genuinely contradicting data is
+ * recorded, the corresponding setup acknowledgement is CLEARED — not just
+ * visually superseded. That is what keeps a later deletion honest: with
+ * the flag gone, deleting the last Savings item (or the final real debt)
+ * returns the task to unresolved instead of resurrecting a stale "I don't
+ * have any" answer the customer gave before the data ever existed.
+ * Pure and idempotent; returns the SAME object when nothing applies.
+ */
+export function supersedeSetupAcknowledgements(data: AppData): AppData {
+  const savingsSupersedes = data.user.confirmedNoSavings === true && hasSavingsAccount(data.assets);
+  const debtSupersedes =
+    data.user.confirmedNoDebt === true &&
+    (data.liabilities.some((l) => l.currentBalance > 0) || data.creditCards.some((c) => c.currentBalance > 0));
+  if (!savingsSupersedes && !debtSupersedes) return data;
+  return {
+    ...data,
+    user: {
+      ...data.user,
+      ...(savingsSupersedes ? { confirmedNoSavings: false } : {}),
+      ...(debtSupersedes ? { confirmedNoDebt: false } : {}),
+    },
+  };
 }

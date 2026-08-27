@@ -96,7 +96,11 @@ describe('Correction A — the Everyday save toast, rendered', () => {
     expect(s.assets).toHaveLength(1);
     expect(s.assets[0].type).toBe('everyday');
     await screen.findByText('1 of 7 complete');
-    expect(screen.getByText('Shows money you have set aside.')).toBeTruthy();
+    // RECONCILED (post-Wave-10 checklist UX closure): progress compacts the
+    // card — the remaining rows are asserted after the one View all
+    // disclosure expands the full composition in place.
+    fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByText('Shows money you have set aside.', {}, { timeout: 20000 });
     expect(screen.getByText('Adds vehicles, property or investments to your net worth.')).toBeTruthy();
     await waitFor(async () => expect((await stored()).seenAchievementIds).toContain('added_first_asset'), { timeout: 20000 });
   });

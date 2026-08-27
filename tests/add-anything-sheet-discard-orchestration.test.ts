@@ -246,7 +246,9 @@ console.log('\n=== 8g. Dismissal presentation — a dirty interactive swipe neve
 
 console.log('\n=== 9. A successful Save never warns (Class C) ===');
 {
-  const body = functionBody('function handleSaveSuccessClose()');
+  // RECONCILED (post-Wave-10 B9 closure): the handler now takes the
+  // optional ACTUAL saved type for the confirmation's identity.
+  const body = functionBody('function handleSaveSuccessClose(savedType?: AssetType | LiabilityType)');
   assert('9a. handleSaveSuccessClose is found', body.length > 0);
   assert('9b. handleSaveSuccessClose never calls Alert.alert, presentSwitchGuard, or confirmDiscardIfDirty — success always closes directly, never through a discard path', !/Alert\.alert|presentSwitchGuard|confirmDiscardIfDirty/.test(body));
 }

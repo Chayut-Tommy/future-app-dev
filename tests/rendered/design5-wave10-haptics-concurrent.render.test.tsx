@@ -101,8 +101,12 @@ describe('Two Saves sharing one visible queue — each action keeps its own hapt
     // Save A's toast is presenting; Save B's whole journey runs before the
     // queue drains.
     expect(screen.getByText(/staying debt free/)).toBeTruthy();
+    // The no-debt resolution compacted the checklist; open the full list
+    // (a plain in-place disclosure) to reach the savings task.
+    fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByTestId('checklist-cash', {}, { timeout: 20000 });
     fireEvent.press(screen.getByTestId('checklist-cash'));
-    const nameInput = await screen.findByPlaceholderText('e.g. Vanguard ETF', {}, { timeout: 20000 });
+    const nameInput = await screen.findByPlaceholderText('e.g. Emergency fund', {}, { timeout: 20000 });
     fireEvent.changeText(nameInput, 'Rainy day');
     await screen.findByDisplayValue('Rainy day');
     fireEvent.changeText(screen.getByPlaceholderText('$0'), '500');

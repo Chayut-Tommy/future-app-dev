@@ -24,6 +24,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppStateProvider, useAppState } from '../../src/state/AppStateContext';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
+// Post-Wave-10 B9 closure — the forms now consume the canonical
+// save-feedback boundary (useCelebration), so the harness carries the
+// provider the real app always mounts above the navigator.
+import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { GoalDetailSheet } from '../../src/components/goals/GoalDetailSheet';
 import { AddGoalModal } from '../../src/components/goals/AddGoalModal';
 import { Goal } from '../../src/types/models';
@@ -72,7 +76,9 @@ function wrap(ui: React.ReactElement) {
   return (
     <SafeAreaProvider initialMetrics={METRICS}>
       <AppStateProvider>
-        <ThemeProvider>{ui}</ThemeProvider>
+        <ThemeProvider>
+        <CelebrationProvider>{ui}</CelebrationProvider>
+        </ThemeProvider>
       </AppStateProvider>
     </SafeAreaProvider>
   );

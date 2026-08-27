@@ -1146,3 +1146,37 @@ TypeScript 0. Legacy **99 files / 7,848**. Rendered **60 suites / 421** (green t
 2. **Confirmation identity for the asset route** resolves from the workspace's entry preset via `routeDisplayName`; it must come to reflect the actual structured saved asset type when the customer switches type in-form before saving.
 3. Wave 9b/9c carry-overs stand as previously recorded.
 4. **Wave 11 not started.**
+
+# Change control — complete post-onboarding setup checklist closure (27 August 2026)
+
+**Baseline** `debfc20` (Wave 10 checkpoint). **Approved by the owner's iOS device testing**: "I have completed iOS device testing and approve the Phase B checklist implementation for checkpointing." Earlier entries above are left exactly as written.
+
+## The complete seven-task setup checklist redesign
+
+Every step renders as one contained task group from the PURE `composeSetupChecklist` composition (lib/setupChecklist — same structured predicates, same deterministic Continue resolver, no second data model). At zero progress the full seven-task list renders expanded; once any step resolves, the card defaults to a compact shape (header, honest progress, the featured Ocean "Continue setup / Next: …" CTA, the next two actionable task groups, one in-place "View all setup steps" disclosure — local presentation state, never persisted). Two deliberate geometries share one authority: every UNRESOLVED group is the identical primary row (base 76pt minimum — a title plus two support lines) plus its attached secondary footer (hairline divider, compact padding, 44pt, text-column aligned, sibling Pressable — never nested); every RESOLVED group is the identical row with its truthful chip (`Added` — the only green — `Later`, `Noted`, `Debt-free`). One shared list gap is the only exterior spacing; the quiet "Add when it applies" divider sits inside it after the first four groups. No gift/promo tile, no checklist-owned Settings control.
+
+## Truthful complete-versus-reviewed semantics
+
+Progress counts resolved steps; the wording is "X of 7 complete" ONLY while every resolved step is data-backed, switching to "X of 7 reviewed" the moment any explicit deferral/acknowledgement contributes — a deferred step is never called complete. Handled tasks are skipped by Continue yet remain reopenable; the existing setup-complete outcome and customer-owned retirement are unchanged.
+
+## The complete secondary-action matrix, Savings acknowledgement and stale-state prevention
+
+All seven unresolved tasks now carry attached footers with the owner-locked labels (income "I don't have income yet" → Noted; everyday "I'll add an account later" → Later; savings "I don't have savings yet" → Noted; asset "I don't have other assets yet" → Noted; bills "I'll add bills later" → Later; debt "I don't have any debt" → Debt-free; goal "I'll add a goal later" → Later), each writing only its explicit structured acknowledgement. The ONE authorised data-model extension is the optional `confirmedNoSavings` setup flag (backward-compatible, no balance, read by no financial calculation, existing persistence/reset handling, no migration). REAL DATA WINS permanently: the persist pipeline's pure `supersedeSetupAcknowledgements` step clears `confirmedNoSavings` when a Savings account exists and `confirmedNoDebt` when real debt (liability or card, balance > 0) exists — so deleting the last Savings item or the final debt returns the task to unresolved instead of resurrecting a stale answer.
+
+## Shared Debt-free authority
+
+`lib/noDebtConfirmation.confirmNoDebt` is the single no-debt writer — one persisted acknowledgement, one action-scoped save-feedback event, one accepted debt-free celebration — used verbatim by BOTH entry points (the Debt Coach sheet, retained for standalone entry, and the checklist footer). No duplicate toast, haptic or celebration is possible; "Add now" still opens the canonical Debt journey.
+
+## Actual saved-type confirmation and standalone Save-feedback closure
+
+The embedded wealth form reports its ACTUAL saved structured type through `onSaveSuccess(savedType)`, and the workspace's one shared save-success authority names the factual confirmation from it (enter from the Vehicle preset, switch to Property, save → "Property added" — never the preset). Standalone journeys (Wealth-list saves named from the actual type via `assetDisplayName`/`LIABILITY_DISPLAY_NAME` with truthful added/updated verbs, card saves ordered so the debt-reduced celebration claims the plain toast, QuickAdd transaction saves, standalone goal adds, and goal-edit commits whose in-sheet flash stays the single factual confirmation) all route through the same canonical `confirmSaveSuccess` boundary.
+
+## Exhaustive asset-placeholder correction
+
+The asset/account form's label placeholder resolves through ONE exhaustive `Record<AssetType, string>` authority (lib/assetPlaceholders), keyed by the structured selected type only and exhaustive by type-check — an unrelated type can never fall back to the Investment example. Owner-locked examples: Everyday "e.g. Main everyday account", Savings "e.g. Emergency fund", Investment "e.g. Vanguard ETF", Property "e.g. Richmond home", Vehicle "e.g. Toyota Corolla", Retirement "e.g. AustralianSuper", Cash "e.g. Wallet cash"; the remaining types carry their own contextually correct examples. Changing type in-form updates the placeholder and never touches entered text.
+
+## Verification at checkpoint
+
+TypeScript 0. Legacy **100 files / 7,927**. Rendered **63 suites / 431**, green twice at this gate. Checklist composition 79 (locked order, zero/single/mixed/deferral/no-debt/all-resolved matrix, honest progress copy, next-task resolution, contained-group anatomy, seven-footer matrix, supersede lifecycle, exhaustive placeholder mapping); checklist rendered journeys 10 across three suites plus the acknowledgement/supersede arc; Save-feedback/haptic, accessibility/focus, Today hierarchy, Add origin/transition, deletion/reset/persistence and financial regression suites all green. `git diff --check` clean; **no dependency, configuration or lockfile change**; Doctor 17/18 (the accepted pre-existing "2 packages out of date"); both exports exit 0. **No financial calculation change**: 68 of the 69 protected files are byte-identical; the single difference is `types/models.ts` — exactly the authorised optional `confirmedNoSavings` field.
+
+**iOS: device-approved by the owner.** **Android: export/compile evidence only — physical Android verification is formally deferred to a future Android certification phase (Nolie launches on iOS first).** **Wave 11 not started.**

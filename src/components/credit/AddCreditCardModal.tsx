@@ -9,7 +9,7 @@ import { TextField } from '../shared/fields/TextField';
 import { CurrencyField } from '../shared/fields/CurrencyField';
 import { DayOfMonthField } from '../shared/fields/DayOfMonthField';
 import { Button } from '../shared/Button';
-import { buildDebtReducedCelebration } from '../../lib/celebrations';
+import { buildDebtReducedCelebration, buildSaveConfirmation } from '../../lib/celebrations';
 import { brand } from '../../lib/brand';
 import { CARD_DETAILS_PANEL, PURCHASE_RATE_FIELD, purchaseRateBlankHelper } from '../../lib/creditCardPresentation';
 import { ASSUMED_CREDIT_CARD_APR } from '../../lib/calculations/creditHealth';
@@ -57,7 +57,7 @@ export const AddCreditCardModal = forwardRef<
   }
 >(function AddCreditCardModal({ visible, onClose, editCard, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose }, ref) {
   const { addCreditCard, updateCreditCard, deleteCreditCard } = useAppState();
-  const { celebrate } = useCelebration();
+  const { celebrate, confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography, semantic } = useTheme();
   const [issuer, setIssuer] = useState('');
   const [limit, setLimit] = useState('');
@@ -221,9 +221,16 @@ export const AddCreditCardModal = forwardRef<
     try {
       if (editCard) {
         updateCreditCard(editCard.id, payload);
+        // B9 closure — a standalone edit save is the customer's action: one
+        // softSuccess + one factual confirmation, fired BEFORE the
+        // debt-reduced celebration so that richer celebration claims (and
+        // replaces) the plain toast when it fires. Embedded saves keep the
+        // host boundary instead.
+        if (!embedded) confirmSaveSuccess(buildSaveConfirmation('Credit card', 'updated'));
         if (payload.currentBalance < editCard.currentBalance) celebrate(buildDebtReducedCelebration());
       } else {
         addCreditCard(payload);
+        if (!embedded) confirmSaveSuccess(buildSaveConfirmation('Credit card', 'added'));
       }
       // Successful Save never goes through requestClose/confirmDiscardIfDirty
       // — it must never produce a discard prompt. Embedded: hand control back

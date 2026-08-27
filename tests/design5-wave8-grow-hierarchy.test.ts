@@ -238,7 +238,11 @@ console.log('\n=== 5. Nolie Pick and opportunities are completely unwired (Class
     'highestInterestDebt',
     'debtToIncomeRatio',
     'Educational estimate only',
-    'buildDebtFreeCelebration',
+    // RECONCILED (checklist consistency correction): the celebration call
+    // moved behind the ONE shared confirmNoDebt authority
+    // (lib/noDebtConfirmation), which this sheet now invokes — the coaching
+    // content is the same, reached through the shared writer.
+    'confirmNoDebt',
     'AddWealthItemModal',
     'AddCreditCardModal',
   ]) {

@@ -13,6 +13,7 @@ import { CurrencyField } from '../shared/fields/CurrencyField';
 import { MOTION_MS, MOTION_TRAVEL_PT } from '../../theme/motion';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { hapticRigid, hapticWarning } from '../../lib/haptics';
+import { useCelebration } from '../../state/CelebrationContext';
 import { resolveGoalNameOnPurposeChange, resolveGoalPaceSummary, resolveGoalProgressState } from '../../lib/goalFormState';
 import { Button } from '../shared/Button';
 import { GoalProgressRing } from './GoalProgressRing';
@@ -126,6 +127,7 @@ export function GoalDetailSheet({
   onCreateAnother?: () => void;
 }) {
   const { data, updateGoal, deleteGoal } = useAppState();
+  const { confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography, minTouchTarget } = useTheme();
   // Wave 9b — the shipped role resolver; tokens.typography carries no fontFamily.
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
@@ -322,6 +324,11 @@ export function GoalDetailSheet({
   // persistence-layer change affecting the whole app, out of Stream A's
   // bounded scope.
   function flashSaved() {
+    // B9 closure — every flash marks one engine-confirmed committed edit;
+    // the in-sheet "Saved" flash stays the single factual confirmation and
+    // the action's one softSuccess dispatches through the same canonical
+    // boundary (no toast: a second surface would duplicate the flash).
+    confirmSaveSuccess();
     setShowSaved(true);
     if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current);
     savedTimeoutRef.current = setTimeout(() => setShowSaved(false), 1000);

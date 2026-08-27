@@ -111,7 +111,7 @@ describe('Premium celebration toast — queue, copy, fonts and cleanup', () => {
     // in the same persist.
     fireEvent.press(screen.getByTestId('checklist-cash'));
     // The savings preset skips straight to the asset form.
-    const nameInput = await screen.findByPlaceholderText('e.g. Vanguard ETF', {}, { timeout: 20000 });
+    const nameInput = await screen.findByPlaceholderText('e.g. Emergency fund', {}, { timeout: 20000 });
     fireEvent.changeText(nameInput, 'Rainy day');
     await screen.findByDisplayValue('Rainy day');
     fireEvent.changeText(screen.getByPlaceholderText('$0'), '500');

@@ -16,6 +16,7 @@ import {
   UserProfile,
 } from '../types/models';
 import { createEmptyAppData, loadAppData, saveAppData } from '../lib/storage';
+import { supersedeSetupAcknowledgements } from '../lib/setupChecklist';
 import { generateId } from '../lib/id';
 import { computeLuluScore } from '../lib/calculations/luluScore';
 import { resolveBillTransactionCategory } from '../lib/calculations/billCategory';
@@ -2927,7 +2928,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const persist = useCallback(
     (next: AppData): Promise<void> => {
       const withIncome = syncIncomeAggregate(next);
-      const withScoreHistory = upsertLuluScoreHistory(withIncome);
+      // Checklist consistency correction — recording real Savings/debt
+      // authoritatively clears the matching setup acknowledgement (pure,
+      // idempotent; see the function's own contract in lib/setupChecklist).
+      const withAcks = supersedeSetupAcknowledgements(withIncome);
+      const withScoreHistory = upsertLuluScoreHistory(withAcks);
       commitData(withScoreHistory);
       const write = saveAppData(withScoreHistory);
       trackWrite(write, 'ordinary');
@@ -3361,7 +3366,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         ],
       });
       const withIncome = syncIncomeAggregate(next);
-      const withScoreHistory = upsertLuluScoreHistory(withIncome);
+      const withAcks = supersedeSetupAcknowledgements(withIncome);
+      const withScoreHistory = upsertLuluScoreHistory(withAcks);
       const write = saveAppData(withScoreHistory);
       trackWrite(write, 'ordinary');
       await write;

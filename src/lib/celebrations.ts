@@ -35,7 +35,7 @@ export interface SaveConfirmationCopy {
  * workspace's routeDisplayName authority — structured action identity,
  * never free text), and the body states only what truthfully happened:
  * no fabricated amount, cadence or date, and no Undo promise. */
-export function buildSaveConfirmation(displayName: string, verb: 'added' | 'recorded' = 'added'): SaveConfirmationCopy {
+export function buildSaveConfirmation(displayName: string, verb: 'added' | 'recorded' | 'updated' = 'added'): SaveConfirmationCopy {
   return {
     icon: 'checkmark-circle',
     title: `${displayName} ${verb}`,

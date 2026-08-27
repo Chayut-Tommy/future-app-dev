@@ -185,23 +185,23 @@ describe('Separate actions, deletions and excluded interactions', () => {
     expect(counts()).toEqual({ light: 0, soft: 2, warning: 2, rigid: 1 });
   }, 60000);
 
-  test('a STANDALONE edit save is outside the canonical Add boundary: its milestone presents silently — pinned honestly', async () => {
-    // Editing the savings balance 500 -> 1500 from the Wealth list is a
-    // standalone edit journey that does not (yet) route through the Add
-    // workspace's shared save-success authority, so the action fires no
-    // haptic and its saved_1000 celebration presents silently. Pinned
-    // as-is: extending the action boundary to standalone edit journeys is
-    // an owner decision (Wave 11 candidate), not a silent expansion.
+  test('a STANDALONE edit save now routes through the SAME canonical boundary: one haptic, and its milestone claims the factual toast', async () => {
+    // B9 carry-over closure — editing the savings balance 500 -> 1500 from
+    // the Wealth list is the same customer action as any Save: exactly one
+    // softSuccess through confirmSaveSuccess, and the saved_1000 milestone
+    // it unlocks claims the plain "Savings updated" confirmation (no
+    // duplicate toast, no renderer haptic).
     fireEvent.press(screen.getByText('Rainy day'));
     const balance = await screen.findByDisplayValue('500', {}, { timeout: 20000 });
     fireEvent.changeText(balance, '1500');
     await screen.findByDisplayValue('1500');
     fireEvent.press(screen.getByText('Save'));
     await screen.findByText('Saved First $1,000', {}, { timeout: 20000 });
-    expect(counts()).toEqual({ light: 0, soft: 2, warning: 2, rigid: 1 });
+    expect(screen.queryByText('Savings updated')).toBeNull();
+    expect(counts()).toEqual({ light: 0, soft: 3, warning: 2, rigid: 1 });
     fireEvent.press(screen.getByTestId('celebration-toast-dismiss'));
     await waitFor(() => expect(screen.queryByTestId('celebration-toast')).toBeNull(), { timeout: 20000 });
-    expect(counts()).toEqual({ light: 0, soft: 2, warning: 2, rigid: 1 });
+    expect(counts()).toEqual({ light: 0, soft: 3, warning: 2, rigid: 1 });
   }, 60000);
 
   test('excluded interactions — tab taps and plain navigation — dispatch nothing', async () => {
@@ -209,6 +209,6 @@ describe('Separate actions, deletions and excluded interactions', () => {
     await screen.findByLabelText(/^Wealth, tab,/, {}, { timeout: 20000 });
     fireEvent.press(screen.getByLabelText(/^Wealth, tab,/));
     fireEvent.press(screen.getByLabelText(/^Today, tab,/));
-    expect(counts()).toEqual({ light: 0, soft: 2, warning: 2, rigid: 1 });
+    expect(counts()).toEqual({ light: 0, soft: 3, warning: 2, rigid: 1 });
   }, 60000);
 });

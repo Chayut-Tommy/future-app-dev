@@ -257,10 +257,14 @@ console.log('\n=== 6. Class A — the Continue setup resolver is deterministic, 
   // A deferred goal is DONE — it can never be auto-selected again.
   assert('6h. a deferred goal never becomes the next CTA', resolveNextSetupStep(steps(['income', 'everyday', 'cash', 'assets', 'bills', 'debt', 'goal'])) === null);
   assert('6i. the resolver is deterministic', JSON.stringify(resolveNextSetupStep(steps(['income']))) === JSON.stringify(resolveNextSetupStep(steps(['income']))));
-  assert('6j. it walks structured keys, never labels', !/label|title|parse/i.test(read('src/lib/setupChecklist.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')));
+  // RECONCILED (post-Wave-10 checklist UX closure): setupChecklist now
+  // also carries the pure presentation composition (whose progressLabel is
+  // a computed STRING, not a matching input), so the never-matches-labels
+  // rule is pinned on the RESOLVER itself, unchanged.
+  assert('6j. the resolver walks structured keys, never labels', /for \(const key of SETUP_STEP_PRIORITY\)/.test(read('src/lib/setupChecklist.ts')) && !/label|title|parse/i.test(read('src/lib/setupChecklist.ts').split('export function resolveNextSetupStep')[1].split('}')[0]));
 
   // The card wires it as THE primary action, and rows carry factual value.
-  assert('6k. one full-width primary Continue setup', /label="Continue setup" onPress=\{nextSetupStep\.onAdd\}/.test(CARD));
+  assert('6k. one featured Continue setup CTA still resolves through nextSetupStep.onAdd', /Continue setup/.test(CARD) && /nextSetupStep\.onAdd\(\);/.test(CARD) && (CARD.match(/Continue setup/g) ?? []).length >= 1);
   for (const line of [
     'Places expected pay in your timeline.',
     'Gives Available until payday a balance to work from.',
@@ -272,9 +276,9 @@ console.log('\n=== 6. Class A — the Continue setup resolver is deterministic, 
   ]) {
     assert(`6l. row value line: "${line}"`, CARD.includes(line));
   }
-  assert('6m. progress counts what is COMPLETE, never "added"', /of \$\{steps\.length\} complete/.test(CARD) && !/of \$\{steps\.length\} added/.test(CARD));
-  assert('6n. deferred rows read Later with a time glyph, never a check', /'Later'/.test(CARD) && /s\.deferred \? 'time-outline' : 'checkmark'/.test(CARD));
-  assert('6o. completion is a calm state the CUSTOMER closes — no timer, no auto-dismiss', /Setup complete/.test(CARD) && !/setTimeout|setInterval/.test(CARD) && !/useEffect/.test(CARD));
+  assert('6m. progress is honest: complete only when data-backed, reviewed when acknowledgements count, never "added"', /reviewed/.test(read('src/lib/setupChecklist.ts')) && /'complete'/.test(read('src/lib/setupChecklist.ts')) && !/of \$\{steps\.length\} added/.test(CARD));
+  assert('6n. deferred rows chip Later with a time glyph, never a check', /'Later'/.test(CARD) && /s\.acknowledged \? 'time-outline' : s\.icon/.test(CARD));
+  assert('6o. completion is a calm state the CUSTOMER closes — no timer, no auto-dismiss (the one effect is focus restoration)', /Setup complete/.test(CARD) && !/setTimeout|setInterval/.test(CARD) && /focusElement\(originRef\.current\)/.test(CARD) && (CARD.match(/useEffect\(/g) ?? []).length === 1);
   assert('6p. the direct single-workspace transition is preserved', /visible=\{workspaceKind !== null\}/.test(CARD) && /initialKind=\{workspaceKind \?\? undefined\}/.test(CARD) && (CARD.match(/<AddAnythingSheet/g) ?? []).length === 1 && !/OptionsSheet/.test(CARD));
 }
 
@@ -290,7 +294,11 @@ console.log('\n=== 7. Correction D — the debt chooser joins the design system 
   assert('7h. the four rows are at least 56pt', /optionTile: \{[^}]*minHeight: 56/.test(DEBT_CODE));
   assert('7i. all four destinations survive', ['credit_card', 'mortgage', 'car_loan', 'personal_loan'].every((t) => DEBT_CODE.includes(`'${t}'`)));
   assert('7j. the no-debt answer has no red X and no danger tint', DEBT_CODE.includes("I don't have any debt") && !/noDebtText[^}]*danger/.test(DEBT_CODE) && /noDebtText: \{ \.\.\.typeStyle\('body', locale\), color: colors\.accentStrong/.test(DEBT_CODE));
-  assert('7k. the no-debt flow still writes the same flag and celebrates', /updateUser\(\{ confirmedNoDebt: true \}\);/.test(DEBT_CODE) && /buildDebtFreeCelebration\(\)/.test(DEBT_CODE));
+  // RECONCILED (checklist consistency correction): the customer-facing
+  // footer labels are the owner-locked seven-footer matrix; the structured
+  // writers are unchanged, and Debt-free routes through the ONE shared
+  // lib/noDebtConfirmation authority used by both entry points.
+  assert('7k. the no-debt flow still writes the same flag and celebrates — through the ONE shared authority', /confirmNoDebt\(\{ updateUser, confirmSaveSuccess, celebrate \}\);/.test(DEBT_CODE) && /updateUser\(\{ confirmedNoDebt: true \}\);/.test(read('src/lib/noDebtConfirmation.ts')) && /buildDebtFreeCelebration\(\)/.test(read('src/lib/noDebtConfirmation.ts')));
   assert('7l. card/liability destinations are unchanged', /setAddCardVisible\(true\)/.test(DEBT_CODE) && /setAddLiabilityType\(type\)/.test(DEBT_CODE) && /presetLiabilityType=\{addLiabilityType \?\? undefined\}/.test(DEBT_CODE));
   assert('7m. the stable Cards route and its guard survive', /handleViewCreditCards/.test(DEBT_CODE) && /navigatingRef/.test(DEBT_CODE));
   assert('7n. the overview branch migrated too — tabular amounts included', /debtSub: \{ \.\.\.typeStyle\('meta', locale\)[^}]*tabular-nums/.test(DEBT_CODE));

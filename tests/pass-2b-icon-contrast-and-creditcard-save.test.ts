@@ -123,7 +123,11 @@ console.log('\n=== Section 4: existing card identity preserved — editing never
 {
   const SRC = readFileSync('src/components/credit/AddCreditCardModal.tsx', 'utf8');
   assert('the editCard branch calls updateCreditCard(editCard.id, payload) — the existing card\'s own id, never a freshly generated one', /if \(editCard\) \{\s*updateCreditCard\(editCard\.id, payload\);/.test(SRC));
-  assert('addCreditCard is only reachable in the else branch (no editCard) — an edit session can never fall through to creating a new card', /\} else \{\s*addCreditCard\(payload\);\s*\}/.test(SRC));
+  // RECONCILED (post-Wave-10 B9 closure): the successful-Save path now
+  // also routes through the canonical confirmSaveSuccess boundary (and the
+  // wealth form reports its ACTUAL saved type), so the pinned shape gained
+  // that call — the close/branch contract itself is unchanged.
+  assert('addCreditCard is only reachable in the else branch (no editCard) — an edit session can never fall through to creating a new card', /\} else \{\s*addCreditCard\(payload\);\s*if \(!embedded\) confirmSaveSuccess\(buildSaveConfirmation\('Credit card', 'added'\)\);\s*\}/.test(SRC));
   assert('canSave requires a non-empty issuer, a valid credit limit, and a due day in 1-31 — the exact same gate as before this correction, untouched', /const canSave = issuer\.trim\(\)\.length > 0 && !isNaN\(creditLimit\) && !isNaN\(due\) && due >= 1 && due <= 31;/.test(SRC));
 }
 

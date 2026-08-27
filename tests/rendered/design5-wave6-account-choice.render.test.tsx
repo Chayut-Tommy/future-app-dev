@@ -11,6 +11,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { AppStateProvider, useAppState } from '../../src/state/AppStateContext';
 import { ThemeProvider } from '../../src/theme/ThemeContext';
+// Post-Wave-10 B9 closure — the forms now consume the canonical
+// save-feedback boundary (useCelebration), so the harness carries the
+// provider the real app always mounts above the navigator.
+import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { TodayBriefingCard } from '../../src/components/today/TodayBriefingCard';
 import { ReminderDetailSheet } from '../../src/components/today/ReminderDetailSheet';
 import { computeRankedReminder } from '../../src/lib/calculations/reminders';
@@ -91,8 +95,10 @@ function Harness({ today }: { today: Date }) {
       <NavigationContainer>
         <AppStateProvider>
           <ThemeProvider>
+        <CelebrationProvider>
             <TodayBriefingHarness today={today} />
-          </ThemeProvider>
+          </CelebrationProvider>
+        </ThemeProvider>
         </AppStateProvider>
       </NavigationContainer>
     </SafeAreaProvider>

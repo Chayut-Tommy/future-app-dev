@@ -214,7 +214,7 @@ console.log('\n=== 5. Stale-completion protection — every transition completio
   // generation bump. The original contract this pin protects (bumps the
   // SAME generationRef, clears pendingFocusRef, closes once) is unchanged
   // and still pinned byte-for-byte at the tail.
-  assert('5d. handleSaveSuccessClose (every destination\'s successful-Save path, which bypasses handleRequestClose entirely) independently bumps the SAME generationRef and clears pendingFocusRef — and now fires the save\'s confirmSaveSuccess first', /function handleSaveSuccessClose\(\) \{[\s\S]{0,1200}?confirmSaveSuccess\([\s\S]{0,400}?\);\s*\n\s*generationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
+  assert('5d. handleSaveSuccessClose (every destination\'s successful-Save path, which bypasses handleRequestClose entirely) independently bumps the SAME generationRef and clears pendingFocusRef — and now fires the save\'s confirmSaveSuccess first, named from the ACTUAL saved type when the form reports one', /function handleSaveSuccessClose\(savedType\?: AssetType \| LiabilityType\) \{[\s\S]{0,1400}?confirmSaveSuccess\([\s\S]{0,400}?\);\s*\n\s*generationRef\.current\+\+;\s*\n\s*pendingFocusRef\.current = null;\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_ANYTHING_SRC));
 }
 
 console.log('\n=== 6. Reduced Motion — every transition replaces the animation with an immediate content swap, never skipped (Class C) ===');

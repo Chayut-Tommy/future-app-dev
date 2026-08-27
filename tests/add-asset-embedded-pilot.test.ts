@@ -118,7 +118,11 @@ console.log('\n=== 3. AddWealthItemModal.tsx: embedded mode cannot bypass the ca
 console.log('\n=== 4. AddWealthItemModal.tsx: embedded only ever skips the KeyboardSheet wrapper, never the save/validation logic (Class C) ===');
 {
   assert('4a. the embedded branch returns the same `content` every standalone render also uses — not a second, separate render path', /if \(embedded\) \{\s*\n\s*return content;\s*\n\s*\}/.test(ADD_WEALTH_SRC));
-  assert('4b. performSave still branches embedded vs standalone only for HOW it closes (onSaveSuccess vs onClose), never for whether addAsset/updateAsset is called', /if \(embedded\) \{\s*\n\s*onSaveSuccess\?\.\(\);\s*\n\s*\} else \{\s*\n\s*onClose\(\);\s*\n\s*\}/.test(ADD_WEALTH_SRC));
+  // RECONCILED (post-Wave-10 B9 closure): the successful-Save path now
+  // also routes through the canonical confirmSaveSuccess boundary (and the
+  // wealth form reports its ACTUAL saved type), so the pinned shape gained
+  // that call — the close/branch contract itself is unchanged.
+  assert('4b. performSave still branches embedded vs standalone only for HOW it closes and confirms, never for whether addAsset/updateAsset is called', /if \(embedded\) \{\s*\n\s*onSaveSuccess\?\.\(kind === 'asset' \? assetType : liabilityType\);\s*\n\s*\} else \{[\s\S]{0,900}?onClose\(\);\s*\n\s*\}/.test(ADD_WEALTH_SRC));
   assert(
     '4c. requestEmbeddedClose never bypasses the discard-confirmation gate for any reason except the never-discards "back" — nested-handoff correction: \'back\' may now first take an internal step back to this form\'s own picker (never a discard, just internal navigation) before it forwards to onConfirmedClose, but the confirmDiscardIfDirty tail for every OTHER reason is untouched',
     /function requestEmbeddedClose\(reason: AddWealthItemCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{[\s\S]*?onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\)\);/.test(ADD_WEALTH_SRC)

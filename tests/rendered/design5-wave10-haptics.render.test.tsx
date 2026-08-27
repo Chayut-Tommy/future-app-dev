@@ -93,9 +93,9 @@ describe('One action, one haptic — through the real queue', () => {
 
   test('opening a form and cancelling dispatches nothing', async () => {
     fireEvent.press(screen.getByTestId('checklist-cash'));
-    await screen.findByPlaceholderText('e.g. Vanguard ETF', {}, { timeout: 20000 });
+    await screen.findByPlaceholderText('e.g. Emergency fund', {}, { timeout: 20000 });
     fireEvent.press(screen.getByText('Cancel'));
-    await waitFor(() => expect(screen.queryByPlaceholderText('e.g. Vanguard ETF')).toBeNull(), { timeout: 20000 });
+    await waitFor(() => expect(screen.queryByPlaceholderText('e.g. Emergency fund')).toBeNull(), { timeout: 20000 });
     expect(counts()).toEqual({ light: 0, soft: 0, warning: 0, rigid: 0 });
   }, 60000);
 
@@ -103,7 +103,7 @@ describe('One action, one haptic — through the real queue', () => {
     // The savings save unlocks added_first_asset AND added_savings in the
     // same persist — the exact double-haptic defect scenario.
     fireEvent.press(screen.getByTestId('checklist-cash'));
-    const nameInput = await screen.findByPlaceholderText('e.g. Vanguard ETF', {}, { timeout: 20000 });
+    const nameInput = await screen.findByPlaceholderText('e.g. Emergency fund', {}, { timeout: 20000 });
     fireEvent.changeText(nameInput, 'Rainy day');
     await screen.findByDisplayValue('Rainy day');
     fireEvent.changeText(screen.getByPlaceholderText('$0'), '500');

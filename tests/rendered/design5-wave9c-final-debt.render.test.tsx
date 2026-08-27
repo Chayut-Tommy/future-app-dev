@@ -158,6 +158,14 @@ describe('Wave 9c final — debt chooser (English)', () => {
     expect(s.liabilities).toHaveLength(0);
     expect(s.creditCards).toHaveLength(0);
     // The checklist reflects the truthful answered state.
-    await screen.findByText('Debt-free — nice!');
+    // RECONCILED (post-Wave-10 checklist UX closure): the truthful
+    // debt-free state is now the row's chip (decorative, a11y-hidden
+    // inside the one row button); the support line stays the constant
+    // factual purpose copy. The resolution compacts the card, so the row
+    // sits behind the one View all disclosure.
+    await screen.findByText(/of 7 reviewed/, {}, { timeout: 20000 });
+    if (screen.queryByTestId('checklist-view-all')) fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByTestId('checklist-debt', {}, { timeout: 20000 });
+    expect(screen.getByText('Debt-free', { includeHiddenElements: true })).toBeTruthy();
   });
 });

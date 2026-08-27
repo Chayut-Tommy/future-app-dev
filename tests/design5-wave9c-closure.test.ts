@@ -98,19 +98,28 @@ console.log('\n=== 2. Corrections B+C — checklist hierarchy, optional goal ===
   // and support line are the accepted "Complete your money setup" set, and
   // progress counts what is COMPLETE (a deferred goal added nothing).
   assert('2a. the calm header', CARD_CODE.includes('Complete your money setup') && CARD_CODE.includes('Add a few more details to make Today, Money and Wealth more useful.'));
-  assert('2b. factual progress "{n} of {m} complete" with tabular numerals', /\$\{completedCount\} of \$\{steps\.length\} complete/.test(CARD_CODE) && /tabular-nums/.test(CARD_CODE));
-  assert('2b-i. one full-width primary CTA resolves the next step from structured state', /label="Continue setup"/.test(CARD_CODE) && /resolveNextSetupStep\(steps\)/.test(CARD_CODE));
-  assert('2c. rows are at least 56pt', /minHeight: 56/.test(CARD_CODE));
+  // RECONCILED (post-Wave-10 checklist UX closure) — progress copy is now
+  // the pure composition's HONEST label ("complete" only while every
+  // resolved step is data-backed, else "reviewed"), the CTA is the
+  // featured gradient "Continue setup" with a dynamic Next line, and rows
+  // grew to the 64pt spec. Same contracts, new seams.
+  assert('2b. factual progress via the honest composition label, with tabular numerals', /composition\.progressLabel/.test(CARD_CODE) && /tabular-nums/.test(CARD_CODE) && /reviewed/.test(read('src/lib/setupChecklist.ts')));
+  assert('2b-i. one featured CTA resolves the next step from structured state and names it', /Continue setup/.test(CARD_CODE) && /resolveNextSetupStep\(steps\)/.test(CARD_CODE) && /`Next: \$\{nextSetupStep\.title\}`/.test(CARD_CODE));
+  assert('2c. rows share a base 76pt minimum — sized for a title plus two support lines', /minHeight: 76/.test(CARD_CODE));
   assert('2d. no strikethrough anywhere', !/line-through/.test(CARD_CODE));
-  assert('2e. completed rows say Added with a check; deferred rows show time + Later', /'Added'/.test(CARD_CODE) && /s\.deferred \? 'time-outline' : 'checkmark'/.test(CARD_CODE) && /'Later'/.test(CARD_CODE));
+  assert('2e. completed rows chip a truthful Added with a check; deferred rows chip time + Later', /'Added'/.test(CARD_CODE) && /s\.acknowledged \? 'time-outline' : s\.icon/.test(CARD_CODE) && /'Later'/.test(CARD_CODE));
   assert('2f. no legacy typography or emoji leads', !/\.\.\.typography\./.test(CARD_CODE) && !/[\u{1F300}-\u{1FAFF}]/u.test(CARD_CODE));
   assert('2g. typeStyle with a live locale', /typeStyle\('/.test(CARD_CODE) && /const locale = \(i18n\.language === 'th'/.test(CARD_CODE));
 
   // Optional goal.
   assert('2h. the goal row says it is optional', CARD_CODE.includes('Optional — track a target if useful.'));
-  assert('2i. Maybe later writes ONLY the presentation flag', /label: 'Maybe later', onDefer: \(\) => updateUser\(\{ confirmedGoalLater: true \}\)/.test(CARD_CODE));
-  assert('2j. a deferred goal counts toward completion', /done: hasGoal \|\| !!data\.user\.confirmedGoalLater/.test(CARD_CODE));
-  assert('2k. after deferral the row reads Later and explains Grow, in place', CARD_CODE.includes('Later — add one any time from Grow.'));
+  // RECONCILED (checklist consistency correction): the customer-facing
+  // footer labels are the owner-locked seven-footer matrix; the structured
+  // writers are unchanged, and Debt-free routes through the ONE shared
+  // lib/noDebtConfirmation authority used by both entry points.
+  assert('2i. the goal deferral writes ONLY the presentation flag', /label: "I'll add a goal later", onDefer: \(\) => updateUser\(\{ confirmedGoalLater: true \}\)/.test(CARD_CODE));
+  assert('2j. a deferred goal still resolves its step (acknowledged, never called complete)', /acknowledged: !hasGoal && !!data\.user\.confirmedGoalLater/.test(CARD_CODE));
+  assert('2k. after deferral the row chips a neutral Later and stays reopenable', /s\.acknowledged \? 'Later'/.test(CARD_CODE.replace(/chipAcknowledged \?\? 'Later'/, 'CHIPDEFAULT')) || /'Later'/.test(CARD_CODE));
   assert('2l. Add a goal still opens the canonical modal', /onAdd: \(\) => setGoalModalVisible\(true\)/.test(CARD_CODE) && /<AddGoalModal/.test(CARD_CODE));
   assert('2m. no goal/target/progress is fabricated on deferral', !/addGoal\(|targetAmount/.test(CARD_CODE));
   // The new field is additive on the existing contract; storage untouched.

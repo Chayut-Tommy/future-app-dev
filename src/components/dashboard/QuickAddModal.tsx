@@ -13,6 +13,8 @@ import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { hapticRigid, hapticWarning } from '../../lib/haptics';
+import { buildSaveConfirmation } from '../../lib/celebrations';
+import { useCelebration } from '../../state/CelebrationContext';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { categoryIcon, accountSourceIcon } from '../../lib/addIcons';
 import { brand } from '../../lib/brand';
@@ -245,6 +247,7 @@ export const QuickAddModal = forwardRef<
     reverseLoanRepayment,
     reverseRecurringOccurrence,
   } = useAppState();
+  const { confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography } = useTheme();
   // Wave 4 device correction — derived SYNCHRONOUSLY from the canonical
   // route preset, not repaired by an effect after the workspace opens. An
@@ -789,9 +792,16 @@ export const QuickAddModal = forwardRef<
       addTransaction(payload);
     }
     // Embedded: hand control back to the host, which closes the whole Add
-    // Anything journey exactly once. Standalone: unchanged direct onClose().
+    // Anything journey exactly once. Standalone: the same customer action
+    // earns the same canonical feedback (B9 closure) — one softSuccess and
+    // one factual confirmation named from the structured transaction type.
     if (embedded) onSaveSuccess?.();
-    else onClose();
+    else {
+      confirmSaveSuccess(
+        buildSaveConfirmation(type === 'expense' ? 'Expense' : 'Income', editTransaction ? 'updated' : 'recorded')
+      );
+      onClose();
+    }
   }
 
   // Wave 10 closure — the rigid haptic belongs to the CONFIRMED deletion

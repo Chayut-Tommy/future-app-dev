@@ -1091,7 +1091,7 @@ export function AddAnythingSheet({
   // must independently invalidate any still-pending focus work and any
   // in-flight transition generation, exactly as backToChooser/the sheet's
   // own onClose already do for every other close path.
-  function handleSaveSuccessClose() {
+  function handleSaveSuccessClose(savedType?: AssetType | LiabilityType) {
     // Wave 10 closure — the ONE shared successful-Save authority for every
     // Add task (all nine embedded destinations wire this exact callback,
     // covering the full 14-kind catalogue plus the direct-entry Vehicle
@@ -1099,10 +1099,14 @@ export function AddAnythingSheet({
     // factual confirmation, whose title derives from the destination's own
     // canonical display name; a richer celebration unlocked by this same
     // save claims and replaces that toast (see CelebrationContext).
+    // B9 identity closure — when the form reports the ACTUAL saved
+    // structured type (asset/liability), the confirmation names it; a
+    // customer who entered from the Vehicle preset but saved a Property
+    // reads "Property added", never "Vehicle added".
     const savedRoute = transition.current;
     confirmSaveSuccess(
       buildSaveConfirmation(
-        routeDisplayName(savedRoute),
+        routeDisplayName(savedRoute, savedType),
         savedRoute === 'transfer' || savedRoute === 'incomeReceived' ? 'recorded' : 'added'
       )
     );

@@ -106,7 +106,11 @@ console.log('\n=== 3. Expense / Income received (QuickAddModal.tsx) — embedded
   assert('3b-i. canSave still requires a chosen category, so Save is unreachable without one', /const canSave =[\s\S]*?!!categoryId &&/.test(QUICK_ADD_SRC));
   assert('3b-ii. handleSave still refuses without a categoryId', /if \(!canSave \|\| !categoryId\) return;/.test(QUICK_ADD_SRC));
   assert('3b-iii. the category is chosen in-form, never on a page of its own', /<InlineSelect\s+label="Category"/.test(QUICK_ADD_SRC));
-  assert('3c. handleSave success path branches embedded vs standalone', /if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/.test(QUICK_ADD_SRC));
+  // RECONCILED (post-Wave-10 B9 closure): the successful-Save path now
+  // also routes through the canonical confirmSaveSuccess boundary (and the
+  // wealth form reports its ACTUAL saved type), so the pinned shape gained
+  // that call — the close/branch contract itself is unchanged.
+  assert('3c. handleSave success path branches embedded vs standalone', /if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else \{\s*\n\s*confirmSaveSuccess\([\s\S]{0,240}?onClose\(\);\s*\n\s*\}/.test(QUICK_ADD_SRC));
   assert('3d. handleRequestClose never discards on \'back\'', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}/.test(QUICK_ADD_SRC));
   // SUPERSEDED for the same reason: with the category page removed there is
   // one fewer render branch to check. The invariant that MATTERS — an

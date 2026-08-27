@@ -149,20 +149,36 @@ describe('Wave 9c closure — Today checklist (English)', () => {
     const s = await stored();
     expect(s.goals).toHaveLength(0);
     expect(s.user.moneyGoal).toBeUndefined();
-    // The row now reads as DEFERRED — "Later", never "Added" — with the
-    // one-time Grow explanation, and progress counts it complete.
-    await screen.findByText('Later — add one any time from Grow.');
-    await screen.findByText('1 of 7 complete');
+    // RECONCILED (post-Wave-10 checklist UX closure): the deferred state is
+    // now the row's neutral "Later" chip (decorative, a11y-hidden inside
+    // the one row button) with the constant factual purpose line; progress
+    // honestly reads "reviewed" because an acknowledgement is counted —
+    // a deferred step is never called complete.
+    await screen.findByText('1 of 7 reviewed');
+    expect(screen.queryByText('1 of 7 complete')).toBeNull();
+    // The resolution compacted the card; the deferred row (with its
+    // neutral Later chip) sits behind the one View all disclosure.
+    fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByTestId('checklist-goal', {}, { timeout: 20000 });
+    expect(screen.getByText('Later', { includeHiddenElements: true })).toBeTruthy();
   });
 
   test('an Add row opens the ONE workspace directly — no teaser sheet in between', async () => {
+    // RECONCILED (post-Wave-10 checklist UX closure): with progress the
+    // card is compact by default; the bills row is reached through the one
+    // in-place View all disclosure (already expanded if a previous test
+    // opened it — the local presentation state persists for the session).
+    if (screen.queryByTestId('checklist-view-all')) fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByTestId('checklist-bills', {}, { timeout: 20000 });
     fireEvent.press(screen.getByTestId('checklist-bills'));
     // The canonical AddAnythingSheet workspace's bill destination mounts;
-    // no OptionsSheet teaser copy ever appears.
-    await screen.findByText(/Add bill|Add a bill|bill/i, {}, { timeout: 20000 });
+    // no OptionsSheet teaser copy ever appears. (Probed by the bill form's
+    // own unique placeholder — the old loose /bill/i regex now also
+    // matches the task group's "I'll add bills later" footer.)
+    await screen.findByPlaceholderText('e.g. Netflix', {}, { timeout: 20000 });
     expect(screen.queryByText('Add essential bills', { exact: false })).toBeTruthy();
     expect(screen.queryByText("I'll add these later — no problem")).toBeNull();
-  });
+  }, 60000);
 });
 
 describe('Wave 9c closure — Wealth empty state', () => {

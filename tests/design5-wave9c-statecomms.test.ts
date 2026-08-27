@@ -132,7 +132,11 @@ console.log('\n=== 3. ONE shared presentation, consumed by both surfaces ===');
 console.log('\n=== 4. The goal journey around the milestone is untouched ===');
 {
   const CARD = code(read('src/components/today/MoneyPictureChecklistCard.tsx'));
-  assert('4a. Maybe later still writes ONLY the presentation flag', /label: 'Maybe later', onDefer: \(\) => updateUser\(\{ confirmedGoalLater: true \}\)/.test(CARD));
+  // RECONCILED (checklist consistency correction): the customer-facing
+  // footer labels are the owner-locked seven-footer matrix; the structured
+  // writers are unchanged, and Debt-free routes through the ONE shared
+  // lib/noDebtConfirmation authority used by both entry points.
+  assert('4a. the goal deferral still writes ONLY the presentation flag', /label: "I'll add a goal later", onDefer: \(\) => updateUser\(\{ confirmedGoalLater: true \}\)/.test(CARD));
   assert('4b. the goal step stays optional and last', /'Optional — track a target if useful\.'/.test(CARD));
   assert('4c. Settings\' goals row still reads the real collection with its calm empty state', /'No active goals yet'/.test(code(read('src/screens/settings/SettingsScreen.tsx'))));
   assert('4d. goal creation still routes through the canonical AddGoalModal', /AddGoalModal visible=\{goalModalVisible\}/.test(CARD));

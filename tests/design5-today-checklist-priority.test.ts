@@ -76,8 +76,13 @@ console.log('=== 1. Fresh / incomplete setup: the checklist is FIRST and rendere
 console.log('\n=== 2. Partial setup: progress and next-missing-step logic untouched ===');
 {
   assert('2a. steps are still derived in the card, not in Today', /const steps/.test(CARD) && !/const steps/.test(TODAY));
-  assert('2b. completedCount is still derived from the steps', /completedCount = steps\.filter\(\(s\) => s\.done\)\.length/.test(CARD));
-  assert('2c. progress is still completedCount / steps.length', /progress=\{completedCount \/ steps\.length\}/.test(CARD));
+  // RECONCILED (post-Wave-10 checklist UX closure) — the card now renders
+  // from the PURE composeSetupChecklist composition (lib/setupChecklist):
+  // same structured predicates, same resolver, honest reviewed/complete
+  // progress copy, compact-after-progress shape. The pins below track the
+  // same contracts at their new seams.
+  assert('2b. progress is still derived from the structured steps (via the pure composition)', /composeSetupChecklist\(/.test(CARD) && /completed: s\.completed, acknowledged: s\.acknowledged/.test(CARD));
+  assert('2c. progress is still the composition ratio of resolved steps', /progress=\{composition\.progressRatio\}/.test(CARD));
   assert('2d. Today passes no props that could override progress', /<MoneyPictureChecklistCard \/>/.test(TODAY));
 }
 
@@ -96,7 +101,7 @@ console.log('\n=== 3. Completed setup: the checklist disappears by its own rule 
   assert('3a. a dismissed card is gone for good', /if \(data\.user\.moneyPictureChecklistDismissed\) return null;/.test(CARD));
   assert('3a-i. completion renders the calm state, never a timer', /Setup complete/.test(CARD) && !/setTimeout/.test(CARD));
   assert('3a-ii. the customer closes it themselves', /checklist-complete-close/.test(CARD) && /checklist-complete-done/.test(CARD));
-  assert('3b. allDone still means every step done', /allDone = completedCount === steps\.length/.test(CARD));
+  assert('3b. all-done still means every step resolved (composition.allResolved)', /if \(composition\.allResolved\) \{/.test(CARD));
   // Because the guard lives in the card, a completed user's Today is
   // identical to before: the card returns null wherever it is placed.
   assert('3c. Today does not gate the card itself — no new conditional wrapper', !/\{[^}]*\?\s*<MoneyPictureChecklistCard/.test(TODAY));
@@ -140,7 +145,7 @@ console.log('\n=== 5. Row actions still open their existing Add destinations ===
   // at the canonical 'everyday' kind. Same single-workspace architecture.
   assert('5-b. rows enter the workspace at their own destination', /setWorkspaceKind\('income'\)/.test(CARD) && /setWorkspaceKind\('bill'\)/.test(CARD) && /setWorkspaceKind\('vehicle'\)/.test(CARD) && /setWorkspaceKind\('savings'\)/.test(CARD) && /setWorkspaceKind\('everyday'\)/.test(CARD));
   assert('5-c. exactly one workspace host with one close path', (CARD.match(/<AddAnythingSheet/g) || []).length === 1 && /onClose=\{\(\) => setWorkspaceKind\(null\)\}/.test(CARD));
-  assert('5-i. the goal row resolves from the REAL goal collection', /const hasGoal = data\.goals\.length > 0;/.test(CARD) && /done: hasGoal \|\| !!data\.user\.confirmedGoalLater/.test(CARD));
+  assert('5-i. the goal row resolves from the REAL goal collection', /const hasGoal = data\.goals\.length > 0;/.test(CARD) && /completed: hasGoal,\s*\n\s*acknowledged: !hasGoal && !!data\.user\.confirmedGoalLater/.test(CARD));
   assert('5-ii. never the retired profile enum', !/user\.moneyGoal/.test(CARD.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')));
   // RECONCILED with the workspace routing above: the savings/investment
   // destinations are now the workspace's own canonical kinds rather than
@@ -181,8 +186,8 @@ console.log('\n=== 8. Screen-reader order follows visual order ===');
   // wording is now "{n} of {m} complete" (a deferred optional goal is
   // complete without anything being ADDED, so "added" was untruthful).
   // The label itself — same interpolation, same live counts — survives.
-  assert('8c. checklist progress still exposes an accessibility label', /accessibilityLabel=\{`\$\{completedCount\} of \$\{steps\.length\} complete`\}/.test(CARD));
-  assert('8d. checklist rows still expose their own labels', /accessibilityLabel=\{`\$\{s\.title\}\. \$\{s\.status\}`\}/.test(CARD));
+  assert('8c. checklist progress still exposes an accessibility label (the honest composition copy)', /accessibilityLabel=\{composition\.progressLabel\}/.test(CARD));
+  assert('8d. checklist rows still expose their own combined labels (task + state + purpose)', /accessibilityLabel=\{`\$\{s\.title\}\. \$\{s\.chip\}\. \$\{s\.status\}`\}/.test(CARD));
 }
 
 console.log('\n=== 9. Position-only: no calculation, persistence or hierarchy change ===');

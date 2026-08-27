@@ -11,6 +11,8 @@ import { Segmented } from '../shared/Segmented';
 import { AddIcon } from '../shared/AddIcon';
 import { MonthYearField } from '../shared/fields/MonthYearField';
 import { GoalFormFields } from './GoalFormFields';
+import { buildSaveConfirmation } from '../../lib/celebrations';
+import { useCelebration } from '../../state/CelebrationContext';
 import { GOAL_PURPOSES, resolveGoalNameOnPurposeChange, resolveGoalPaceSummary } from '../../lib/goalFormState';
 import { goalPurposeIcon } from '../../lib/addIcons';
 import { LifeGoalType, GoalPriority } from '../../types/models';
@@ -64,6 +66,7 @@ export const AddGoalModal = forwardRef<
   }
 >(function AddGoalModal({ visible, onClose, embedded = false, onDirtyChange, onCanSaveChange, onSaveSuccess, onConfirmedClose }, ref) {
   const { addGoal } = useAppState();
+  const { confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography } = useTheme();
   const [type, setType] = useState<LifeGoalType | null>(null);
   const [name, setName] = useState('');
@@ -224,7 +227,12 @@ export const AddGoalModal = forwardRef<
     // to the host (which closes the whole Add Anything journey exactly
     // once). Standalone: unchanged direct onClose().
     if (embedded) onSaveSuccess?.();
-    else onClose();
+    else {
+      // B9 closure — the checklist (and Grow) open this form standalone;
+      // the successful save earns the same canonical action feedback.
+      confirmSaveSuccess(buildSaveConfirmation('Goal', 'added'));
+      onClose();
+    }
   }
 
   useImperativeHandle(ref, () => ({

@@ -126,8 +126,12 @@ describe('Wave 9c visual correction — the seven-step checklist, rendered', () 
     // eligibility engine and its existing defaults.
     expect(listMoneyAvailableAccounts(s.assets).filter((a) => a.id === everyday[0].id)).toHaveLength(1);
     // ONLY the Everyday step completed — savings and assets stay open.
+    // RECONCILED (post-Wave-10 checklist UX closure): progress compacts the
+    // card, so the remaining rows sit behind the one View all disclosure —
+    // expanded in place before asserting them.
     await screen.findByText('1 of 7 complete');
-    expect(screen.getByText('Shows money you have set aside.')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('checklist-view-all'));
+    await screen.findByText('Shows money you have set aside.', {}, { timeout: 20000 });
     expect(screen.getByText('Adds vehicles, property or investments to your net worth.')).toBeTruthy();
   });
 

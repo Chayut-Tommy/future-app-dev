@@ -508,6 +508,16 @@ export interface UserProfile {
    * existing flag carries this meaning: `confirmedCashOnly` answers the
    * ASSETS step ("I only have cash"), which is a different question. */
   confirmedEverydayLater?: boolean;
+  /** Checklist consistency correction — the customer explicitly chose
+   * "I don't have savings yet" on the checklist's Savings step. SETUP
+   * ACKNOWLEDGEMENT ONLY, exactly like the confirmed* flags above: it
+   * holds no balance or financial value, feeds no calculation, resolves
+   * the step as "Noted" (never "Added"), and absent simply means "not yet
+   * answered" — safe for every existing installation with no migration.
+   * Recording real Savings authoritatively supersedes it (the persist
+   * pipeline clears it — see supersedeSetupAcknowledgements), so deleting
+   * the last Savings item later can never resurrect a stale answer. */
+  confirmedNoSavings?: boolean;
   /** The user's optional, explicitly-chosen savings allocation — feeds
    * Available Until Payday, Money Allocation, and Your Future as a
    * forward-looking estimate input only (PRD ask: "one shared user-selected

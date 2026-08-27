@@ -9,8 +9,8 @@ import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 import { useAppState } from '../../state/AppStateContext';
 import { useCelebration } from '../../state/CelebrationContext';
+import { confirmNoDebt } from '../../lib/noDebtConfirmation';
 import { computeDebtCoachSummary, computeHasAnyDebt } from '../../lib/calculations/debtCoach';
-import { buildDebtFreeCelebration } from '../../lib/celebrations';
 import { LiabilityType } from '../../types/models';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { AddIcon } from '../shared/AddIcon';
@@ -98,13 +98,11 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
   }
 
   function handleNoDebt() {
-    updateUser({ confirmedNoDebt: true });
     onClose();
-    // Wave 10 closure — this persisted confirmation is the customer's
-    // action; its one softSuccess fires here and the debt-free celebration
-    // below is its (haptically silent) visual feedback.
-    confirmSaveSuccess();
-    celebrate(buildDebtFreeCelebration());
+    // Checklist consistency correction — the SAME shared authority the
+    // checklist's Debt footer uses: one write, one action-scoped feedback
+    // event, one celebration (see lib/noDebtConfirmation's contract).
+    confirmNoDebt({ updateUser, confirmSaveSuccess, celebrate });
   }
 
   function handleDebtType(type: LiabilityType | 'credit_card') {

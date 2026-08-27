@@ -173,7 +173,7 @@ console.log('\n=== 9. Connected legacy consumers (Class C) ===');
   const CHECKLIST = code(read('src/components/today/MoneyPictureChecklistCard.tsx'));
   // (Closure pass: the expression was hoisted into `hasGoal` when the row
   // gained its optional/defer presentation — same authoritative source.)
-  assert('9e. checklist goal completion reads the REAL goal collection', /const hasGoal = data\.goals\.length > 0;/.test(CHECKLIST) && /done: hasGoal \|\| !!data\.user\.confirmedGoalLater/.test(CHECKLIST));
+  assert('9e. checklist goal completion reads the REAL goal collection', /const hasGoal = data\.goals\.length > 0;/.test(CHECKLIST) && /completed: hasGoal,\s*\n\s*acknowledged: !hasGoal && !!data\.user\.confirmedGoalLater/.test(CHECKLIST));
   assert('9f. …never legacy user.moneyGoal', !/user\.moneyGoal/.test(CHECKLIST));
   assert('9g. the row opens the canonical goal editor', /AddGoalModal/.test(CHECKLIST) && !/EditProfileModal/.test(CHECKLIST));
   assert('9h. no goal is auto-created', !/addGoal\(\{/.test(CHECKLIST));

@@ -99,7 +99,7 @@ console.log('\n=== 2. The seven-step journey, in one canonical order everywhere 
   const keyOrder = [...CARD.matchAll(/key: '(\w+)',/g)].map((m) => m[1]);
   assert('2a. exactly seven steps render, in the canonical order', keyOrder.join(',') === 'income,everyday,cash,assets,bills,debt,goal');
   assert('2b. the resolver walks the SAME order', SETUP_STEP_PRIORITY.join(',') === keyOrder.join(','));
-  assert('2c. the denominator is the live step count (seven)', /of \$\{steps\.length\} complete/.test(CARD) && keyOrder.length === 7);
+  assert('2c. the denominator is the live step count (seven)', /of \$\{total\}/.test(read('src/lib/setupChecklist.ts')) && keyOrder.length === 7);
   // Row wording.
   for (const [title, value] of [
     ['Add your income', 'Places expected pay in your timeline.'],
@@ -114,15 +114,18 @@ console.log('\n=== 2. The seven-step journey, in one canonical order everywhere 
   }
   // The Everyday step is a real journey with a real, honest deferral.
   assert('2e. the everyday row opens the canonical workspace destination', /onAdd: \(\) => setWorkspaceKind\('everyday'\)/.test(CARD));
-  assert("2f. its deferral is the new presentation-only flag, worded \"I'll add one later\"", /label: "I'll add one later", onDefer: \(\) => updateUser\(\{ confirmedEverydayLater: true \}\)/.test(CARD));
-  assert('2g. a deferred everyday reads Later, never Added', /data\.user\.confirmedEverydayLater\s*\?\s*'Later'/.test(CARD));
+  // RECONCILED (checklist consistency correction): the owner-locked
+  // seven-footer matrix rewords this footer; the structured writer is
+  // byte-identical.
+  assert("2f. its deferral is the presentation-only flag, worded \"I'll add an account later\"", /label: "I'll add an account later", onDefer: \(\) => updateUser\(\{ confirmedEverydayLater: true \}\)/.test(CARD));
+  assert('2g. a deferred everyday chips a neutral Later, never Added', /acknowledged: !hasEveryday && !!data\.user\.confirmedEverydayLater/.test(CARD) && /acknowledged \? chipAcknowledged \?\? 'Later'/.test(CARD));
   assert('2h. the flag is additive, optional and presentation-only on the model', /confirmedEverydayLater\?: boolean;/.test(read('src/types/models.ts')));
   assert('2i. …read nowhere outside the checklist and its own declaration', !/confirmedEverydayLater/.test(code(read('src/lib/storage.ts'))) && !/confirmedEverydayLater/.test(code(read('src/lib/calculations/luluScore.ts'))) && !/confirmedEverydayLater/.test(code(read('src/lib/calculations/safeToSpend.ts'))));
-  assert('2j. NOT repurposed: confirmedCashOnly still answers the ASSETS step', /confirmedCashOnly: true/.test(CARD) && /done: hasGenuineAsset \|\| !!data\.user\.confirmedCashOnly/.test(CARD));
+  assert('2j. NOT repurposed: confirmedCashOnly still answers the ASSETS step', /confirmedCashOnly: true/.test(CARD) && /acknowledged: !hasGenuineAsset && !!data\.user\.confirmedCashOnly/.test(CARD));
   // Setup cannot complete around the Everyday question: allDone counts all
   // seven, and the everyday step is done only by record or explicit Later.
-  assert('2k. completion requires every step done or explicitly answered', /allDone = completedCount === steps\.length/.test(CARD) && /done: hasEveryday \|\| !!data\.user\.confirmedEverydayLater/.test(CARD));
-  assert('2l. the calm customer-closed completion state is unchanged', /Setup complete/.test(CARD) && !/setTimeout|useEffect/.test(CARD));
+  assert('2k. completion requires every step done or explicitly answered (composition.allResolved)', /composition\.allResolved/.test(CARD) && /completed: hasEveryday,\s*\n\s*acknowledged: !hasEveryday && !!data\.user\.confirmedEverydayLater/.test(CARD));
+  assert('2l. the calm customer-closed completion state is unchanged — no timers; the one effect is focus restoration', /Setup complete/.test(CARD) && !/setTimeout|setInterval/.test(CARD) && (CARD.match(/useEffect\(/g) ?? []).length === 1);
 }
 
 console.log('\n=== 3. Correction F — the Vehicle default is CHECKLIST-SCOPED ===');
