@@ -46,6 +46,7 @@ export function OptionsSheet({
   subtitle,
   options,
   onSelect,
+  onClosed,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -53,6 +54,16 @@ export function OptionsSheet({
   subtitle?: string;
   options: SheetOption[];
   onSelect: (key: string) => void;
+  /** OPTIONAL authoritative completion signal, fired exactly once AFTER native
+   * dismissal has actually finished (the same boundary `onSelect` is deferred
+   * to), carrying the selected option key or `null` when the sheet was
+   * dismissed WITHOUT a selection (cancel / backdrop / swipe / back). Lets a
+   * parent run a deterministic post-dismissal state machine — e.g. commit a
+   * pending action on a real choice, or restore its draft on a choice-less
+   * dismissal — without racing `onClose` (which fires BEFORE this). Existing
+   * consumers that do not pass it are unaffected; `onSelect` timing is
+   * unchanged. */
+  onClosed?: (selectedKey: string | null) => void;
 }) {
   const { colors, semantic, radius, spacing, typography } = useTheme();
   const insets = useSafeAreaInsets();
@@ -64,11 +75,15 @@ export function OptionsSheet({
     if (visible) translateY.setValue(0);
   }, [visible, translateY]);
 
-  function runPendingSelection() {
+  // The single native-dismissal-completion boundary. Fires the deferred
+  // selection (only when a row was actually chosen), then always reports the
+  // outcome to `onClosed` — the selected key, or null for a choice-less
+  // dismissal — so a parent can finalise its own state deterministically.
+  function runCompletion() {
     const key = pendingSelectionRef.current;
-    if (key === null) return;
     pendingSelectionRef.current = null;
-    onSelect(key);
+    if (key !== null) onSelect(key);
+    onClosed?.(key);
   }
 
   // Wave 10 — the slide-out now runs on the named sheet-exit token, and
@@ -81,7 +96,7 @@ export function OptionsSheet({
     translateY.setValue(0);
     onClose();
     if (Platform.OS === 'android') {
-      setTimeout(runPendingSelection, ANDROID_DISMISS_FALLBACK_MS);
+      setTimeout(runCompletion, ANDROID_DISMISS_FALLBACK_MS);
     }
   }
 
@@ -161,7 +176,7 @@ export function OptionsSheet({
       animationType="slide"
       transparent
       onRequestClose={dismiss}
-      onDismiss={Platform.OS === 'ios' ? runPendingSelection : undefined}
+      onDismiss={Platform.OS === 'ios' ? runCompletion : undefined}
     >
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={dismiss} />
@@ -170,7 +185,14 @@ export function OptionsSheet({
           {title ? <Text style={styles.title}>{title}</Text> : null}
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
           {options.map((o) => (
-            <TouchableOpacity key={o.key} style={styles.row} activeOpacity={0.7} onPress={() => choose(o.key)}>
+            <TouchableOpacity
+              key={o.key}
+              style={styles.row}
+              activeOpacity={0.7}
+              onPress={() => choose(o.key)}
+              accessibilityRole="button"
+              accessibilityLabel={o.description ? `${o.label}. ${o.description}` : o.label}
+            >
               <View style={[styles.iconBadge, o.destructive ? styles.iconBadgeDestructive : null]}>
                 <Ionicons name={o.icon} size={17} color={o.destructive ? colors.danger : colors.accentStrong} />
               </View>
@@ -180,7 +202,7 @@ export function OptionsSheet({
               </View>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity style={styles.cancelButton} onPress={dismiss}>
+          <TouchableOpacity style={styles.cancelButton} onPress={dismiss} accessibilityRole="button" accessibilityLabel="Cancel">
             <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
         </Animated.View>

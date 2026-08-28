@@ -81,7 +81,16 @@ console.log('\n=== 3. NOTHING financial was traded away for the consolidation ==
   assert('3e. the money grammar is still the shared one — no form parses money itself', ALL_SEVEN.every(([, src]) => !/parseFloat\(amount\.replace|Number\(amount\)/.test(stripComments(src))));
   assert('3f. onlyLiquidCategories still restricts what can be created, now on the in-form selector', /const restrictToLiquid = isLiquidPresetJourney \|\| !!onlyLiquidCategories;/.test(WEALTH));
   assert('3g. choosing an asset type still re-seeds includeInMoney and still clears a stale provider', /function chooseAssetCategory\(type: AssetType\) \{[\s\S]*?setIncludeInMoney\(forcedIncludeInMoneyDefault \?\? resolveIncludeInMoneyCalculations\([\s\S]*?setProvider\(''\);/.test(WEALTH));
-  assert("3h. a BNPL repayment transaction is still view-only — no amount/date/source field is reachable for it", /if \(isEditingBnplRepayment && editTransaction\) \{/.test(QUICK_ADD));
+  // P0 generalised the BNPL view-only lock to all repayment families via
+  // `isEditingLockedRepayment` (= BNPL || credit-card || loan). The behavioural
+  // intent is unchanged and stronger: a repayment record renders no amount/
+  // date/source field. Assert the accepted locked-repayment gate AND that BNPL
+  // is one of its inputs.
+  assert(
+    "3h. a BNPL/card/loan repayment transaction is still view-only — the locked-repayment gate renders no amount/date/source field",
+    /if \(isEditingLockedRepayment && editTransaction\) \{/.test(QUICK_ADD) &&
+      /isEditingLockedRepayment = isEditingBnplRepayment \|\| isEditingCreditCardRepayment \|\| isEditingLoanRepayment/.test(QUICK_ADD)
+  );
   assert('3i. a transfer still cannot be sourced from anything but the one From control', (TRANSFER.match(/sourceAssets\.map\(/g) || []).length === 1);
   assert('3j. BNPL repayment is still gated on a source that supports it', /if \(!fromAsset \|\| !fromSupportsRepayment\) return;/.test(TRANSFER));
 }

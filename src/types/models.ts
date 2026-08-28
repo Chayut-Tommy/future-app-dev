@@ -1,3 +1,23 @@
+import type { OccurrenceId } from '../lib/calculations/occurrenceIdentity';
+
+/**
+ * A1 — the ONE authoritative, additive, versioned representation of a manual
+ * transaction's explicit relationship to a scheduled occurrence. There is
+ * deliberately a single discriminated field (never several competing
+ * booleans): `linked` carries the canonical occurrence it satisfies;
+ * `independent` means the customer explicitly said this record is separate
+ * from any schedule; `unresolved` means a material ambiguity was detected and
+ * the customer has not yet chosen. Absent on every transaction created before
+ * A1 (legacy) and on any record the customer has not classified — absence is
+ * NOT the same as `unresolved` (see occurrenceResolution.ts `classifyTransaction`).
+ * `version` is stamped so an unknown future version fails closed rather than
+ * being silently misread. Persisted additively; old snapshots hydrate with the
+ * field simply absent (storage.ts shallow-merge), so no migration is required. */
+export type TransactionOccurrenceResolution =
+  | { version: 1; state: 'linked'; occurrenceId: OccurrenceId }
+  | { version: 1; state: 'independent' }
+  | { version: 1; state: 'unresolved' };
+
 export type LifeGoalType =
   | 'emergency_fund'
   | 'house_deposit'
@@ -280,6 +300,14 @@ export interface Transaction {
    * `principalAmount` absent), and not-a-loan-repayment
    * (`isLoanRepayment` absent). Absent on every other transaction. */
   isLoanRepayment?: boolean;
+  /** A1 — the customer's explicit, persisted classification of this
+   * transaction against the schedule (see `TransactionOccurrenceResolution`).
+   * The single authoritative resolution field; consumers never re-derive a
+   * relationship from label/amount/date proximity. Absent on legacy data and
+   * on unclassified records. Additive/optional — hydrates as `undefined` on
+   * pre-A1 snapshots. Set only by the explicit link/independent/unlink
+   * transitions in AppStateContext; never advances a recurrence cursor. */
+  occurrenceResolution?: TransactionOccurrenceResolution;
 }
 
 export type GoalPriority = 'high' | 'medium' | 'flexible';
@@ -328,6 +356,18 @@ export interface Asset {
    * cross-type meaning). Never collect card numbers, PINs, CVVs, or any
    * banking credential here or anywhere else on this model. */
   provider?: string;
+  /** A1 — the local ISO instant of the most recent DIRECT balance edit (a
+   * customer manually correcting `currentValue`, not a transaction). The only
+   * authoritative signal that this account's balance was set outside the
+   * transaction ledger, so a later consumer can know an ambiguity MAY exist
+   * (a direct correction can silently already include a scheduled amount) —
+   * it deliberately does NOT claim which occurrence the edit covered, and it
+   * never alters any balance calculation. Set only by the direct balance-edit
+   * path with an injected/testable clock; never backfilled or guessed for
+   * legacy data. Additive/optional — hydrates as `undefined` on pre-A1
+   * snapshots and on any asset never directly balance-edited. This is NOT a
+   * balance history (out of A1 scope); it is the narrowest additive signal. */
+  manualBalanceUpdatedAt?: string;
 }
 
 export interface Liability {

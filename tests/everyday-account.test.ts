@@ -250,8 +250,12 @@ console.log('\n=== 18-20. Add/edit creates no transaction, income, spending, sav
     )
   );
   assert(
-    '20c. structural: the real updateAsset function body matches the mirror exactly — one persist() call touching only `assets`',
-    /const updateAsset = useCallback\(\s*\n\s*\(id: string, patch: Partial<Omit<Asset, 'id'>>\) => \{\s*\n\s*persist\(upsertNetWorthHistory\(\{ \.\.\.data, assets: data\.assets\.map\(\(a\) => \(a\.id === id \? \{ \.\.\.a, \.\.\.patch \} : a\)\) \}\)\);\s*\n\s*\},/.test(
+    // A1 — updateAsset now routes through the pure applyManualBalanceEdit so a
+    // direct balance correction stamps `manualBalanceUpdatedAt` (only when
+    // currentValue changes). Behaviour is unchanged: still ONE persist() via
+    // the net-worth wrapper, touching only `assets`, deps [data, persist].
+    '20c. structural: updateAsset routes through applyManualBalanceEdit — one persist() via net-worth wrapper touching only `assets`',
+    /const updateAsset = useCallback\(\s*\n\s*\(id: string, patch: Partial<Omit<Asset, 'id'>>\) => \{[\s\S]*?persist\(upsertNetWorthHistory\(applyManualBalanceEdit\(data, id, patch, new Date\(\)\.toISOString\(\)\)\)\);\s*\n\s*\},\s*\n\s*\[data, persist\]/.test(
       APP_STATE_SRC
     )
   );

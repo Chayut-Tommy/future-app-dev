@@ -300,7 +300,10 @@ console.log('\n=== 13. Duplicate-tap guard unchanged and still gates the everyda
   assert(
     '13b. the guard is unconditional on payment source — applies to the everyday branch with zero new code',
     (() => {
-      const guardIdx = QUICK_ADD_SRC.indexOf('if (submittingRef.current) return;');
+      // The handleSave top guard (now also blocks re-entry while a
+      // classification sheet is open/dismissing) still precedes the everyday
+      // branch and is unconditional on payment source.
+      const guardIdx = QUICK_ADD_SRC.indexOf('if (submittingRef.current || classifyPayloadRef.current) return;');
       const everydayBranchIdx = QUICK_ADD_SRC.indexOf("paymentSource === 'everyday' ? everydayAccountId ?? undefined : undefined");
       return guardIdx > -1 && everydayBranchIdx > -1 && guardIdx < everydayBranchIdx;
     })()

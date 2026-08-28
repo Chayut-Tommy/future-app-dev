@@ -13,11 +13,28 @@ import {
   RecurringItem,
   SavingsComparisonEntry,
   Transaction,
+  TransactionOccurrenceResolution,
   UserProfile,
 } from '../types/models';
 import { createEmptyAppData, loadAppData, saveAppData } from '../lib/storage';
 import { supersedeSetupAcknowledgements } from '../lib/setupChecklist';
 import { generateId } from '../lib/id';
+import { OccurrenceId, isOccurrenceId } from '../lib/calculations/occurrenceIdentity';
+import { linkWouldConflict } from '../lib/calculations/occurrenceResolution';
+import { occurrenceIdForCard, occurrenceIdForRecurringItem } from '../lib/calculations/occurrenceSources';
+
+/** A1 — build the canonical `linked` resolution for a confirmed occurrence, or
+ * `undefined` when a stable id cannot be formed (fail closed — the record then
+ * carries no canonical evidence and the resolver falls back to legacy/cursor). */
+function linkedResolutionFor(occurrenceId: OccurrenceId | undefined): TransactionOccurrenceResolution | undefined {
+  return occurrenceId ? { version: 1, state: 'linked', occurrenceId } : undefined;
+}
+
+/** Parse a local YYYY-MM-DD date-key into a local-midnight Date (no UTC shift). */
+function localDateFromKey(key: string): Date {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}
 import { computeLuluScore } from '../lib/calculations/luluScore';
 import { resolveBillTransactionCategory } from '../lib/calculations/billCategory';
 import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
@@ -732,6 +749,10 @@ export function confirmRecurringOccurrenceTransition(
   // confirmation reversal-restoration is unchanged and out of this
   // round's authorised scope.
   const occurrenceKey = item.type === 'expense' ? `${item.id}:${item.nextDueDate}` : undefined;
+  // A1 — durable canonical occurrence identity at confirmation, for BOTH income
+  // and bills (income previously had none). Additive; preserves the legacy
+  // `recurringOccurrenceKey` above for dual-read and reversal restoration.
+  const occurrenceResolution = linkedResolutionFor(occurrenceIdForRecurringItem(data, item, new Date(item.nextDueDate)));
 
   const transactionInput: Omit<Transaction, 'id'> = {
     type: item.type,
@@ -753,6 +774,7 @@ export function confirmRecurringOccurrenceTransition(
     targetAssetId: item.type === 'income' ? input.targetAssetId : expenseTargetAssetId,
     recurringItemId: item.id,
     recurringOccurrenceKey: occurrenceKey,
+    occurrenceResolution,
     balanceEffect: 'update',
   };
 
@@ -824,6 +846,88 @@ export function applyTransactionDelete(data: AppData, id: string, reverseEffect:
       ? legacyApplyTransactionEffect(data, old, -1)
       : applyEffectDelta(data, old.appliedBalanceEffect, -1).data;
   return { ...reverted, transactions: data.transactions.filter((t) => t.id !== id) };
+}
+
+// ---------------------------------------------------------------------------
+// A1 — canonical occurrence-resolution transitions (pure). All are additive:
+// they only ever set/clear `Transaction.occurrenceResolution`, and never touch
+// a recurrence cursor (`nextDueDate`), a balance, a schedule, or any other
+// field. Eligibility is therefore derived from live evidence alone, so
+// deleting or unlinking a record re-exposes its occurrence with no cursor
+// rollback (Gate 0 architecture closure §C; spec v1.2 §11.2).
+// ---------------------------------------------------------------------------
+
+export type LinkOccurrenceResult =
+  | { applied: true; data: AppData }
+  | { applied: false; reason: 'not_found' | 'invalid_occurrence' | 'conflict' };
+
+/** Explicitly link a manual transaction to ONE canonical occurrence. Rejected
+ * (never silently overwritten) when the occurrence is a single-satisfaction
+ * income/bill occurrence that another live transaction already links to — the
+ * customer must resolve the conflict. Repayment occurrences are additive and
+ * never conflict on multiplicity. Does not advance any cursor. */
+export function applyLinkTransactionToOccurrence(
+  data: AppData,
+  transactionId: string,
+  occurrenceId: OccurrenceId,
+  isRepayment: boolean
+): LinkOccurrenceResult {
+  const txn = data.transactions.find((t) => t.id === transactionId);
+  if (!txn) return { applied: false, reason: 'not_found' };
+  if (!isOccurrenceId(occurrenceId)) return { applied: false, reason: 'invalid_occurrence' };
+  if (linkWouldConflict({ id: occurrenceId, sourceKind: 'income', sourceId: 'n/a', isRepayment }, transactionId, data.transactions)) {
+    return { applied: false, reason: 'conflict' };
+  }
+  const resolution: TransactionOccurrenceResolution = { version: 1, state: 'linked', occurrenceId };
+  return {
+    applied: true,
+    data: { ...data, transactions: data.transactions.map((t) => (t.id === transactionId ? { ...t, occurrenceResolution: resolution } : t)) },
+  };
+}
+
+/** Explicitly mark a manual transaction as separate from any schedule. */
+export function applyMarkTransactionIndependent(data: AppData, transactionId: string): AppData {
+  const resolution: TransactionOccurrenceResolution = { version: 1, state: 'independent' };
+  return { ...data, transactions: data.transactions.map((t) => (t.id === transactionId ? { ...t, occurrenceResolution: resolution } : t)) };
+}
+
+/** Flag a manual transaction as unresolved (a material ambiguity was detected
+ * and the customer has not yet chosen). Only ever set deliberately — never as a
+ * default for legacy/absent data. */
+export function applyMarkTransactionUnresolved(data: AppData, transactionId: string): AppData {
+  const resolution: TransactionOccurrenceResolution = { version: 1, state: 'unresolved' };
+  return { ...data, transactions: data.transactions.map((t) => (t.id === transactionId ? { ...t, occurrenceResolution: resolution } : t)) };
+}
+
+/** Unlink — remove the canonical resolution entirely, returning the record to
+ * its unclassified state and re-exposing any occurrence it satisfied. Never
+ * touches the balance or the recurrence cursor. */
+export function applyClearOccurrenceResolution(data: AppData, transactionId: string): AppData {
+  return {
+    ...data,
+    transactions: data.transactions.map((t) => {
+      if (t.id !== transactionId || t.occurrenceResolution === undefined) return t;
+      const { occurrenceResolution, ...rest } = t;
+      return rest;
+    }),
+  };
+}
+
+/** Direct manual balance edit (the customer correcting `currentValue`, not a
+ * transaction). Stamps `manualBalanceUpdatedAt` ONLY when the balance actually
+ * changes — a label/inclusion-only patch never stamps it — using an injected
+ * clock so tests are deterministic. Alters no balance calculation. */
+export function applyManualBalanceEdit(data: AppData, assetId: string, patch: Partial<Omit<Asset, 'id'>>, nowISO: string): AppData {
+  const target = data.assets.find((a) => a.id === assetId);
+  const balanceChanged = target !== undefined && patch.currentValue !== undefined && patch.currentValue !== target.currentValue;
+  return {
+    ...data,
+    assets: data.assets.map((a) => {
+      if (a.id !== assetId) return a;
+      const merged = { ...a, ...patch };
+      return balanceChanged ? { ...merged, manualBalanceUpdatedAt: nowISO } : merged;
+    }),
+  };
 }
 
 /** B2.4 mid-cycle recurring-income initialisation — the choice a user makes
@@ -1821,6 +1925,9 @@ export function confirmBnplRepaymentTransition(data: AppData, input: ConfirmBnpl
     recurringItemId: item.id,
     balanceEffect: 'update',
     recurringOccurrenceKey: occurrenceKey,
+    // A1 — durable canonical BNPL occurrence identity (source kind resolved
+    // from the linked liability). Additive; preserves recurringOccurrenceKey.
+    occurrenceResolution: linkedResolutionFor(occurrenceIdForRecurringItem(data, item, new Date(item.nextDueDate))),
   };
 
   const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
@@ -2143,6 +2250,12 @@ export function confirmCreditCardRepaymentTransition(data: AppData, input: Confi
     balanceEffect: 'update',
     isRepayment: true,
     reminderOccurrenceCompleted: input.reminderOccurrenceDate,
+    // A1 — durable canonical card occurrence identity, keyed by the billing
+    // MONTH of the due occurrence (never the mutable due day). Uses the
+    // reminder's own due date-key when present, else the payment month.
+    occurrenceResolution: linkedResolutionFor(
+      occurrenceIdForCard(card, input.reminderOccurrenceDate ? localDateFromKey(input.reminderOccurrenceDate) : new Date(input.date))
+    ),
   };
 
   const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
@@ -2408,6 +2521,9 @@ export function confirmLoanRepaymentTransition(data: AppData, input: ConfirmLoan
     targetAssetId,
     recurringItemId: item.id,
     recurringOccurrenceKey: occurrenceKey,
+    // A1 — durable canonical loan/mortgage occurrence identity (source kind
+    // from the linked liability). Additive; preserves recurringOccurrenceKey.
+    occurrenceResolution: linkedResolutionFor(occurrenceIdForRecurringItem(data, item, new Date(item.nextDueDate))),
     balanceEffect: 'update',
     principalAmount: principalCents !== undefined ? principalCents / 100 : undefined,
     isLoanRepayment: true,
@@ -2662,6 +2778,11 @@ interface AppStateContextValue {
   deleteGoal: (id: string) => void;
   addAsset: (a: Omit<Asset, 'id'>) => void;
   updateAsset: (id: string, patch: Partial<Omit<Asset, 'id'>>) => void;
+  /** A1 — explicit occurrence-resolution actions. `linkTransactionToOccurrence`
+   * returns a result so a caller can surface a conflict without overwriting. */
+  linkTransactionToOccurrence: (transactionId: string, occurrenceId: OccurrenceId, isRepayment: boolean) => LinkOccurrenceResult;
+  markTransactionIndependent: (transactionId: string) => void;
+  unlinkTransactionOccurrence: (transactionId: string) => void;
   /** Applies every included/excluded toggle from one Select Balances Save in
    * a single persisted transition, reading dataRef.current (not the closed-
    * over `data`) so it composes correctly with any other change already
@@ -3091,9 +3212,37 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const updateAsset = useCallback(
     (id: string, patch: Partial<Omit<Asset, 'id'>>) => {
-      persist(upsertNetWorthHistory({ ...data, assets: data.assets.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
+      // A1 — route through applyManualBalanceEdit so a direct balance
+      // correction stamps `manualBalanceUpdatedAt` (only when currentValue
+      // actually changes); a label/inclusion-only patch behaves exactly as
+      // before. Preserves the existing net-worth-history wrapping.
+      persist(upsertNetWorthHistory(applyManualBalanceEdit(data, id, patch, new Date().toISOString())));
     },
     [data, persist]
+  );
+
+  // A1 — occurrence-resolution actions. Each is a thin wrapper over its pure
+  // transition above, then persist. Linking returns a result so a caller can
+  // surface a conflict; the other two always apply.
+  const linkTransactionToOccurrence = useCallback(
+    (transactionId: string, occurrenceId: OccurrenceId, isRepayment: boolean): LinkOccurrenceResult => {
+      const result = applyLinkTransactionToOccurrence(dataRef.current, transactionId, occurrenceId, isRepayment);
+      if (result.applied) persist(result.data);
+      return result;
+    },
+    [persist]
+  );
+  const markTransactionIndependent = useCallback(
+    (transactionId: string) => {
+      persist(applyMarkTransactionIndependent(dataRef.current, transactionId));
+    },
+    [persist]
+  );
+  const unlinkTransactionOccurrence = useCallback(
+    (transactionId: string) => {
+      persist(applyClearOccurrenceResolution(dataRef.current, transactionId));
+    },
+    [persist]
   );
 
   // Thin wrapper over the pure, exported applyAssetsIncludeInMoneyUpdate —
@@ -3565,6 +3714,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addAsset,
       updateAsset,
       updateAssetsIncludeInMoney,
+      linkTransactionToOccurrence,
+      markTransactionIndependent,
+      unlinkTransactionOccurrence,
       deleteAsset,
       addLiability,
       updateLiability,
@@ -3615,6 +3767,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addAsset,
       updateAsset,
       updateAssetsIncludeInMoney,
+      linkTransactionToOccurrence,
+      markTransactionIndependent,
+      unlinkTransactionOccurrence,
       deleteAsset,
       addLiability,
       updateLiability,

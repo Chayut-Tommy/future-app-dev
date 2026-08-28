@@ -168,7 +168,7 @@ console.log('\n=== 5. Sheet chrome is defined ONCE and the three sheets share it
   }
   // The consolidation is CHROME only. Each sheet's dismissal lifecycle is
   // the documented modal-freeze guard and must survive untouched.
-  assert("5h. OptionsSheet still defers onSelect to the native onDismiss, with its Android fallback — the freeze guard is not part of the consolidation", /onDismiss=\{Platform\.OS === 'ios' \? runPendingSelection : undefined\}/.test(read('OptionsSheet.tsx')) && /setTimeout\(runPendingSelection, ANDROID_DISMISS_FALLBACK_MS\)/.test(read('OptionsSheet.tsx')));
+  assert("5h. OptionsSheet still defers onSelect to the native onDismiss, with its Android fallback — the freeze guard is not part of the consolidation", /onDismiss=\{Platform\.OS === 'ios' \? runCompletion : undefined\}/.test(read('OptionsSheet.tsx')) && /setTimeout\(runCompletion, ANDROID_DISMISS_FALLBACK_MS\)/.test(read('OptionsSheet.tsx')));
   assert('5i. DatePickerModal still wraps a Modal on iOS only', /if \(Platform\.OS !== 'ios'\) \{/.test(read('DatePickerModal.tsx')));
 }
 

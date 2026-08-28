@@ -8,10 +8,13 @@ import {
   isLatestRecurringOccurrenceTransaction,
   useAppState,
 } from '../../state/AppStateContext';
-import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction } from '../../types/models';
+import { AppData, Asset, BalanceEffectMode, PaymentSource, Transaction, TransactionOccurrenceResolution } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
+import { OccurrenceClassificationSheet } from '../money/OccurrenceClassificationSheet';
+import { deriveOccurrenceCandidates } from '../../lib/calculations/occurrenceCandidates';
+import { ClassificationChoice, LinkCandidate, classifyTransaction } from '../../lib/calculations/occurrenceResolution';
 import { hapticRigid, hapticWarning } from '../../lib/haptics';
 import { buildSaveConfirmation } from '../../lib/celebrations';
 import { useCelebration } from '../../state/CelebrationContext';
@@ -242,6 +245,7 @@ export const QuickAddModal = forwardRef<
     addTransaction,
     updateTransaction,
     deleteTransaction,
+    unlinkTransactionOccurrence,
     reverseBnplRepayment,
     reverseCreditCardRepayment,
     reverseLoanRepayment,
@@ -299,6 +303,19 @@ export const QuickAddModal = forwardRef<
   // that already has one, so it can't be silently blanked out.
   const [transactionName, setTransactionName] = useState('');
   const [addCashVisible, setAddCashVisible] = useState(false);
+  // A1 — a NEW manual transaction that matches one or more scheduled
+  // occurrences is classified BEFORE any write. The built payload + candidates
+  // are parked here (never saved yet). `visible` drives the sheet; the DATA is
+  // retained until the native dismissal completes, so a deferred selection can
+  // still read its candidates/options. `classifyPayloadRef` holds the durable
+  // payload the commit reads, immune to the onClose-before-onSelect ordering
+  // that a render closure is not — this is the device-test fix (a selection
+  // used to be lost because onClose cleared the parked payload before the
+  // deferred selection callback ran).
+  const [classify, setClassify] = useState<{ payload: Omit<Transaction, 'id'>; candidates: LinkCandidate[]; visible: boolean } | null>(null);
+  const classifyPayloadRef = useRef<Omit<Transaction, 'id'> | null>(null);
+  // A1 — the relationship-correction sheet for an existing ordinary transaction.
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   // Category-first flow (PRD ask: "adding money should feel quick and
   // satisfying, not like accounting software") — picking a category is its
   // own step with large tappable cards, then amount/date/payment source.
@@ -739,10 +756,13 @@ export const QuickAddModal = forwardRef<
     if (isEditingLockedRepayment) return;
     if (!canSave || !categoryId) return;
     if (type === 'expense' && !sourceChosen) return;
-    // Must be checked+set synchronously before anything else touches state
-    // or calls a persistence action — see submittingRef's own comment.
-    if (submittingRef.current) return;
-    submittingRef.current = true;
+    // Fast pre-guard against a re-tap while a create is already in flight. The
+    // actual claim (submittingRef = true) happens in finishSave, so opening the
+    // classification sheet does NOT block the create that follows the choice.
+    // Also block a re-tap while a classification is still open OR dismissing —
+    // `classifyPayloadRef` stays set until the native dismissal completes, so a
+    // second Save can never stack a second sheet or a duplicate write.
+    if (submittingRef.current || classifyPayloadRef.current) return;
     const isoDate = new Date(yearValue, monthValue - 1, dayValue).toISOString();
     // Defensive re-check, not just a read of state: never let balanceEffect
     // resolve to 'update' when there's no real target, even if the
@@ -790,23 +810,43 @@ export const QuickAddModal = forwardRef<
             ...notePayload,
           };
 
-    // The tracked-balance choice is now made explicitly, inline, before Save
-    // is ever pressed — updateTransaction always reconciles correctly from
-    // it (regression-protection review, Stream B1), so the old post-save
-    // "should we also adjust your balance?" alert is no longer the only way
-    // to reach or change this choice, and keeping both would leave two
-    // mechanisms answering the same question. Retired here; deleting a
-    // transaction still asks separately, below — a genuinely different,
-    // destructive-action decision.
+    // Editing an existing transaction is unchanged — no classification gate
+    // (relationship correction for an existing record is a separate action).
     if (editTransaction) {
-      updateTransaction(editTransaction.id, payload);
-    } else {
-      addTransaction(payload);
+      finishSave(payload);
+      return;
     }
-    // Embedded: hand control back to the host, which closes the whole Add
-    // Anything journey exactly once. Standalone: the same customer action
-    // earns the same canonical feedback (B9 closure) — one softSuccess and
-    // one factual confirmation named from the structured transaction type.
+
+    // A1 — a NEW manual transaction is classified against the schedule BEFORE
+    // any write. Nothing below saves, changes a balance, or calls persistence
+    // until the customer resolves the classification. Only compatible one-sided
+    // sources (income / ordinary bills) are ever offered; a malformed or
+    // unrelated scheduled source is skipped and never blocks recording (§6).
+    const { candidates } = deriveOccurrenceCandidates(data, { type, date: isoDate, amount: amountValue, categoryId });
+    if (candidates.length > 0) {
+      // Park the built payload (durably, in the ref) and open the classification
+      // sheet. No write yet; the data is retained until the native dismissal
+      // completes so the deferred selection can still read it.
+      classifyPayloadRef.current = payload;
+      setClassify({ payload, candidates, visible: true });
+      return;
+    }
+    // No compatible scheduled candidate — record once as independent, no sheet.
+    finishSave({ ...payload, occurrenceResolution: { version: 1, state: 'independent' } });
+  }
+
+  // The single create/update + success path. Guarded so a rapid double action
+  // (Save re-tap, or a repeated classification selection) can never create two
+  // transactions or apply two balance effects. `submittingRef` is reset only on
+  // a fresh form session, so it stays "claimed" until the modal reopens.
+  function finishSave(finalPayload: Omit<Transaction, 'id'>) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    if (editTransaction) {
+      updateTransaction(editTransaction.id, finalPayload);
+    } else {
+      addTransaction(finalPayload);
+    }
     if (embedded) onSaveSuccess?.();
     else {
       confirmSaveSuccess(
@@ -814,6 +854,33 @@ export const QuickAddModal = forwardRef<
       );
       onClose();
     }
+  }
+
+  // A1 — the customer's explicit classification choice for a NEW manual
+  // transaction. Fired from the native dismissal-completion boundary (after the
+  // sheet has actually gone), so it reads the durable payload from the ref —
+  // NOT from render state that onClose may already have torn down. Creates the
+  // transaction exactly once (finishSave's submittingRef makes it idempotent)
+  // with the chosen relationship, then clears the pending state after the
+  // handoff.
+  function handleClassificationChoice(choice: ClassificationChoice) {
+    const payload = classifyPayloadRef.current;
+    if (!payload) return; // already committed/cleared — never write twice
+    classifyPayloadRef.current = null;
+    const resolution: TransactionOccurrenceResolution =
+      choice.kind === 'link' ? { version: 1, state: 'linked', occurrenceId: choice.occurrenceId } : { version: 1, state: 'independent' };
+    setClassify(null);
+    finishSave({ ...payload, occurrenceResolution: resolution });
+  }
+
+  // A1 — the classification sheet was dismissed WITHOUT a choice (cancel /
+  // backdrop / swipe / back). Zero writes, zero balance change: drop the parked
+  // payload, release the submit guard, and leave the draft exactly as it was so
+  // the customer can keep editing or retry Save.
+  function handleClassificationDismissed() {
+    classifyPayloadRef.current = null;
+    setClassify(null);
+    submittingRef.current = false;
   }
 
   // Wave 10 closure — the rigid haptic belongs to the CONFIRMED deletion
@@ -1075,6 +1142,10 @@ export const QuickAddModal = forwardRef<
         // Selection is signalled by both the icon swap (checkmark vs
         // outline) and the label's weight/colour — never by colour alone.
         sourceLabel: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
+        relationshipRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+        relationshipLabel: { ...typography.caption, color: colors.textSecondary, flexShrink: 1 },
+        relationshipActions: { flexDirection: 'row', gap: spacing.md },
+        relationshipActionText: { ...typography.caption, color: colors.accentStrong, fontWeight: '600' },
         sourceLabelValue: { fontWeight: '700', color: colors.textPrimary },
       }),
     [colors, radius, spacing, typography]
@@ -1093,6 +1164,29 @@ export const QuickAddModal = forwardRef<
     editTransaction && isEditingRecurringLinked
       ? editTransaction.note ?? (editTransaction.recurringItemId ? data.recurringItems.find((r) => r.id === editTransaction.recurringItemId)?.label ?? null : null)
       : null;
+
+  // A1 — the relationship-correction affordance for an ORDINARY editable
+  // transaction (never a locked repayment or a recurring-confirmed record).
+  // Declared BEFORE the locked-repayment early return below so the useMemo hook
+  // is always called (the lock condition for loan/BNPL depends on hydrated data,
+  // so it can flip between renders — an early return before this hook would
+  // change the hook count).
+  const showRelationshipRow = isEditing && !isEditingLockedRepayment && !isEditingRecurringLinked && !!editTransaction;
+  const currentClassification = editTransaction ? classifyTransaction(editTransaction) : null;
+  const correctionCandidates = useMemo(
+    () => (editTransaction && showRelationshipRow ? deriveOccurrenceCandidates(data, { type: editTransaction.type, date: editTransaction.date, amount: editTransaction.amount, categoryId: editTransaction.categoryId }).candidates : []),
+    [editTransaction, showRelationshipRow, data]
+  );
+  const relationshipLabel =
+    currentClassification?.classification === 'linked'
+      ? 'Scheduled item — linked'
+      : currentClassification?.classification === 'independent'
+      ? 'Kept separate'
+      : currentClassification?.classification === 'unresolved'
+      ? 'Needs review'
+      : 'Not linked to a scheduled item';
+  const relationshipAction = currentClassification?.classification === 'unresolved' ? 'Review' : currentClassification?.classification === 'unclassified' ? 'Link' : 'Change';
+  const showRelationship = showRelationshipRow && (currentClassification?.classification !== 'unclassified' || correctionCandidates.length > 0);
 
   // A recorded repayment (BNPL, credit-card, or loan/mortgage) is view-only
   // here: no amount/date/paid-from/category field is rendered at all, so
@@ -1147,6 +1241,23 @@ export const QuickAddModal = forwardRef<
 
   const content = (
     <>
+      {showRelationship ? (
+        <View style={styles.relationshipRow}>
+          <Text style={styles.relationshipLabel} accessibilityRole="text">{relationshipLabel}</Text>
+          <View style={styles.relationshipActions}>
+            {correctionCandidates.length > 0 || currentClassification?.classification === 'independent' || currentClassification?.classification === 'unresolved' ? (
+              <TouchableOpacity onPress={() => setCorrectionOpen(true)} accessibilityRole="button" accessibilityLabel={`${relationshipAction} scheduled item link`}>
+                <Text style={styles.relationshipActionText}>{relationshipAction}</Text>
+              </TouchableOpacity>
+            ) : null}
+            {currentClassification?.classification === 'linked' ? (
+              <TouchableOpacity onPress={() => editTransaction && unlinkTransactionOccurrence(editTransaction.id)} accessibilityRole="button" accessibilityLabel="Unlink from scheduled item">
+                <Text style={styles.relationshipActionText}>Unlink</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
       {/* Read-only — this transaction's own primary identity, kept visibly
           separate from the editable category picker below (regression-
           protection review, B2.0B transaction-identity correction §1). Only
@@ -1370,6 +1481,38 @@ export const QuickAddModal = forwardRef<
           always renders in its own native top-level layer, so it still
           appears correctly above the embedded workspace either way. */}
       <AddWealthItemModal visible={addCashVisible} kind="asset" presetAssetType="cash" onClose={() => setAddCashVisible(false)} />
+
+      {/* A1 — classify a NEW manual transaction against the schedule before it
+          is saved. Rendered here (like AddWealthItemModal) so it appears above
+          both the embedded workspace and the standalone sheet. Dismissing it
+          returns to the unsaved draft with zero writes. */}
+      <OccurrenceClassificationSheet
+        visible={classify?.visible ?? false}
+        transaction={null}
+        candidates={classify?.candidates ?? []}
+        variant={type}
+        onChoose={handleClassificationChoice}
+        // Begin native dismissal WITHOUT tearing down the parked data — the
+        // deferred selection still needs its candidates/options. The durable
+        // payload lives in classifyPayloadRef and is cleared only after the
+        // commit (onChoose) or the choice-less dismissal (onDismissWithoutChoice).
+        onClose={() => setClassify((s) => (s ? { ...s, visible: false } : s))}
+        onDismissWithoutChoice={handleClassificationDismissed}
+      />
+
+      {/* A1 — correct an EXISTING ordinary transaction's relationship (link to a
+          scheduled item, keep separate). Correction mode: it classifies the
+          existing record directly. */}
+      <OccurrenceClassificationSheet
+        visible={correctionOpen}
+        transaction={editTransaction ?? null}
+        candidates={correctionCandidates}
+        variant={editTransaction?.type}
+        title="Link this record to a scheduled item?"
+        onResolved={() => setCorrectionOpen(false)}
+        onConflict={() => setCorrectionOpen(false)}
+        onClose={() => setCorrectionOpen(false)}
+      />
     </>
   );
 
