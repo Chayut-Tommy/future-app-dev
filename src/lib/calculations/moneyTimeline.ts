@@ -1,10 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { AppData } from '../../types/models';
 import { computeSafeToSpend, cycleLengthDays } from './safeToSpend';
-import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
-import { recurringOccurrencesInRange } from './recurringSchedule';
-import { projectBnplOccurrences } from './bnpl';
-import { isCardOccurrenceHandled } from './reminders';
+import { projectTimelineOccurrences } from './projectedEvents';
 
 export type TimelineEventKind = 'income' | 'bill' | 'mortgage' | 'credit_card' | 'savings' | 'goal' | 'bnpl';
 
@@ -83,130 +80,18 @@ function dateKey(d: Date): string {
  * Money Flow/Money Plan/Wealth elsewhere in the app.
  */
 export function computeMoneyTimeline(data: AppData, today: Date = new Date(), horizonDays: number = 30): TimelineEvent[] {
-  const events: TimelineEvent[] = [];
+  // A3 — occurrence-family events (income, bills, mortgage, credit cards, BNPL)
+  // are derived from the ONE canonical resolved stream in projectedEvents.ts,
+  // which the Look Ahead forecast also consumes. `projectTimelineOccurrences` is
+  // a presentation-only adapter over the canonical INCLUDED events: it does NOT
+  // re-decide eligibility. For ordinary valid (unlinked/independent) data the
+  // rows are identical to what this function built inline before; for explicit
+  // A1 states the timeline now AGREES with the canonical result (a linked/
+  // satisfied occurrence is excluded, a partial repayment shows its remaining
+  // amount) — required reconciliation, not a presentation change.
+  const events: TimelineEvent[] = projectTimelineOccurrences(data, today, horizonDays);
 
-  // One event per income source *per occurrence*, using its own real
-  // per-payment amount and date — never the monthly-equivalent total (PRD
-  // bug report: a $4,000 fortnightly salary showed as "+$8,667 in 4 days"),
-  // and never just its first upcoming date (PRD bug report: a fortnightly
-  // "Rental Income" only ever appeared once, then vanished — this should
-  // keep repeating across the whole visible horizon, like a real cashflow
-  // timeline). Sources with no known date (irregular, "I don't know when")
-  // simply don't get a dated event — Navilo never invents one.
-  const horizonStart = new Date(startOfDay(today).getTime() - 86400000);
   const horizonEnd = new Date(startOfDay(today).getTime() + horizonDays * 86400000);
-
-  const incomeItems = data.recurringItems.filter((r) => r.type === 'income');
-  for (const occurrence of recurringOccurrencesInRange(incomeItems, horizonStart, horizonEnd)) {
-    const { item, date } = occurrence;
-    const daysUntil = daysBetween(today, date);
-    if (daysUntil < 0) continue;
-    events.push({
-      id: `income-${item.id}-${date.getTime()}`,
-      date,
-      daysUntil,
-      kind: 'income',
-      icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash',
-      label: item.label,
-      amount: item.amount,
-      recurringItemId: item.id,
-    });
-  }
-
-  // BNPL-linked items are handled entirely separately below (capped
-  // amounts, via projectBnplOccurrences) — excluded here so the ordinary
-  // bill loop's raw `-item.amount` is never used for one, and so a BNPL
-  // occurrence is never generated twice.
-  const bnplLiabilityByItemId = new Map<string, (typeof data.liabilities)[number]>();
-  for (const liability of data.liabilities) {
-    if (liability.type !== 'bnpl') continue;
-    const activeLinks = data.recurringItems.filter((r) => r.active && r.linkedLiabilityId === liability.id && r.type === 'expense');
-    if (activeLinks.length !== 1) continue; // none or ambiguous — show nothing, never double-count
-    bnplLiabilityByItemId.set(activeLinks[0].id, liability);
-  }
-
-  const billItems = data.recurringItems.filter((r) => r.type === 'expense' && !bnplLiabilityByItemId.has(r.id));
-  for (const occurrence of recurringOccurrencesInRange(billItems, horizonStart, horizonEnd)) {
-    const { item, date } = occurrence;
-    const daysUntil = daysBetween(today, date);
-    if (daysUntil < -1) continue;
-    const isMortgage = !!item.linkedLiabilityId && data.liabilities.find((l) => l.id === item.linkedLiabilityId)?.type === 'mortgage';
-    events.push({
-      id: `bill-${item.id}-${date.getTime()}`,
-      date,
-      daysUntil,
-      kind: isMortgage ? 'mortgage' : 'bill',
-      icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? (isMortgage ? 'home' : 'calendar-outline'),
-      label: item.label,
-      amount: -item.amount,
-      recurringItemId: item.id,
-    });
-  }
-
-  // BNPL — capped occurrences, per plan, over the identical
-  // [horizonStart, horizonEnd] window every other event in this file
-  // already uses (both inclusive bounds, matching projectBnplOccurrences'
-  // own contract with no adjustment needed).
-  for (const [itemId, liability] of bnplLiabilityByItemId) {
-    const item = data.recurringItems.find((r) => r.id === itemId);
-    if (!item) continue;
-    for (const occurrence of projectBnplOccurrences(item, liability, horizonStart, horizonEnd)) {
-      const daysUntil = daysBetween(today, occurrence.date);
-      if (daysUntil < -1) continue;
-      events.push({
-        id: occurrence.id,
-        date: occurrence.date,
-        daysUntil,
-        kind: 'bnpl',
-        icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'bag-handle-outline',
-        label: item.label,
-        amount: -(occurrence.amountCents / 100),
-        recurringItemId: item.id,
-        bnplLiabilityId: liability.id,
-      });
-    }
-  }
-
-  // A credit-card repayment only ever appears here when the user has told
-  // Navilo they actually plan to repay a positive amount (PRD bug report,
-  // Finding #41: a $0 event rendered as a nonsensical "+$0" — the fix is to
-  // never generate the event at all for zero/blank/invalid/negative input,
-  // not just to fix its sign). Deliberately not gated on currentBalance > 0
-  // — a planned repayment the user has explicitly set is real information
-  // even if the balance happens to be zero right now (it may change before
-  // the due date; PRD ask: never silently suppress a user's own entered
-  // plan).
-  for (const card of data.creditCards) {
-    const expectedRepayment = resolveExpectedMonthlyRepayment(card);
-    if (expectedRepayment <= 0) continue;
-    const daysUntil = daysUntilDue(card.dueDay, today);
-    if (daysUntil > horizonDays) continue;
-    const dueDate = new Date(today.getTime() + daysUntil * 86400000);
-    // Final Pass 2D device-test correction, item 8 (canonical helper, §6
-    // round) — calls the SAME isCardOccurrenceHandled helper
-    // computeTopReminder's own cardDue branch calls (reminders.ts): a card
-    // whose CURRENT due occurrence was already marked handled via a
-    // Reminder-initiated repayment must not resurface as an independent
-    // Briefing/timeline event either. Previously this was a second,
-    // independently-written date-comparison expression duplicating the
-    // Reminder side's own check — now both layers call one shared, single-
-    // sourced function, so they can never silently diverge. Scoped to THIS
-    // occurrence only — next month's recomputed dueDate has a different
-    // date-key and reappears with no extra logic, exactly like the
-    // Reminder side.
-    if (isCardOccurrenceHandled(card, dueDate)) continue;
-    events.push({
-      id: `card-${card.id}`,
-      date: dueDate,
-      daysUntil,
-      kind: 'credit_card',
-      icon: 'card',
-      label: `${card.label} credit card repayment`,
-      sublabel: 'Based on what you expect to repay',
-      amount: -expectedRepayment,
-      creditCardId: card.id,
-    });
-  }
 
   // ============================================================
   // PHASE 1 PRODUCT RULE — single primary pay cycle

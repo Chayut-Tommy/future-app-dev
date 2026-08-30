@@ -532,8 +532,8 @@ console.log('\n=== SECTION 3: Handled card occurrence — excluded from BOTH the
     const timelineAfterDirect = computeMoneyTimeline(directResult.data, today, 30);
     const outflowAfterDirect = selectUrgentOutflowEvents(timelineAfterDirect);
     assert(
-      "3g-i. consequently the Briefing/timeline event for this occurrence is STILL shown after a direct repayment (unchanged — only balance/currentBalance changed, not the occurrence-exclusion flag; this occurrence's own 'expected repayment' event is presentation of a plan, not a balance readout, so it is intentionally unaffected by this specific balance change alone)",
-      outflowAfterDirect.some((e) => e.creditCardId === 'amex1')
+      "3g-i. A3 REQUIRED RECONCILIATION — the direct repayment does not set the reminder-handled flag (3g), but the dedicated transition stamps a canonical A1 occurrence link (isRepayment $40 of an expected $40 cycle), so the occurrence is now SATISFIED and the shared canonical stream correctly excludes it from the timeline. This is the intended A1-state agreement (a fully satisfied cycle is absent from both consumers — spec §5.4), NOT the old pre-A1 'plan still shown' behaviour: the customer already paid this cycle, so a stale expected-repayment row would double-count.",
+      !outflowAfterDirect.some((e) => e.creditCardId === 'amex1')
     );
   }
 }
@@ -583,15 +583,20 @@ console.log('\n=== SECTION 4: §6 canonical card-occurrence-handled helper — o
     !isCardOccurrenceHandled(card(dueDate.toISOString()) as any, dueDate)
   );
 
-  // Structural — moneyTimeline.ts imports and CALLS the shared function
-  // (never reimplements the comparison inline), so there is only ever ONE
-  // place this comparison's logic can be edited.
-  assert('4e. moneyTimeline.ts imports isCardOccurrenceHandled from reminders.ts', /import \{ isCardOccurrenceHandled \} from '\.\/reminders';/.test(MONEY_TIMELINE_SRC));
-  assert('4e-i. moneyTimeline.ts calls isCardOccurrenceHandled(card, dueDate) in its credit-card event loop, never its own inline date-key comparison', /if \(isCardOccurrenceHandled\(card, dueDate\)\) continue;/.test(MONEY_TIMELINE_SRC));
+  // Structural — the card-handled suppression is single-sourced through the
+  // shared isCardOccurrenceHandled function (never an inline comparison), so
+  // there is only ever ONE place this logic can be edited. A3 moved the money
+  // timeline's occurrence enumeration into projectedEvents.ts (the ONE canonical
+  // stream the timeline now delegates to); the helper call moved with it, and
+  // the timeline suppresses the handled card via that single-sourced flag.
+  const PROJECTED_EVENTS_SRC = fs.readFileSync(path.join(__dirname, '../src/lib/calculations/projectedEvents.ts'), 'utf8');
+  assert('4e. the canonical occurrence enumerator (projectedEvents.ts) imports isCardOccurrenceHandled from reminders.ts', /import \{ isCardOccurrenceHandled \} from '\.\/reminders';/.test(PROJECTED_EVENTS_SRC));
+  assert('4e-i. projectedEvents.ts calls isCardOccurrenceHandled(card, dueDate) in its credit-card enumeration, never an inline date-key comparison', /isCardOccurrenceHandled\(card, dueDate\)/.test(PROJECTED_EVENTS_SRC));
   assert(
-    "4e-ii. moneyTimeline.ts no longer contains its own independent handledReminderOccurrenceDate date-key comparison expression",
-    !/card\.handledReminderOccurrenceDate === dueDate\.toISOString\(\)/.test(MONEY_TIMELINE_SRC)
+    "4e-ii. neither the timeline nor the enumerator contains its own independent handledReminderOccurrenceDate date-key comparison expression",
+    !/card\.handledReminderOccurrenceDate === dueDate\.toISOString\(\)/.test(MONEY_TIMELINE_SRC) && !/handledReminderOccurrenceDate === dueDate\.toISOString\(\)/.test(PROJECTED_EVENTS_SRC)
   );
+  assert('4e-iii. the money timeline delegates its occurrence enumeration to the canonical stream (single enumeration, no second enumerator)', /projectTimelineOccurrences\(data, today, horizonDays\)/.test(MONEY_TIMELINE_SRC));
 
   const remindersSrc = fs.readFileSync(path.join(__dirname, '../src/lib/calculations/reminders.ts'), 'utf8');
   assert(
