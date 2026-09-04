@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { ProgressBar } from '../shared/ProgressBar';
+import { TimelineMarkerTrack, RAIL_HEIGHT } from './TimelineMarkerTrack';
+import { TimelineRail } from '../../lib/calculations/timelineMarkers';
 import { PaydayProgress } from '../../lib/calculations/moneyComposition';
 import { designLayout, designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
@@ -22,7 +24,7 @@ import i18n from '../../i18n';
  * the whole state in one stop instead of three fragments. Nothing here
  * depends on an animation having run.
  */
-export function MoneyPaydayBar({ progress }: { progress: PaydayProgress }) {
+export function MoneyPaydayBar({ progress, rail }: { progress: PaydayProgress; rail?: TimelineRail | null }) {
   const { semantic } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
@@ -53,7 +55,12 @@ export function MoneyPaydayBar({ progress }: { progress: PaydayProgress }) {
   }
 
   return (
-    <View style={styles.block} accessible accessibilityLabel={progress.spoken} testID="money-payday-bar">
+    <View
+      style={styles.block}
+      accessible
+      accessibilityLabel={rail ? `${progress.spoken} ${rail.spoken}` : progress.spoken}
+      testID="money-payday-bar"
+    >
       {/* Wave 6 Correction C — the rail is now NAMED. A nearly-full bar
           with only two dates beside it reads as "money used"; it measures
           elapsed pay-cycle time. The title says so, and the day count moves
@@ -64,9 +71,17 @@ export function MoneyPaydayBar({ progress }: { progress: PaydayProgress }) {
           {progress.daysRemaining} {progress.daysRemaining === 1 ? 'day' : 'days'} left
         </Text>
       </View>
-      <View style={styles.barWrap} importantForAccessibility="no-hide-descendants">
-        <ProgressBar progress={progress.fraction} color={semantic.interactive} height={6} />
-      </View>
+      {rail ? (
+        // Pass C.1 — the same elapsed-time bar, now carrying event markers for
+        // the exact commitments AUP subtracted plus the payday endpoint. The
+        // outer block already speaks the combined summary, so the track's own
+        // a11y is suppressed here.
+        <TimelineMarkerTrack rail={rail} elapsedFraction={progress.fraction} suppressA11y testID="money-payday-bar-markers" />
+      ) : (
+        <View style={styles.barWrap} importantForAccessibility="no-hide-descendants">
+          <ProgressBar progress={progress.fraction} color={semantic.interactive} height={RAIL_HEIGHT} />
+        </View>
+      )}
       <View style={styles.row} importantForAccessibility="no-hide-descendants">
         <Text style={styles.endpoint}>{progress.startLabel}</Text>
         <Text style={styles.endpoint}>{progress.endLabel}</Text>

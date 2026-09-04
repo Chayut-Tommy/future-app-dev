@@ -37,6 +37,20 @@ export function isAccessibilityText(fontScale: number): boolean {
   return fontScale >= ACCESSIBILITY_TEXT_THRESHOLD;
 }
 
+/**
+ * Pass C.1 — whether the Available-Until-Payday card's two result regions
+ * (AVAILABLE / ABOUT PER DAY, or ESTIMATED POSITION / LOWEST POSITION) must
+ * stack vertically instead of sitting side-by-side. Two large money figures
+ * cannot share a row on a narrow iPhone or at accessibility text sizes
+ * without clipping, so we drop to one column there. Mirrors the existing
+ * accountRowStacksBalance decision (same fontScale gate, a slightly wider
+ * width gate because these figures are larger). Pure and width/scale-driven
+ * so it is testable without a device.
+ */
+export function resultRegionsStack(width: number, fontScale: number): boolean {
+  return isAccessibilityText(fontScale) || width < 360;
+}
+
 /** The leading marker tile on a Money row — one size across the payday
  * bar, the balances row and the timeline, so the page has a single left
  * rhythm. Matches Today's own row tile. */

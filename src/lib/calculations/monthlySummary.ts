@@ -22,7 +22,20 @@ export function monthToDateWindowStart(today: Date): Date {
 }
 export function isWithinMonthToDate(dateISO: string, monthStart: Date, today: Date): boolean {
   const d = new Date(dateISO);
-  return d >= monthStart && d <= today;
+  // C1-03 — the upper bound is the END of the current local day, not the exact
+  // `today` timestamp. `today` here comes from useCurrentLocalDate(), which is
+  // `new Date()` captured on mount/focus/midnight — a specific time-of-day. A
+  // transaction recorded LATER the same day (e.g. a reminder-confirmed bill,
+  // stamped `new Date().toISOString()` at confirm time) is dated a few moments
+  // AFTER a screen's captured `today`, so a bare `d <= today` silently dropped
+  // it from "this month so far" until the screen next refreshed its date
+  // (a tab focus or local midnight) — the confirmed Today-vs-Money divergence.
+  // Comparing against end-of-day keeps the documented "through today,
+  // inclusive" semantics for BOTH consumers, so a same-day recording counts
+  // immediately and identically wherever this shared window is read. Anything
+  // dated tomorrow or later is still excluded.
+  const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+  return d >= monthStart && d <= endOfToday;
 }
 
 export interface MonthlySummary {

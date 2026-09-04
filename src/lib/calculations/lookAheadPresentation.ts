@@ -67,7 +67,13 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
   const savingsLine = result.informationalPlan.combinedCents !== null && result.informationalPlan.combinedCents > 0
     ? `You also plan to set aside about ${fmtGap(result.informationalPlan.combinedCents)} for savings and goals — not subtracted here`
     : undefined;
-  const protectedLine = result.protectedSavings.cents > 0 ? 'Protected savings not included' : undefined;
+  // Truthful, claim-free heading for the excluded-savings disclosure: it makes
+  // no assertion that Nolie invented, moved, locked or reserved anything, nor
+  // that the customer explicitly chose this — the accounts are simply savings
+  // balances not opted into spendable money. The body (with the account count
+  // and the opening amount) is composed by the sheet from the authoritative
+  // `protectedSavings.accounts`.
+  const protectedLine = result.protectedSavings.cents > 0 ? 'Savings not included in this estimate' : undefined;
   const subtext = "Based on what you've recorded and scheduled";
   const lowestLine = `Lowest estimated cash position: ${fmtCents(result.lowest.cents)} on ${fmtDate(result.lowest.date)}`;
 
@@ -104,7 +110,7 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
     state: 'positive_no_shortfall',
     headline: `Estimated position by ${dateStr}`,
     headlineAmount: fmtCents(result.targetCents),
-    cashFlowLine: 'No dated shortfall detected',
+    cashFlowLine: 'No shortfall found in this estimate',
     lowestLine,
     assumedLine,
     savingsLine,

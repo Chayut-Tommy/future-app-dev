@@ -37,20 +37,43 @@ export function DatePickerModal({
   visible,
   value,
   minimumDate,
+  maximumDate,
   onChange,
   onClose,
+  onConfirm,
+  onCancel,
+  onDismiss,
 }: {
   visible: boolean;
   /** The date to open the calendar on — the currently selected date, or a
    * sensible fallback (e.g. `new Date()`) when nothing is selected yet. */
   value: Date;
   minimumDate?: Date;
+  /** Optional latest selectable date — forwarded to the native picker so dates
+   * beyond it are UNSELECTABLE on device (not merely rejected after the fact).
+   * Additive and optional: every existing caller that omits it is unchanged. */
+  maximumDate?: Date;
   /** Fired on every date the user taps — the caller's own state is the
    * single source of truth for what's currently selected; this component
    * never buffers a separate "pending" value of its own. */
   onChange: (date: Date) => void;
   onClose: () => void;
+  /** Pass C.1 — the user COMMITTED the selection (iOS "Done"; Android's own
+   * OK/"set"). Dateless: the latest value already arrived via `onChange`.
+   * Falls back to `onClose` when omitted, so existing callers are unchanged. */
+  onConfirm?: () => void;
+  /** Pass C.1 — the user DISMISSED without committing (iOS backdrop /
+   * hardware back; Android "dismissed"). Falls back to `onClose` when
+   * omitted, so existing callers are unchanged. */
+  onCancel?: () => void;
+  /** Pass C.1 — forwarded to the iOS Modal's own `onDismiss`; fires once RN
+   * reports the native dismissal has actually finished, so a caller can
+   * present another modal ONLY after this one is fully gone (the iOS
+   * single-modal-at-a-time handshake). iOS only; never called on Android. */
+  onDismiss?: () => void;
 }) {
+  const confirm = onConfirm ?? onClose;
+  const cancel = onCancel ?? onClose;
   const { colors, semantic, radius, spacing, typography, scheme } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -75,8 +98,13 @@ export function DatePickerModal({
           insetBottom: insets.bottom,
         }),
         title: { ...typography.heading, color: colors.textPrimary, marginBottom: spacing.sm },
-        footer: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.md },
-        doneButton: { paddingHorizontal: spacing.xl, flex: 0 },
+        // C1-04 — a visible Cancel sits opposite Done, so cancelling never
+        // relies on a hidden gesture, the backdrop or platform-back alone.
+        footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md, marginTop: spacing.md },
+        cancelButton: { paddingHorizontal: spacing.lg, flex: 0 },
+        // C1-05 — date selection is NEUTRAL: the confirm action uses the Ocean
+        // Blue interactive token, not the positive/success green.
+        doneButton: { paddingHorizontal: spacing.xl, flex: 0, backgroundColor: semantic.interactive },
       }),
     [colors, semantic, radius, spacing, typography, insets.bottom]
   );
@@ -90,18 +118,26 @@ export function DatePickerModal({
         mode="date"
         display="default"
         minimumDate={minimumDate}
+        maximumDate={maximumDate}
+        testID="native-date-picker"
         onChange={(event, date) => {
-          onClose();
-          if (event.type === 'dismissed') return;
-          if (date) onChange(date);
+          // Android's dialog is a single-shot: "set" is a commit, "dismissed"
+          // is a cancel. It is a native dialog (not an RN Modal), so it never
+          // competes with a presented Modal and needs no dismissal handshake.
+          if (event.type === 'dismissed' || !date) {
+            cancel();
+            return;
+          }
+          onChange(date);
+          confirm();
         }}
       />
     ) : null;
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={cancel} onDismiss={onDismiss}>
+      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={cancel} testID="date-picker-backdrop">
         {/* Swallow the tap so it doesn't bubble to the backdrop's onPress —
             the calendar itself owns every gesture inside this boundary,
             never the sheet behind or underneath it. */}
@@ -112,14 +148,17 @@ export function DatePickerModal({
             mode="date"
             display="inline"
             minimumDate={minimumDate}
+            maximumDate={maximumDate}
+            testID="native-date-picker"
             themeVariant={scheme}
-            accentColor={colors.accent}
+            accentColor={semantic.interactive}
             onChange={(event, date) => {
               if (date) onChange(date);
             }}
           />
           <View style={styles.footer}>
-            <Button label="Done" onPress={onClose} style={styles.doneButton} />
+            <Button label="Cancel" variant="secondary" onPress={cancel} style={styles.cancelButton} testID="date-picker-cancel" />
+            <Button label="Done" onPress={confirm} style={styles.doneButton} testID="date-picker-done" />
           </View>
         </TouchableOpacity>
       </TouchableOpacity>

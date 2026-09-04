@@ -12,7 +12,43 @@ import { computeAdHocIncome } from './monthlySummary';
 import { recurringOccurrencesInRange } from './recurringSchedule';
 import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { resolveSavingsAllocationMonthly } from './savingsAllocation';
-import { computeBnplCostsForWindow } from './bnpl';
+import { computeBnplCostsForWindow, listBnplLiabilities, projectBnplOccurrencesForLiability } from './bnpl';
+import { occurrenceIdForCard, occurrenceIdForRecurringItem } from './occurrenceSources';
+
+/** The kind of forward-dated commitment a single Available-Until-Payday
+ * deduction came from. Mirrors the three (and only three) dated things
+ * `cycleBillsExpected` is the sum of — recurring fixed bills, credit-card
+ * repayments, and BNPL instalments. Savings and goal reservations are a
+ * monthly-policy PRORATION, not a dated event, so they are deliberately
+ * NOT represented here (see `datedDeductions`). */
+export type AupDeductionKind = 'bill' | 'card' | 'bnpl';
+
+/** One forward-dated commitment that Available Until Payday actually
+ * subtracts, surfaced as READ-ONLY presentation metadata for the pay-cycle
+ * timeline's event markers (Pass C.1). This is provenance, not a second
+ * calculation: every entry is built from the exact same occurrence AUP
+ * already summed into `cycleBillsExpected` above, with the same window,
+ * amount and inclusion rule — `sum(datedDeductions.amount)` reconciles to
+ * `cycleBillsExpected` by construction. It exists precisely so the timeline
+ * NEVER has to re-enumerate recurrences or re-select repayments to decide
+ * which events reduced this amount: if it isn't in this list, AUP did not
+ * deduct it, and it must not be shown as included. Income is deliberately
+ * absent — AUP adds no future income to the displayed amount. */
+export interface AupDatedDeduction {
+  /** Canonical A1 occurrence identity when resolvable — the same identity
+   * authority the projected-events stream uses, so a marker can be grouped
+   * and de-duplicated consistently across AUP and scenario modes. */
+  occurrenceId?: string;
+  kind: AupDeductionKind;
+  sourceId: string;
+  /** The calendar day this commitment falls on (AUP's native `Date`; the
+   * timeline's pure adapter converts to an integer calendar-day offset). */
+  date: Date;
+  /** Positive dollars subtracted for this one occurrence — the SAME
+   * per-occurrence value already inside `cycleBillsExpected`. Never signed. */
+  amount: number;
+  label: string;
+}
 
 export interface SafeToSpendResult {
   discretionaryPool: number;
@@ -153,6 +189,10 @@ export interface SafeToSpendResult {
    * counts twice), not a monthly-equivalent rate. Forward-looking (not yet
    * reflected in `includedMoneyBalance`), so this is subtracted from it. */
   cycleBillsExpected: number;
+  /** Read-only presentation provenance for the pay-cycle timeline markers —
+   * every forward-dated occurrence that makes up `cycleBillsExpected`, in
+   * date order. Never a separate calculation; see `AupDatedDeduction`. */
+  datedDeductions: AupDatedDeduction[];
   /** This cycle's share of the savings target, prorated by cycle length
    * against a 30-day month. Forward-looking, same reasoning as bills. */
   cycleSavingsReserved: number;
@@ -443,11 +483,18 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   // resolver used everywhere else a credit card's repayment commitment
   // feeds a calculation, so Available Until Payday can never disagree with
   // Typical Money Flow/Allocation about what a card "costs" this cycle.
-  const cycleCreditCardRepayments = data.creditCards.reduce((sum, card) => {
-    const daysUntil = daysUntilDue(card.dueDay, today);
-    const dueDate = new Date(startOfDay(today).getTime() + daysUntil * 86400000);
-    return dueDate.getTime() <= cycleEnd.getTime() ? sum + resolveExpectedMonthlyRepayment(card) : sum;
-  }, 0);
+  // Built as a per-card list (not a bare reduce) so the exact card
+  // repayments folded into the total can also be surfaced, unchanged, as
+  // timeline provenance below. `cycleCreditCardRepayments` is still the sum
+  // of these same values — the number is byte-identical to the prior reduce.
+  const cardRepaymentOccurrences = data.creditCards
+    .map((card) => {
+      const daysUntil = daysUntilDue(card.dueDay, today);
+      const dueDate = new Date(startOfDay(today).getTime() + daysUntil * 86400000);
+      return { card, dueDate, amount: resolveExpectedMonthlyRepayment(card) };
+    })
+    .filter((o) => o.dueDate.getTime() <= cycleEnd.getTime());
+  const cycleCreditCardRepayments = cardRepaymentOccurrences.reduce((sum, o) => sum + o.amount, 0);
   // BNPL, capped to the exact pay-cycle window (not a monthly rate) — the
   // billOccurrences query above never picks these up (BNPL-linked items
   // are always isFixed: false), so this is a genuinely additive term, never
@@ -458,6 +505,50 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   // other bill in this same cycle exactly, with no separate boundary rule.
   const cycleBnplExpected = computeBnplCostsForWindow(data, windowFrom, cycleEnd);
   const cycleBillsExpected = cycleRecurringBills + cycleCreditCardRepayments + cycleBnplExpected;
+
+  // Read-only timeline provenance (Pass C.1) — the individual forward-dated
+  // occurrences that make up `cycleBillsExpected`, surfaced so the pay-cycle
+  // timeline's markers never re-enumerate recurrences or re-select
+  // repayments. Each entry reuses the SAME occurrence, window and amount
+  // already summed above; nothing here is recomputed, and no occurrence AUP
+  // did not deduct can appear. BNPL occurrences come from the identical
+  // per-liability primitive `computeBnplCostsForWindow` sums internally, so
+  // the surfaced set and the total can never disagree. Zero-amount entries
+  // are dropped (they contribute nothing to the total and are not events);
+  // the list is date-ordered for deterministic rendering.
+  const datedDeductions: AupDatedDeduction[] = [
+    ...billOccurrences.map(({ item, date }) => ({
+      occurrenceId: occurrenceIdForRecurringItem(data, item, date),
+      kind: 'bill' as const,
+      sourceId: item.id,
+      date,
+      amount: item.amount,
+      label: item.label,
+    })),
+    ...cardRepaymentOccurrences.map(({ card, dueDate, amount }) => ({
+      occurrenceId: occurrenceIdForCard(card, dueDate),
+      kind: 'card' as const,
+      sourceId: card.id,
+      date: dueDate,
+      amount,
+      label: `${card.label} credit card repayment`,
+    })),
+    ...listBnplLiabilities(data).flatMap((liability) =>
+      projectBnplOccurrencesForLiability(data, liability, windowFrom, cycleEnd).map((occ) => {
+        const link = data.recurringItems.find((r) => r.active && r.linkedLiabilityId === liability.id && r.type === 'expense');
+        return {
+          occurrenceId: link ? occurrenceIdForRecurringItem(data, link, occ.date) : undefined,
+          kind: 'bnpl' as const,
+          sourceId: liability.id,
+          date: occ.date,
+          amount: occ.amountCents / 100,
+          label: link?.label ?? liability.label,
+        };
+      })
+    ),
+  ]
+    .filter((d) => d.amount > 0)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
 
   // Savings/goal targets are a monthly policy, not a dated event of their
   // own — this cycle's fair share is the monthly figure prorated by how
@@ -591,6 +682,7 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     cycleIncomeExpected,
     cycleAdHocIncome,
     cycleBillsExpected,
+    datedDeductions,
     cycleSavingsReserved,
     cycleGoalsReserved,
     cycleDiscretionaryPool,

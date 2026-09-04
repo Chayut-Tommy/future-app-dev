@@ -27,6 +27,19 @@ import i18n from '../../i18n';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet';
+import { LookAheadSheet } from '../../components/money/LookAheadSheet';
+import { TimeframeSheet } from '../../components/money/TimeframeSheet';
+import { ScenarioPositionCard } from '../../components/money/ScenarioPositionCard';
+import { buildAupRail, buildScenarioRail } from '../../lib/calculations/timelineMarkers';
+import { computeLookAheadProjection } from '../../lib/calculations/lookAheadProjection';
+import { selectLookAheadPresentation } from '../../lib/calculations/lookAheadPresentation';
+import { computeProjectedEvents } from '../../lib/calculations/projectedEvents';
+import { LocalDate, localDateFromDate, addCalendarDays } from '../../lib/calculations/localCalendar';
+import { TimeframeStage, TimeframeEvent, timeframeFlowTransition } from '../../lib/calculations/timeframeFlow';
+import { DatePickerModal } from '../../components/shared/DatePickerModal';
+import { useAnnounceOnce } from '../../hooks/useAnnounceOnce';
+import { sendFocusEvent } from '../../lib/a11yFocus';
+import { computeMoneyBalanceStatus } from '../../lib/calculations/liquidAssets';
 import { OptionsSheet } from '../../components/shared/OptionsSheet';
 import { frequencyAdverb } from '../../lib/calculations/incomeEngine';
 import { SavingsAllocationDetailSheet } from '../../components/money/SavingsAllocationDetailSheet';
@@ -98,6 +111,12 @@ function formatMoney(value: number): string {
  * header renders and which ScrollView instance owns the section-focus
  * scroll differ. Never a second/duplicate Money screen.
  */
+const TIMEFRAME_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** One consistent human date format for the Pass C.1 timeframe labels. */
+function fmtTimeframeLocal(d: LocalDate): string {
+  return `${d.day} ${TIMEFRAME_MONTHS[d.month - 1]} ${d.year}`;
+}
+
 export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: boolean; pushed?: boolean }) {
   const { data } = useAppState();
   const navigation = useNavigation<any>();
@@ -190,6 +209,41 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const [thisMonthInfoVisible, setThisMonthInfoVisible] = useState(false);
   const [debtCoachVisible, setDebtCoachVisible] = useState(false);
   const [selectBalancesVisible, setSelectBalancesVisible] = useState(false);
+  // Pass C.1 — the timeframe of the ONE Money card is EPHEMERAL, UI-local and
+  // read-only: it is never written to AppData/AsyncStorage, never persisted,
+  // and never survives a restart. `timeframeTarget` null = the authoritative
+  // Available-Until-Payday view; a LocalDate = a selected-date scenario.
+  const [timeframeTarget, setTimeframeTarget] = useState<LocalDate | null>(null);
+  // Pass C.1 correction — the sheet↔picker transition is an explicit state
+  // machine, NOT two independently-toggled modals. iOS can only present one
+  // Modal at a time: presenting the date picker while the chooser sheet is
+  // still up made the picker silently never appear. The stage sequences the
+  // handoff through the sheet/picker native dismissal-completion events, so
+  // only one is ever presented at once:
+  //   idle ─Change date→ chooser
+  //   chooser ─Choose a date (iOS)→ chooser_to_picker ─sheet onDismiss→ picker
+  //   chooser ─Choose a date (Android)→ picker           (dialog, no conflict)
+  //   picker ─confirm→ idle (target set)
+  //   picker ─cancel (iOS)→ picker_to_chooser ─picker onDismiss→ chooser
+  //   picker ─cancel (Android)→ chooser
+  const [timeframeStage, setTimeframeStage] = useState<TimeframeStage>('idle');
+  // Every stage change goes through the pure transition function, so the whole
+  // sheet↔picker order is deterministic and unit-tested (see timeframeFlow.ts).
+  const dispatchTimeframe = useCallback((event: TimeframeEvent) => {
+    setTimeframeStage((s) => timeframeFlowTransition(s, event));
+  }, []);
+  // The picker's live value (controlled) and a synchronous mirror the commit
+  // reads — Android fires change+confirm in one tick, so the ref avoids a
+  // stale-state read at confirm time.
+  const [pickerValue, setPickerValue] = useState<Date>(() => new Date());
+  const pendingPickerDateRef = useRef<Date | null>(null);
+  // The "Why this amount?" detail drill-down for the selected-date scenario.
+  const [lookAheadVisible, setLookAheadVisible] = useState(false);
+  // A selected date (and the timeframe control itself) stays reachable
+  // whenever a valid opening balance exists (even with no known payday); a
+  // critical balance/setup problem keeps AUP's own setup treatment and hides
+  // the timeframe affordance.
+  const canLookAhead = computeMoneyBalanceStatus(data.assets) === 'valid';
   // Select Balances correction (2026-08-08) — was a dedicated Cash-preset
   // AddWealthItemModal; now reuses the same general Add Anything chooser
   // the global + button opens (Everyday/Cash/Savings are all real tiles in
@@ -208,6 +262,112 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const currentDate = useCurrentLocalDate();
   const safeToSpend = useMemo(() => computeSafeToSpend(data, currentDate), [data, currentDate]);
   const heroCopy = useMemo(() => computeMoneyHeroCopy(data), [data]);
+
+  // Pass C.1 — the as-of local date the timeframe maths run against (A2
+  // integer civil date; never `Date.now()`, never ms division).
+  const asOfLocal = useMemo(() => {
+    try {
+      return localDateFromDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate()));
+    } catch {
+      return null;
+    }
+  }, [currentDate]);
+
+  // AUP-mode event rail — built purely from THIS result's own dated-deduction
+  // provenance, so a marker can never disagree with the amount shown.
+  const aupRail = useMemo(() => (asOfLocal ? buildAupRail(safeToSpend, asOfLocal) : null), [safeToSpend, asOfLocal]);
+
+  // Selected-date (scenario) mode — the Pass B estimate, its presentation, and
+  // the scenario rail built from the SAME canonical A3 stream Pass B consumed.
+  const scenario = useMemo(() => {
+    if (!asOfLocal || !timeframeTarget) return null;
+    const result = computeLookAheadProjection(data, asOfLocal, timeframeTarget);
+    const presentation = selectLookAheadPresentation(result);
+    const rail = result.available
+      ? buildScenarioRail(computeProjectedEvents(data, asOfLocal, timeframeTarget, { windowStart: asOfLocal }).events, result)
+      : null;
+    return { result, presentation, rail };
+  }, [data, asOfLocal, timeframeTarget]);
+
+  // Timeframe row labels — one consistent, human date format per mode.
+  const paydayLocal = useMemo(() => {
+    try {
+      return safeToSpend.hasKnownPayday ? localDateFromDate(safeToSpend.cycleEnd) : null;
+    } catch {
+      return null;
+    }
+  }, [safeToSpend.hasKnownPayday, safeToSpend.cycleEnd]);
+  const timeframeValueLabel = useMemo(() => {
+    if (timeframeTarget) return `By ${fmtTimeframeLocal(timeframeTarget)}`;
+    return paydayLocal ? `Until payday · ${fmtTimeframeLocal(paydayLocal)}` : 'Until payday';
+  }, [timeframeTarget, paydayLocal]);
+
+  // Announce the new position exactly once after a scenario is selected, and
+  // move a11y focus to the updated result heading — both via the shared Wave
+  // 11 helpers (announce-once; the supported sendAccessibilityEvent focus
+  // mechanism, never the deprecated findNodeHandle/setAccessibilityFocus).
+  const scenarioHeadingRef = useRef<View>(null);
+  const scenarioAnnouncement = useMemo(() => {
+    if (!timeframeTarget || !scenario?.presentation) return null;
+    const p = scenario.presentation;
+    return [p.headline, p.headlineAmount, p.cashFlowLine].filter(Boolean).join('. ');
+  }, [timeframeTarget, scenario?.presentation]);
+  useAnnounceOnce(scenarioAnnouncement);
+  const focusedTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!timeframeTarget || !scenario?.presentation) {
+      focusedTargetRef.current = null;
+      return;
+    }
+    const key = `${timeframeTarget.year}-${timeframeTarget.month}-${timeframeTarget.day}`;
+    if (focusedTargetRef.current === key) return;
+    focusedTargetRef.current = key;
+    sendFocusEvent(scenarioHeadingRef);
+  }, [timeframeTarget, scenario?.presentation]);
+
+  // --- Pass C.1 timeframe state machine (sheet ↔ native picker) ------------
+  // Picker bounds: tomorrow through as-of + 90 local calendar days, inclusive
+  // (A2 integer arithmetic), converted to Date only at the native boundary.
+  const localToJsDate = (d: LocalDate) => new Date(d.year, d.month - 1, d.day);
+  const pickerMinDate = useMemo(() => (asOfLocal ? localToJsDate(addCalendarDays(asOfLocal, 1)) : undefined), [asOfLocal]);
+  const pickerMaxDate = useMemo(() => (asOfLocal ? localToJsDate(addCalendarDays(asOfLocal, 90)) : undefined), [asOfLocal]);
+
+  const openTimeframeChooser = useCallback(() => dispatchTimeframe({ type: 'open_chooser' }), [dispatchTimeframe]);
+  const handleTimeframeSelect = useCallback(
+    (target: LocalDate | null) => {
+      setTimeframeTarget(target);
+      dispatchTimeframe({ type: 'close' });
+    },
+    [dispatchTimeframe]
+  );
+  const handleChooseDate = useCallback(() => {
+    if (!asOfLocal) return;
+    // Seed the picker on the current target (if any) or tomorrow, and mirror
+    // it synchronously so a same-tick confirm (Android) reads the right date.
+    const seed = timeframeTarget ? localToJsDate(timeframeTarget) : localToJsDate(addCalendarDays(asOfLocal, 1));
+    pendingPickerDateRef.current = seed;
+    setPickerValue(seed);
+    dispatchTimeframe({ type: 'choose_date', isIOS: Platform.OS === 'ios' });
+  }, [asOfLocal, timeframeTarget, dispatchTimeframe]);
+  const handleChooserDismissed = useCallback(() => dispatchTimeframe({ type: 'chooser_dismissed' }), [dispatchTimeframe]);
+  const handlePickerChange = useCallback((date: Date) => {
+    pendingPickerDateRef.current = date;
+    setPickerValue(date);
+  }, []);
+  const handlePickerConfirm = useCallback(() => {
+    const d = pendingPickerDateRef.current;
+    if (d) {
+      try {
+        setTimeframeTarget(localDateFromDate(new Date(d.getFullYear(), d.getMonth(), d.getDate())));
+      } catch {
+        /* ignore an out-of-range programmatic value; Pass B would reject it anyway */
+      }
+    }
+    dispatchTimeframe({ type: 'close' });
+  }, [dispatchTimeframe]);
+  const handlePickerCancel = useCallback(() => dispatchTimeframe({ type: 'cancel_picker', isIOS: Platform.OS === 'ios' }), [dispatchTimeframe]);
+  const handlePickerDismissed = useCallback(() => dispatchTimeframe({ type: 'picker_dismissed' }), [dispatchTimeframe]);
+
   const hasActiveGoals = data.goals.some((g) => g.status === 'active');
   // Starts at the same 30-day planning horizon as before; growing this as
   // the user scrolls near the bottom of the (now fixed-height) timeline box
@@ -389,6 +549,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     if (!parsed) return;
     pendingMoneyFocusRef.current = parsed;
     attemptMoneySectionFocus();
+    // Pass C.1 — arriving at the Available-Until-Payday section from Today's
+    // Briefing (or any AUP-targeted navigation) always shows the authoritative
+    // baseline, never a timeframe scenario left selected from a prior visit.
+    if (parsed.target === 'aup') {
+      setTimeframeTarget(null);
+      setTimeframeStage('idle');
+    }
     if (parsed.target === 'timeline' && parsed.targetDateKey) {
       setTimelineFocusTarget({ requestId: parsed.requestId, dateKey: parsed.targetDateKey, occurrenceKeys: parsed.targetOccurrenceKeys ?? [] });
     }
@@ -679,15 +846,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         attentionIconBadge: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
         attentionText: { ...typeStyle('body', locale), fontSize: 13, color: colors.textPrimary, flex: 1 },
 
-        // End of Month Outlook
-        outlookBox: {
-          backgroundColor: colors.surfaceMuted,
-          borderRadius: radius.control,
-          padding: spacing.md,
-        },
-        outlookLabel: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: spacing.xs },
-        outlookValue: { ...typeStyle('titleSection', locale), fontSize: 24, fontWeight: '700', color: colors.textPrimary, marginBottom: spacing.xs },
-        outlookExplainer: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, lineHeight: 17 },
+        // Pass C — the low-emphasis Look Ahead entry inside the AUP detail.
+        // (The dormant End of Month Outlook styles were removed with its
+        // retirement — it no longer renders; see the retirement note below.)
 
         // Spending Tracker insight cards
         insightCard: {
@@ -780,6 +941,26 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           attemptMoneySectionFocus();
         }}
       >
+        {/* Pass C.1 — ONE card, two modes. A selected timeframe swaps the AUP
+            hero for the scenario view IN PLACE (same shell, same slot); it is
+            never a second card. */}
+        {timeframeTarget && scenario ? (
+          <ScenarioPositionCard
+            presentation={scenario.presentation}
+            result={scenario.result}
+            rail={scenario.rail}
+            targetDateLabel={new Date(timeframeTarget.year, timeframeTarget.month - 1, timeframeTarget.day).toLocaleDateString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })}
+            onOpenTimeframe={openTimeframeChooser}
+            onWhyThisAmount={() => setLookAheadVisible(true)}
+            onBackToPayday={() => setTimeframeTarget(null)}
+            headingRef={scenarioHeadingRef}
+          />
+        ) : (
         <SafeToSpendHero
           safeToSpend={safeToSpend}
           hasActiveGoals={hasActiveGoals}
@@ -829,7 +1010,11 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           // own timeline are one surface. They were siblings here, which is
           // why they read as unrelated stacked cards.
           paydayProgress={paydayProgress}
+          aupRail={aupRail}
+          onOpenTimeframe={canLookAhead ? openTimeframeChooser : undefined}
+          timeframeValueLabel={timeframeValueLabel}
         />
+        )}
       </View>
 
       {/* Which balances feed that estimate — and, said in words, that
@@ -839,6 +1024,11 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       {hasIncludedBalances ? (
         <IncludedBalancesRow summary={includedBalances} onManage={() => setSelectBalancesVisible(true)} />
       ) : null}
+
+      {/* Pass C.1 — the Look Ahead scenario is no longer a detached entry; it
+          is integrated into the ONE Money card via the in-card Timeframe row.
+          The detail drill-down opens from the scenario card's "Why this
+          amount?" action. */}
 
       {/* This Month — a factual, calendar-month recorded-activity summary
           (PRD ask, Finding #40) placed directly under the hero so credit-
@@ -1126,6 +1316,37 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         visible={selectBalancesVisible}
         onClose={() => setSelectBalancesVisible(false)}
         onAddBalance={() => setAddBalanceChooserVisible(true)}
+      />
+      {/* Pass C.1 — the Timeframe chooser and the native date picker are
+          sequenced by `timeframeStage` so only ONE is presented at a time
+          (iOS single-modal handshake via each Modal's native onDismiss). The
+          chooser and picker write nothing. */}
+      <TimeframeSheet
+        visible={timeframeStage === 'chooser'}
+        asOf={currentDate}
+        paydayDate={paydayLocal}
+        onSelect={handleTimeframeSelect}
+        onChooseDate={handleChooseDate}
+        onClose={() => setTimeframeStage('idle')}
+        onDismissed={handleChooserDismissed}
+      />
+      <DatePickerModal
+        visible={timeframeStage === 'picker'}
+        value={pickerValue}
+        minimumDate={pickerMinDate}
+        maximumDate={pickerMaxDate}
+        onChange={handlePickerChange}
+        onConfirm={handlePickerConfirm}
+        onCancel={handlePickerCancel}
+        onClose={handlePickerCancel}
+        onDismiss={handlePickerDismissed}
+      />
+      <LookAheadSheet
+        visible={lookAheadVisible}
+        data={data}
+        asOf={asOfLocal}
+        target={timeframeTarget}
+        onClose={() => setLookAheadVisible(false)}
       />
       {/* Correction round, 2026-08-10 — scoped to cash/savings/everyday
           only (requirement 5), and returns to Select Balances on EITHER

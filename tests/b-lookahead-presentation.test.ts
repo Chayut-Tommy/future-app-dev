@@ -23,7 +23,7 @@ console.log('=== positive, no shortfall ===');
   const d = base(); d.assets = [everyday('cba', 1200)]; d.recurringItems = [income('wage', 2500, isoT(2026, 8, 25))];
   const p = sel(d, '2026-08-15', '2026-09-30');
   assert('1a. state positive_no_shortfall', p.state === 'positive_no_shortfall');
-  assert('1b. headline names the date; amount is positive; no dated shortfall', /Estimated position by 30 Sep 2026/.test(p.headline) && p.headlineAmount === '$6,200.00' && p.cashFlowLine === 'No dated shortfall detected');
+  assert('1b. headline names the date; amount is positive; no dated shortfall', /Estimated position by 30 Sep 2026/.test(p.headline) && p.headlineAmount === '$6,200.00' && p.cashFlowLine === 'No shortfall found in this estimate');
   assert('1c. assumed income surfaced (payday target)', !!p.assumedLine && /scheduled income on 30 Sep 2026|assumed income/i.test(p.assumedLine!));
   assert('1d. subtext + no forbidden words', p.subtext === "Based on what you've recorded and scheduled" && noForbidden(p));
 }
@@ -77,7 +77,7 @@ console.log('\n=== savings/goals + protected lines ===');
   d.recurringItems = [income('wage', 2500, isoT(2026, 8, 25))];
   const p = sel(d, '2026-08-15', '2026-09-30');
   assert('5a. savings/goals line is informational ("not subtracted here")', !!p.savingsLine && /not subtracted here/.test(p.savingsLine!));
-  assert('5b. protected savings line present', p.protectedLine === 'Protected savings not included');
+  assert('5b. excluded-savings heading is truthful and claim-free (no protected/kept/locked/reserved)', p.protectedLine === 'Savings not included in this estimate');
   assert('5c. headline amount still $6,200.00 (informational plan did NOT reduce it)', p.headlineAmount === '$6,200.00');
 }
 

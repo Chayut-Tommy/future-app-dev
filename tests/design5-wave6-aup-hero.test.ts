@@ -224,16 +224,27 @@ console.log('\n=== 6. Accessibility (Class A + C) ===');
   // RECONCILED (Wave 11): the local spokenMoney helper moved verbatim into
   // the shared pure authority (lib/a11yStrings.spokenSignedDisplay) — same
   // rewrite, now Class A tested in design5-wave11-a11y.
-  assert('6a. the amount is announced with its measure label', /accessibilityLabel=\{`Estimated remaining, \$\{spokenSignedDisplay\(presentation\.displayAmount!\)\}`\}/.test(CODE));
+  // Pass C.1 — the payday mode now presents the amount through the two-region
+  // layout (AVAILABLE / ABOUT PER DAY), which announces "LABEL: value. caption"
+  // per region; the no-payday cash-runway state keeps its single named figure.
+  // Both still announce the amount together with its measure label.
+  assert(
+    '6a. the amount is announced with its measure label (two-region payday layout + no-payday figure)',
+    /accessibilityLabel=\{`\$\{r\.label\}: \$\{spokenSignedDisplay\(r\.value\)\}\. \$\{r\.caption\}`\}/.test(read('src/components/money/CardResultRegions.tsx')) &&
+      /accessibilityLabel=\{`\$\{presentation\.heading\}, \$\{spokenSignedDisplay\(presentation\.displayAmount!\)\}`\}/.test(CODE)
+  );
   assert('6b. a negative amount is spoken as "minus", never left as a glyph — via the shared sign authority', /spokenSignedDisplay/.test(CODE) && /replace\(\/\^\[-−\]\/, 'minus '\)/.test(read('src/lib/a11yStrings.ts')));
   assert('6c. the information control is labelled and hinted', /accessibilityLabel="How this was calculated"/.test(CODE) && /accessibilityHint="Opens every line behind this estimate"/.test(CODE));
   assert('6d. and is 44x44 in its own right, not via hitSlop', /heroInfoButton: \{[\s\S]{0,200}width: designLayout\.touchTargetMin,[\s\S]{0,60}height: designLayout\.touchTargetMin/.test(CODE));
   assert('6e. the payday rail carries one complete spoken equivalent', /accessible accessibilityLabel=\{progress\.spoken\}/.test(BAR));
   assert('6f. its inner parts are not announced separately', /importantForAccessibility="no-hide-descendants"/.test(BAR));
-  assert('6g. no nested interactive control inside the hero body', (() => {
+  assert('6g. hero body keeps a tight, labelled set of controls (info, one CTA, the C.1 Timeframe row) — never a big ambiguous tap target', (() => {
     const shell = CODE.indexOf('style={styles.heroShell}');
     const figure = CODE.indexOf('money-aup-hero-figure');
-    return CODE.slice(shell, figure).split('<TouchableOpacity').length - 1 <= 2;
+    // Pass C.1 adds the in-card Timeframe row (a single, labelled, ≥44pt
+    // control — not the whole card), so the accepted ceiling here is 3: the
+    // info button, the at-most-one state CTA, and the Timeframe row.
+    return CODE.slice(shell, figure).split('<TouchableOpacity').length - 1 <= 3;
   })());
   assert('6h. the figure never truncates or ellipsises', /numberOfLines=\{1\}/.test(CODE) && !/adjustsFontSizeToFit/.test(CODE));
   assert('6i. and scales within the role\'s own tested cap rather than shrinking uncontrolled', /maxFontSizeMultiplier=\{heroFigureType\.maxFontSizeMultiplier\}/.test(CODE));

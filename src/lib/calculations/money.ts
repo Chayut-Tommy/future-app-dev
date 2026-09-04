@@ -118,3 +118,32 @@ export function moneyAmountToCents(value: number): ValidatedMoneyAmount {
   if (!Number.isSafeInteger(roundedCents)) return { valid: false };
   return { valid: true, cents: roundedCents };
 }
+
+/**
+ * Pass C.1 — the ONE money formatter for the Available-Until-Payday card's
+ * dominant figures, in BOTH modes. Rounds to whole cents first (so a float
+ * like 5117.9999 never leaks), then shows NO fractional part when the value
+ * is a whole number of dollars ("$5,118") and exactly two places when it
+ * genuinely has cents ("$5,118.42"). This is what keeps the card from
+ * inconsistently alternating between "$5,118" and "$5,118.00" while still
+ * preserving non-zero cents where they materially exist. Sign-aware; a
+ * non-finite input is shown as "$0" rather than "$NaN".
+ */
+export function formatDollarsCentsAware(value: number): string {
+  if (!Number.isFinite(value)) return '$0';
+  const cents = Math.round(value * 100);
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100);
+  const frac = abs % 100;
+  return frac === 0
+    ? `${sign}$${whole.toLocaleString()}`
+    : `${sign}$${whole.toLocaleString()}.${String(frac).padStart(2, '0')}`;
+}
+
+/** Cents-native sibling of `formatDollarsCentsAware` for the Pass B engine's
+ * exact-integer-cent outputs (never re-introduces float rounding). */
+export function formatCentsCentsAware(cents: number): string {
+  if (!Number.isFinite(cents)) return '$0';
+  return formatDollarsCentsAware(Math.round(cents) / 100);
+}

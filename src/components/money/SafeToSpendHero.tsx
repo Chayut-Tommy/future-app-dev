@@ -10,6 +10,10 @@ import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { ON_FEATURED, onFeaturedAlpha, designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { MoneyPaydayBar } from './MoneyPaydayBar';
+import { CardResultRegions } from './CardResultRegions';
+import { TimelineLegend } from './TimelineLegend';
+import { formatCentsCentsAware } from '../../lib/calculations/money';
+import { TimelineRail } from '../../lib/calculations/timelineMarkers';
 import { PaydayProgress, MONEY_MEASURE_DEFINITIONS } from '../../lib/calculations/moneyComposition';
 import { textStyle, typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -75,6 +79,9 @@ export function SafeToSpendHero({
   onReviewInWealth,
   heroCopy,
   paydayProgress = null,
+  aupRail = null,
+  onOpenTimeframe,
+  timeframeValueLabel,
   showManageBalancesLink = true,
 }: {
   safeToSpend: SafeToSpendResult;
@@ -113,6 +120,17 @@ export function SafeToSpendHero({
    * same SafeToSpendResult this hero is showing; the hero recomputes
    * nothing and infers no date. */
   paydayProgress?: PaydayProgress | null;
+  /** Pass C.1 — the event-aware pay-cycle rail (markers for the exact
+   * commitments AUP subtracted + the payday endpoint). Presentation only,
+   * built by the pure `timelineMarkers` adapter from this same result's
+   * `datedDeductions`; when null the rail falls back to the plain bar. */
+  aupRail?: TimelineRail | null;
+  /** Pass C.1 — opens the Timeframe sheet. When provided (and an estimate can
+   * be shown), a clearly-tappable minimum-size row is rendered inside the
+   * card so the user can switch between "until payday" and a selected date. */
+  onOpenTimeframe?: () => void;
+  /** The current timeframe row value, e.g. "Until payday · 10 Sep". */
+  timeframeValueLabel?: string;
   /** Wave 6 correction C — suppressed once Money renders its dedicated
    * whole-row balances control beneath the hero, so exactly ONE Manage
    * affordance is visible per state. Defaults true so every other consumer
@@ -204,6 +222,27 @@ export function SafeToSpendHero({
           borderTopColor: semantic.border,
         },
         heroProvenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
+        // Pass C.1 — the TOP horizon control: the payday date and a single
+        // "Change date" button, directly under the identity row so horizon
+        // selection reads as part of the principal card. The button is a
+        // labelled ≥44pt target, never the whole card.
+        dateControlRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: designSpacing.sm,
+          marginTop: designSpacing.xs,
+          flexWrap: 'wrap',
+        },
+        dateText: { ...typeStyle('titleSection', locale), color: semantic.textPrimary, flexShrink: 1 },
+        changeDateButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: designSpacing.xs,
+          minHeight: designLayout.touchTargetMin,
+          paddingHorizontal: designSpacing.sm,
+        },
+        changeDateText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
         // One interactive action per state — Ocean Blue, never the retired
         // brown/warning CTA, and 44pt in its own right.
         heroCta: {
@@ -368,6 +407,10 @@ export function SafeToSpendHero({
     /** Only states that can genuinely produce an estimate show the rail. */
     showRail?: boolean;
     showInfo?: boolean;
+    /** Pass C.1 — the TOP horizon control (payday date + "Change date"),
+     * rendered directly under the identity row so timeframe selection reads
+     * as part of the principal card rather than a footer afterthought. */
+    dateControl?: React.ReactNode;
     children?: React.ReactNode;
   }) {
     const warning = opts.tone === 'warning';
@@ -411,6 +454,8 @@ export function SafeToSpendHero({
             ) : null}
           </View>
 
+          {opts.dateControl}
+
           {opts.children}
 
           {opts.stateText ? (
@@ -445,7 +490,8 @@ export function SafeToSpendHero({
 
           {opts.showRail && paydayProgress && !paydayProgress.unknown ? (
             <View style={styles.heroFooter} testID="money-aup-hero-payday">
-              <MoneyPaydayBar progress={paydayProgress} />
+              <MoneyPaydayBar progress={paydayProgress} rail={aupRail} />
+              <TimelineLegend mode="aup" />
             </View>
           ) : null}
 
@@ -550,31 +596,68 @@ export function SafeToSpendHero({
   // hero architecture rather than a "new hero" beside an "old setup card".
   const amountVisible = presentation.amountVisible && !!presentation.displayAmount;
 
+  // Pass C.1 — the TOP horizon control: the payday date and a single "Change
+  // date" button. Rendered only when an estimate is shown and the owning
+  // screen wired up timeframe selection (onOpenTimeframe).
+  const paydayDateLabel = safeToSpend.hasKnownPayday
+    ? safeToSpend.cycleEnd.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+  const dateControl =
+    amountVisible && onOpenTimeframe ? (
+      <View style={styles.dateControlRow}>
+        {paydayDateLabel ? (
+          <Text style={styles.dateText} testID="money-aup-hero-date" maxFontSizeMultiplier={1.8}>
+            {paydayDateLabel}
+          </Text>
+        ) : (
+          <View />
+        )}
+        <TouchableOpacity
+          style={styles.changeDateButton}
+          onPress={onOpenTimeframe}
+          accessibilityRole="button"
+          accessibilityLabel={`Change date. Currently ${timeframeValueLabel ?? 'until payday'}`}
+          accessibilityHint="Choose whether to see your position until payday or by a selected date"
+          testID="money-timeframe-row"
+        >
+          <Ionicons name="calendar-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+          <Text style={styles.changeDateText}>Change date</Text>
+        </TouchableOpacity>
+      </View>
+    ) : null;
+
+  // The two result regions: the authoritative AUP amount (cents-aware,
+  // preserving material cents) on the left, and the ACCEPTED daily amount and
+  // day count on the right — the daily figure is reused verbatim from the
+  // engine (rounded, "About"), never recomputed here. The right region is
+  // dropped when there is no meaningful daily figure (today is payday).
+  const showDaily = amountVisible && safeToSpend.hasKnownPayday && safeToSpend.daysRemaining > 0;
+
   return renderShell({
     testID: 'money-aup-hero',
     stateText: amountVisible ? null : presentation.primaryCopy,
-    supportText:
-      amountVisible && safeToSpend.daysRemaining > 0
-        ? `About ${formatMoney(Math.max(0, safeToSpend.dailyAllowance))} a day for the next ${safeToSpend.daysRemaining} day${
-            safeToSpend.daysRemaining === 1 ? '' : 's'
-          }.`
-        : presentation.supportingCopy,
+    supportText: amountVisible ? null : presentation.supportingCopy,
     showRail: true,
+    dateControl,
     children: amountVisible ? (
-      <>
-        <Text style={styles.heroMeasureLabel}>Estimated remaining</Text>
-        {/* One semantic unit — the sign can never separate from its amount,
-            and the figure never truncates. */}
-        <Text
-          style={styles.heroFigure}
-          maxFontSizeMultiplier={heroFigureType.maxFontSizeMultiplier}
-          numberOfLines={1}
-          accessibilityLabel={`Estimated remaining, ${spokenSignedDisplay(presentation.displayAmount!)}`}
-          testID="money-aup-hero-figure"
-        >
-          {presentation.displayAmount}
-        </Text>
-      </>
+      <CardResultRegions
+        left={{
+          label: 'AVAILABLE',
+          value: presentation.amountCents !== null ? formatCentsCentsAware(presentation.amountCents) : (presentation.displayAmount ?? ''),
+          caption: 'Total remaining',
+          testID: 'money-aup-hero-figure',
+        }}
+        right={
+          showDaily
+            ? {
+                label: 'ABOUT PER DAY',
+                value: formatMoney(Math.max(0, safeToSpend.dailyAllowance)),
+                caption: `For the next ${safeToSpend.daysRemaining} day${safeToSpend.daysRemaining === 1 ? '' : 's'}`,
+                testID: 'money-aup-hero-daily',
+              }
+            : null
+        }
+      />
     ) : null,
   });
 }

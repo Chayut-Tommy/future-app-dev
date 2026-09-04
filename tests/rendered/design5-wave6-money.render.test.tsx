@@ -20,6 +20,7 @@ import { RootNavigator } from '../../src/navigation/RootNavigator';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { AppData } from '../../src/types/models';
 import { computeSafeToSpend } from '../../src/lib/calculations/safeToSpend';
+import { formatDollarsCentsAware } from '../../src/lib/calculations/money';
 import { computeThisMonthRecordedSummary } from '../../src/lib/calculations/monthlySummary';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -249,13 +250,19 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
     expect(heroJson).toContain('money-aup-hero-payday');
     expect(heroJson).toContain('money-payday-bar');
 
-    // The dominant figure, reconciled to the engine, as one unsplit unit.
+    // Pass C.1 — the payday mode now presents the amount through the two-region
+    // layout (AVAILABLE / ABOUT PER DAY). The dominant AVAILABLE figure still
+    // reconciles to the engine, now shown cents-aware (no ".00" on whole
+    // dollars, real cents preserved) and, per §4.3, NEVER truncated to force
+    // the two columns (no numberOfLines={1}, no shrink-to-fit).
     const sts = computeSafeToSpend(data, new Date());
     const figure = view.getByTestId('money-aup-hero-figure', { includeHiddenElements: true });
-    expect(String(figure.props.children)).toBe(`$${Math.round(sts.cycleRemainingPool).toLocaleString()}`);
-    expect(figure.props.numberOfLines).toBe(1);
-    expect(figure.props.style.fontSize).toBeGreaterThanOrEqual(40);
-    expect(figure.props.accessibilityLabel).toMatch(/^Estimated remaining, \$/);
+    expect(String(figure.props.children)).toBe(formatDollarsCentsAware(sts.cycleRemainingPool));
+    expect(figure.props.numberOfLines).toBeUndefined();
+    expect(figure.props.adjustsFontSizeToFit).toBeFalsy();
+    expect(view.getByText('AVAILABLE')).toBeTruthy();
+    expect(view.getByText('ABOUT PER DAY')).toBeTruthy();
+    expect(view.getByTestId('money-aup-hero-daily', { includeHiddenElements: true })).toBeTruthy();
 
     // Identity is one heading; the icon is decorative.
     expect(view.getByRole('header', { name: 'Available until payday' })).toBeTruthy();
