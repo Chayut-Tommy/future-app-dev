@@ -22,9 +22,20 @@
 import { LookAheadResult } from './lookAheadProjection';
 import { ProjectedEvent } from './projectedEvents';
 import { AupDatedDeduction, SafeToSpendResult } from './safeToSpend';
-import { LocalDate, compareLocalDates, daysBetween, localDateFromDate, localDatesEqual, toISODate } from './localCalendar';
+import { LocalDate, addCalendarDays, compareLocalDates, daysBetween, localDateFromDate, localDatesEqual, toISODate } from './localCalendar';
 
-export type RailMarkerKind = 'income' | 'bill' | 'payday_endpoint' | 'shortfall';
+/**
+ * `income` — assumed income the selected-date estimate INCLUDES (scenario).
+ * `expected_income` (Pass C.3) — scheduled income before the payday that AUP
+ *   deliberately does NOT add (the amount shown never changes because of it);
+ *   surfaced on Pay cycle progress only so a dated expected payment the
+ *   customer can see in What happens next is also discoverable on the rail.
+ */
+export type RailMarkerKind = 'income' | 'expected_income' | 'bill' | 'payday_endpoint' | 'shortfall';
+
+/** Pass C.3 — the accessible meaning of an expected-income marker on the pay
+ * cycle rail, stated every time so it is never mistaken for money AUP added. */
+export const EXPECTED_INCOME_NOT_INCLUDED = 'Expected income — not included in Available until payday';
 
 export interface RailMarker {
   /** Stable, deterministic key (kind + iso date) for React and dedup. */
@@ -79,7 +90,7 @@ function aggregate(
     if (existing) {
       existing.count += 1;
       existing.signedAmount = (existing.signedAmount ?? 0) + e.signedAmount;
-      existing.label = `${existing.count} payments on ${toISODate(e.date)} — ${money(existing.signedAmount ?? 0)}`;
+      existing.label = `${existing.count} payments on ${toISODate(e.date)} — ${money(existing.signedAmount ?? 0)}${e.kind === 'expected_income' ? ` · ${EXPECTED_INCOME_NOT_INCLUDED}` : ''}`;
     } else {
       byKey.set(key, {
         key,
@@ -103,7 +114,7 @@ function aggregate(
  * null when there is no known payday — AUP shows no rail in that state, and
  * this adapter never invents one.
  */
-export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate): TimelineRail | null {
+export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate, expectedIncome: ProjectedEvent[] = []): TimelineRail | null {
   if (!safeToSpend.hasKnownPayday) return null;
   const startDate = localDateFromDate(safeToSpend.cycleStart);
   const endDate = localDateFromDate(safeToSpend.cycleEnd);
@@ -117,7 +128,23 @@ export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate): T
     label: `${d.label} — ${money(-Math.abs(d.amount))}`,
   }));
 
-  const markers = aggregate(billEntries, startDate, spanDays);
+  // Pass C.3 — expected income BEFORE the payday, read from the SAME canonical
+  // A3 occurrence stream What happens next lists (never re-enumerated here).
+  // Marked, never added: `included` is false and the label says so. Income
+  // ON the payday date is the payday endpoint below (also not included), so
+  // it is not duplicated as a second marker.
+  const expectedEntries = expectedIncome
+    .filter((e) => e.sourceKind === 'income' && e.inclusion === 'included' && e.signedCents > 0)
+    .filter((e) => compareLocalDates(e.date, asOf) >= 0 && compareLocalDates(e.date, endDate) < 0)
+    .map((e) => ({
+      kind: 'expected_income' as const,
+      date: e.date,
+      signedAmount: e.signedCents / 100,
+      included: false,
+      label: `${e.label} — ${money(e.signedCents / 100)} · ${EXPECTED_INCOME_NOT_INCLUDED}`,
+    }));
+
+  const markers = aggregate([...billEntries, ...expectedEntries], startDate, spanDays);
   // Payday endpoint — pinned to the right edge, disclosed as not included.
   markers.push({
     key: `payday_endpoint:${toISODate(endDate)}`,
@@ -130,10 +157,15 @@ export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate): T
   });
 
   const billCount = billEntries.length;
+  const expectedCount = expectedEntries.length;
+  const expectedPart =
+    expectedCount === 0
+      ? ''
+      : ` ${expectedCount} expected income ${expectedCount === 1 ? 'payment' : 'payments'} before then ${expectedCount === 1 ? 'is' : 'are'} shown but not included in this amount.`;
   const spoken =
     billCount === 0
-      ? `No bills are scheduled before your next payday on ${toISODate(endDate)}, which is not included in this amount.`
-      : `${billCount} scheduled ${billCount === 1 ? 'bill' : 'bills'} before your next payday on ${toISODate(endDate)}. Your payday is not included in this amount.`;
+      ? `No bills are scheduled before your next payday on ${toISODate(endDate)}, which is not included in this amount.${expectedPart}`
+      : `${billCount} scheduled ${billCount === 1 ? 'bill' : 'bills'} before your next payday on ${toISODate(endDate)}. Your payday is not included in this amount.${expectedPart}`;
 
   return { mode: 'aup', startDate, endDate, spanDays, markers, spoken };
 }
@@ -191,4 +223,145 @@ export function buildScenarioRail(events: ProjectedEvent[], result: Extract<Look
  * consumers can test endpoint coincidence without re-deriving day math. */
 export function railDatesEqual(a: LocalDate, b: LocalDate): boolean {
   return localDatesEqual(a, b);
+}
+
+// ---------------------------------------------------------------------------
+// Pass C.2 closure — density-aware presentation of long horizons
+// ---------------------------------------------------------------------------
+
+/** Above this many days the rail groups markers by week (presentation only). */
+export const RAIL_WEEKLY_THRESHOLD_DAYS = 35;
+
+export interface RailBin {
+  key: string;
+  startDate: LocalDate;
+  endDate: LocalDate;
+  /** 0..1 position of the bin's centre (weekly) or the exact date (exact). */
+  position: number;
+  incomeCount: number;
+  /** Pass C.3 — expected (not included) income payments on the AUP rail. */
+  expectedIncomeCount: number;
+  billCount: number;
+  shortfallCount: number;
+  paydayEndpointCount: number;
+  incomeAmount: number;
+  expectedIncomeAmount: number;
+  billAmount: number;
+  /** The kinds present, in the fixed glyph order, each once. */
+  kinds: RailMarkerKind[];
+  /** The underlying markers — nothing is dropped, only grouped. */
+  markers: RailMarker[];
+  /** Screen-reader sentence: exact counts, date range and categories. */
+  label: string;
+}
+
+export interface RailDensity {
+  mode: 'exact' | 'weekly';
+  bins: RailBin[];
+  /** Customer-facing note when grouping is in effect, else null. */
+  disclosure: string | null;
+}
+
+const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const KIND_ORDER_DENSITY: Record<RailMarkerKind, number> = { income: 0, expected_income: 0, bill: 1, shortfall: 2, payday_endpoint: 3 };
+const dayLong = (d: LocalDate) => `${d.day} ${MONTHS_LONG[d.month - 1]}`;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+const KIND_PHRASE: Record<RailMarkerKind, string> = {
+  income: 'assumed income',
+  expected_income: 'expected income, not included',
+  bill: 'bills or repayments',
+  shortfall: 'a potential shortfall',
+  payday_endpoint: 'your payday, not included',
+};
+
+function binLabel(bin: Omit<RailBin, 'label'>, weekly: boolean): string {
+  // Exact (per-date) mode keeps the accepted C1-01 phrasing — date + kinds
+  // ("10 September: assumed income and bills or repayments"); the detailed
+  // counts/amounts are what a grouped WEEK needs to stay understandable.
+  if (!weekly) {
+    const parts = bin.kinds.map((k) => KIND_PHRASE[k]);
+    const list = parts.length <= 1 ? parts[0] ?? 'no events' : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+    return `${dayLong(bin.startDate)}: ${list}`;
+  }
+  const when = weekly
+    ? localDatesEqual(bin.startDate, bin.endDate)
+      ? dayLong(bin.startDate)
+      : `${dayLong(bin.startDate)} to ${dayLong(bin.endDate)}`
+    : dayLong(bin.startDate);
+  const parts: string[] = [];
+  if (bin.incomeCount > 0) parts.push(`${plural(bin.incomeCount, 'assumed income payment', 'assumed income payments')} totalling ${money(bin.incomeAmount)}`);
+  if (bin.expectedIncomeCount > 0) parts.push(`${plural(bin.expectedIncomeCount, 'expected income payment', 'expected income payments')} totalling ${money(bin.expectedIncomeAmount)}, not included`);
+  if (bin.billCount > 0) parts.push(`${plural(bin.billCount, 'bill or repayment', 'bills or repayments')} totalling ${money(bin.billAmount)}`);
+  if (bin.shortfallCount > 0) parts.push('a potential shortfall');
+  if (bin.paydayEndpointCount > 0) parts.push('your payday, not included');
+  const list = parts.length <= 1 ? parts[0] ?? 'no events' : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${when}: ${list}`;
+}
+
+function makeBin(key: string, startDate: LocalDate, endDate: LocalDate, position: number, markers: RailMarker[], weekly: boolean): RailBin {
+  const sorted = [...markers].sort((a, b) => compareLocalDates(a.date, b.date) || KIND_ORDER_DENSITY[a.kind] - KIND_ORDER_DENSITY[b.kind]);
+  const count = (k: RailMarkerKind) => sorted.filter((m) => m.kind === k).reduce((n, m) => n + m.count, 0);
+  const amount = (k: RailMarkerKind) => sorted.filter((m) => m.kind === k).reduce((n, m) => n + (m.signedAmount ?? 0), 0);
+  const kinds = [...new Set(sorted.map((m) => m.kind))].sort((a, b) => KIND_ORDER_DENSITY[a] - KIND_ORDER_DENSITY[b]);
+  const partial = {
+    key,
+    startDate,
+    endDate,
+    position,
+    incomeCount: count('income'),
+    expectedIncomeCount: count('expected_income'),
+    billCount: count('bill'),
+    shortfallCount: count('shortfall'),
+    paydayEndpointCount: count('payday_endpoint'),
+    incomeAmount: amount('income'),
+    expectedIncomeAmount: amount('expected_income'),
+    billAmount: amount('bill'),
+    kinds,
+    markers: sorted,
+  };
+  return { ...partial, label: binLabel(partial, weekly) };
+}
+
+/**
+ * Decide how densely a rail is drawn. Short horizons keep one bin per local
+ * date (exact, C1-01 clusters). Long horizons (> RAIL_WEEKLY_THRESHOLD_DAYS)
+ * group markers into 7-day bins from the rail start, each bin centred on its
+ * midpoint and disclosed as "Events grouped by week". Canonical events and
+ * the underlying markers are untouched; nothing is dropped from any
+ * calculation — this is presentation only. Deterministic and pure.
+ */
+export function resolveRailDensity(rail: TimelineRail, thresholdDays: number = RAIL_WEEKLY_THRESHOLD_DAYS): RailDensity {
+  const weekly = rail.spanDays > thresholdDays;
+  if (!weekly) {
+    const byDate = new Map<string, RailMarker[]>();
+    for (const m of rail.markers) {
+      const iso = toISODate(m.date);
+      (byDate.get(iso) ?? byDate.set(iso, []).get(iso)!).push(m);
+    }
+    const bins = [...byDate.entries()].map(([iso, markers]) => makeBin(iso, markers[0].date, markers[0].date, markers[0].position, markers, false));
+    bins.sort((a, b) => compareLocalDates(a.startDate, b.startDate));
+    return { mode: 'exact', bins, disclosure: null };
+  }
+  const byWeek = new Map<number, RailMarker[]>();
+  for (const m of rail.markers) {
+    const offset = Math.max(0, daysBetween(rail.startDate, m.date));
+    const w = Math.floor(offset / 7);
+    (byWeek.get(w) ?? byWeek.set(w, []).get(w)!).push(m);
+  }
+  const bins = [...byWeek.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([w, markers]) => {
+      const startOffset = w * 7;
+      const endOffset = Math.min(rail.spanDays, startOffset + 6);
+      const start = addDaysLocal(rail.startDate, startOffset);
+      const end = addDaysLocal(rail.startDate, endOffset);
+      const position = Math.min(1, Math.max(0, (startOffset + endOffset) / 2 / rail.spanDays));
+      return makeBin(`week-${w}`, start, end, position, markers, true);
+    });
+  return { mode: 'weekly', bins, disclosure: 'Events grouped by week' };
+}
+
+function addDaysLocal(d: LocalDate, n: number): LocalDate {
+  return addCalendarDays(d, n);
 }

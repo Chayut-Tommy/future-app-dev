@@ -15,9 +15,10 @@ import { SafeToSpendHero } from '../../src/components/money/SafeToSpendHero';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { computeSafeToSpend } from '../../src/lib/calculations/safeToSpend';
 import { computeLookAheadProjection } from '../../src/lib/calculations/lookAheadProjection';
+import { computeDailyGuide } from '../../src/lib/calculations/dailyGuide';
 import { selectLookAheadPresentation } from '../../src/lib/calculations/lookAheadPresentation';
 import { computeProjectedEvents } from '../../src/lib/calculations/projectedEvents';
-import { buildAupRail, buildScenarioRail } from '../../src/lib/calculations/timelineMarkers';
+import { buildAupRail } from '../../src/lib/calculations/timelineMarkers';
 import { computeMoneyHeroCopy } from '../../src/lib/calculations/moneyPersona';
 import { localDateFromDate } from '../../src/lib/calculations/localCalendar';
 import type { AppData, Asset, RecurringItem } from '../../src/types/models';
@@ -49,55 +50,62 @@ function buildScenario(data: AppData, asOfY: number, asOfM: number, asOfD: numbe
   const result = computeLookAheadProjection(data, asOf, target);
   if (!result.available) throw new Error('fixture should be available');
   const presentation = selectLookAheadPresentation(result);
-  const rail = buildScenarioRail(computeProjectedEvents(data, asOf, target, { windowStart: asOf }).events, result);
-  return { result, presentation, rail };
+  const events = computeProjectedEvents(data, asOf, target, { windowStart: asOf }).events;
+  const guide = computeDailyGuide(data, asOf, target, result);
+  return { result, presentation, events, guide };
 }
 
-describe('Pass C.1 — scenario card (two-region, selected-date mode)', () => {
+describe('Pass C.1 — scenario card (two-region, selected-date mode) — C.2 hierarchy', () => {
   beforeEach(async () => { await AsyncStorage.clear(); });
 
-  test('shows Estimated position + Lowest position regions, Scenario label, rail, legend and actions; never a per-day figure', async () => {
+  test('shows Estimated balance + About per day regions, rail, legend and actions; no Scenario badge; no AUP-only content', async () => {
     const data = base();
+    data.user = { ...data.user, monthlyIncome: 5000, payFrequency: 'monthly', nextPayday: isoT(2026, 9, 10) } as typeof data.user;
     data.assets = [everyday('cba', 6300)];
     data.recurringItems = [bill('rent', 1000, isoT(2026, 8, 31))];
-    const { result, presentation, rail } = buildScenario(data, 2026, 8, 30, 2026, 8, 31);
+    const { result, presentation, events, guide } = buildScenario(data, 2026, 8, 30, 2026, 8, 31);
     await render(
       <Wrap>
-        <ScenarioPositionCard presentation={presentation} result={result} rail={rail} targetDateLabel="Mon, 31 Aug 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => {}} onBackToPayday={() => {}} />
+        <ScenarioPositionCard presentation={presentation} result={result} guide={guide} events={events} targetDateLabel="Mon, 31 Aug 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => {}} onBackToPayday={() => {}} />
       </Wrap>
     );
     expect(await screen.findByTestId('money-scenario-card')).toBeOnTheScreen();
-    expect(screen.getByText('Estimated position by')).toBeOnTheScreen();
+    expect(screen.getByText('Estimated balance by')).toBeOnTheScreen();
     expect(screen.getByText('Mon, 31 Aug 2026')).toBeOnTheScreen();
-    expect(screen.getByText('ESTIMATED POSITION')).toBeOnTheScreen();
-    expect(screen.getByText('LOWEST POSITION')).toBeOnTheScreen();
-    expect(screen.getByTestId('money-scenario-amount')).toHaveTextContent('$5,300');
-    expect(screen.getByTestId('money-scenario-lowest')).toHaveTextContent('$5,300');
-    expect(screen.getByText('Scenario')).toBeOnTheScreen();
-    expect(screen.getByTestId('money-scenario-rail')).toBeOnTheScreen();
+    expect(screen.getByText('ESTIMATED BALANCE')).toBeOnTheScreen();
+    expect(screen.getByText('ABOUT PER DAY')).toBeOnTheScreen();
+    expect(screen.getByTestId('money-scenario-amount')).toHaveTextContent(/^\$5,300$/);
+    // Guarded guide for ONE allocation day (30 Aug): ($6,300 − $1,000 rent on 31 Aug) ÷ 1 — never $5,300 ÷ 1 of the estimate.
+    expect(screen.getByTestId('money-scenario-daily')).toHaveTextContent(/^\$5,300$/);
+    expect(screen.getByText('For tomorrow')).toBeOnTheScreen(); // C.2 closure: natural one-day wording
+    expect(screen.queryByText('Scenario')).toBeNull();
+    expect(screen.queryByText('LOWEST POSITION')).toBeNull();
+    expect(screen.getByTestId('money-scenario-timeline')).toBeOnTheScreen(); // C.5: Timeline to [date] rail
     expect(screen.getByTestId('timeline-legend')).toBeOnTheScreen();
     expect(screen.getByTestId('money-back-to-payday')).toBeOnTheScreen();
     expect(screen.getByTestId('money-why-this-amount')).toBeOnTheScreen();
     // Never AUP-only content.
     expect(screen.queryByText(/available until payday/i)).toBeNull();
-    expect(screen.queryByText('ABOUT PER DAY')).toBeNull();
+    expect(screen.queryByText('AVAILABLE')).toBeNull();
     expect(screen.queryByText(/pay cycle/i)).toBeNull();
   }, 30000);
 
-  test('shortfall replaces the lowest region with a positive shortfall amount and first date', async () => {
+  test('shortfall: the cash-flow status carries the possible shortfall; the guide defers to it', async () => {
     const data = base();
+    data.user = { ...data.user, monthlyIncome: 3000, payFrequency: 'monthly', nextPayday: isoT(2026, 9, 20) } as typeof data.user;
     data.assets = [everyday('cba', 500)];
     data.recurringItems = [bill('rent', 1200, isoT(2026, 9, 5)), income('salary', 3000, isoT(2026, 9, 20))];
-    const { result, presentation, rail } = buildScenario(data, 2026, 8, 31, 2026, 9, 25);
+    const { result, presentation, events, guide } = buildScenario(data, 2026, 8, 31, 2026, 9, 25);
     if (!result.available || !result.firstShortfall) throw new Error('fixture should have a shortfall');
     await render(
       <Wrap>
-        <ScenarioPositionCard presentation={presentation} result={result} rail={rail} targetDateLabel="Fri, 25 Sep 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => {}} onBackToPayday={() => {}} />
+        <ScenarioPositionCard presentation={presentation} result={result} guide={guide} events={events} targetDateLabel="Fri, 25 Sep 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => {}} onBackToPayday={() => {}} />
       </Wrap>
     );
     await screen.findByTestId('money-scenario-card');
-    expect(screen.getByText('POTENTIAL SHORTFALL')).toBeOnTheScreen();
-    expect(screen.getByTestId('money-scenario-shortfall')).toBeOnTheScreen();
+    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^Possible shortfall of \$700 on 5 Sep$/);
+    expect(screen.getByTestId('money-scenario-daily')).toHaveTextContent(/^—$/);
+    expect(screen.queryByText('POTENTIAL SHORTFALL')).toBeNull();
     expect(screen.queryByText('LOWEST POSITION')).toBeNull();
   }, 30000);
 
@@ -106,11 +114,11 @@ describe('Pass C.1 — scenario card (two-region, selected-date mode)', () => {
     const data = base();
     data.assets = [everyday('cba', 6300)];
     data.recurringItems = [bill('rent', 1000, isoT(2026, 8, 31))];
-    const { result, presentation, rail } = buildScenario(data, 2026, 8, 30, 2026, 8, 31);
+    const { result, presentation, events, guide } = buildScenario(data, 2026, 8, 30, 2026, 8, 31);
     let back = false, why = false;
     await render(
       <Wrap>
-        <ScenarioPositionCard presentation={presentation} result={result} rail={rail} targetDateLabel="Mon, 31 Aug 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => { why = true; }} onBackToPayday={() => { back = true; }} />
+        <ScenarioPositionCard presentation={presentation} result={result} guide={guide} events={events} targetDateLabel="Mon, 31 Aug 2026" onOpenTimeframe={() => {}} onWhyThisAmount={() => { why = true; }} onBackToPayday={() => { back = true; }} />
       </Wrap>
     );
     await user.press(await screen.findByTestId('money-back-to-payday'));

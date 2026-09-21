@@ -32,7 +32,7 @@ export function isCardOccurrenceHandled(card: CreditCard, occurrenceDate: Date):
   return card.handledReminderOccurrenceDate === occurrenceDate.toISOString().slice(0, 10);
 }
 
-export type SmartReminderKind = 'salary_check' | 'bill_overdue' | 'bill_due_soon' | 'card_due_soon' | 'bnpl_repayment_due' | 'loan_repayment_due';
+export type SmartReminderKind = 'salary_check' | 'bill_overdue' | 'bill_due_soon' | 'card_due_soon' | 'bnpl_repayment_due' | 'loan_repayment_due' | 'repayment_source_review';
 
 export interface SmartReminder {
   id: string;
@@ -104,6 +104,29 @@ function loanLinkedItemIds(data: AppData): Set<string> {
     if (!item.linkedLiabilityId) continue;
     const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
     if (liability && LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type)) ids.add(item.id);
+  }
+  return ids;
+}
+
+/** Pass C.5.2.1 — the one line a `repayment_source_review` reminder says. */
+export const REPAYMENT_SOURCE_REVIEW_COPY =
+  'This repayment is linked to a loan Nolie can no longer find, so it can’t be recorded yet. Open this bill to link it to a loan again, or remove it.';
+
+/** Pass C.5.2.1 — FAIL CLOSED. A bill that carries a `linkedLiabilityId` is
+ * structurally a repayment. If that liability can no longer be resolved to a
+ * supported family (it was deleted, or its type is not one Nolie records
+ * repayments for), the bill must never drop back into the ordinary one-sided
+ * "Mark as paid" path. These ids are excluded from every ordinary bill tier and
+ * raise a calm, non-financial `repayment_source_review` reminder instead. (A
+ * loan whose recorded balance is zero, negative or not a finite number keeps
+ * the existing Gate 4 treatment: no repayment reminder at all.) */
+function unresolvedRepaymentItemIds(data: AppData): Set<string> {
+  const ids = new Set<string>();
+  for (const item of data.recurringItems) {
+    if (!item.linkedLiabilityId) continue;
+    const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+    const supported = !!liability && (liability.type === 'bnpl' || LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type));
+    if (!supported) ids.add(item.id);
   }
   return ids;
 }
@@ -191,9 +214,10 @@ export function computeRankedReminder(
 ): SmartReminder | null {
   const bnplItemIds = bnplLinkedItemIds(data);
   const loanItemIds = loanLinkedItemIds(data);
+  const reviewItemIds = unresolvedRepaymentItemIds(data);
 
   const overdueBillCandidates = data.recurringItems
-    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && !loanItemIds.has(r.id))
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && !loanItemIds.has(r.id) && !reviewItemIds.has(r.id))
     .filter((r) => daysBetween(new Date(r.nextDueDate), today) > 0);
   for (const overdueBill of overdueBillCandidates) {
     const reminder: SmartReminder = {
@@ -308,7 +332,7 @@ export function computeRankedReminder(
   // confirm-time — this function never fabricates or caches a stale
   // amount/date of its own.
   const dueTodayBillCandidates = data.recurringItems
-    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && !loanItemIds.has(r.id))
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && !loanItemIds.has(r.id) && !reviewItemIds.has(r.id))
     .filter((r) => daysBetween(new Date(r.nextDueDate), today) === 0);
   for (const dueTodayBill of dueTodayBillCandidates) {
     const reminder: SmartReminder = {
@@ -362,35 +386,69 @@ export function computeRankedReminder(
     if (!isExcluded(reminder)) return reminder;
   }
 
-  // Final Pass 2D device-test correction, item 4 — a loan-linked bill due
-  // tomorrow keeps the ordinary informational bill_due_soon reminder (no
-  // dedicated repayment action offered a day early, matching BNPL's own
-  // choice not to have a "due soon" tier at all), but its body line is
-  // now explicit that the figure is the customer's own RECORDED repayment,
-  // never a lender-confirmed amount due — the same factual-copy principle
-  // applied to the card_due_soon reminder below.
-  // 2D-NARROW correction, Gate 4 — a zero-balance loan item is excluded
-  // here too (loanItemHasPositiveBalance), not just from the overdue/
-  // due-today tiers above: showing "due tomorrow" for an already-paid-off
-  // loan would be the same false future-repayment reminder this gate
-  // exists to suppress, just one tier earlier.
+  // Pass C.5.2.1 — a repayment whose liability cannot be resolved (see
+  // unresolvedRepaymentItemIds): due tomorrow, today or earlier. No amount is
+  // offered for recording and no transition is reachable from it.
+  const reviewCandidates = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense' && reviewItemIds.has(r.id))
+    .filter((r) => daysBetween(today, new Date(r.nextDueDate)) <= 1);
+  for (const reviewItem of reviewCandidates) {
+    const reminder: SmartReminder = {
+      id: `repayment-review-${reviewItem.id}-${reviewItem.nextDueDate}`,
+      kind: 'repayment_source_review',
+      title: `Review your ${reviewItem.label}`,
+      body: REPAYMENT_SOURCE_REVIEW_COPY,
+      recurringItemId: reviewItem.id,
+      occurrenceDate: reviewItem.nextDueDate,
+    };
+    if (!isExcluded(reminder)) return reminder;
+  }
+
+  // Ordinary bill due tomorrow. Pass C.5.2 (founder decision, Option A) — a
+  // structurally loan-linked bill is EXCLUDED here, exactly like BNPL, and gets
+  // its own `loan_repayment_due` candidate below. Previously it stayed a
+  // `bill_due_soon` reminder, whose "Mark as paid" ran the ordinary one-sided
+  // bill transition: the funding account fell but the liability never moved
+  // and the whole payment was presented as spending — a different result from
+  // the same repayment recorded a day later through the loan form.
   const dueSoonCandidates = data.recurringItems
-    .filter(
-      (r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && (!loanItemIds.has(r.id) || loanItemHasPositiveBalance(data, r))
-    )
+    .filter((r) => r.active && r.type === 'expense' && !bnplItemIds.has(r.id) && !loanItemIds.has(r.id) && !reviewItemIds.has(r.id))
     .filter((r) => daysBetween(today, new Date(r.nextDueDate)) === 1);
   for (const dueSoon of dueSoonCandidates) {
-    const isLoanLinked = loanItemIds.has(dueSoon.id);
     const reminder: SmartReminder = {
       id: `bill-soon-${dueSoon.id}-${dueSoon.nextDueDate}`,
       kind: 'bill_due_soon',
       title: `Your ${dueSoon.label} is due tomorrow`,
-      body: isLoanLinked
-        ? `Your recorded repayment of $${Math.round(dueSoon.amount).toLocaleString()} is due ${shortDate(dueSoon.nextDueDate)}.`
-        : `$${Math.round(dueSoon.amount).toLocaleString()} due ${shortDate(dueSoon.nextDueDate)}.`,
+      body: `$${Math.round(dueSoon.amount).toLocaleString()} due ${shortDate(dueSoon.nextDueDate)}.`,
       recurringItemId: dueSoon.id,
       amount: dueSoon.amount,
       occurrenceDate: dueSoon.nextDueDate,
+    };
+    if (!isExcluded(reminder)) return reminder;
+  }
+
+  // Pass C.5.2 — loan, due exactly tomorrow. Same tier as an ordinary bill due
+  // tomorrow (as BNPL's own due-soon candidate below), same structural test as
+  // the overdue / due-today loan tiers above (linked liability TYPE, positive
+  // recorded balance — never a name, amount, category or date), and the same
+  // kind, so SmartReminderCard offers "Record repayment" and
+  // ReminderDetailSheet opens the ONE existing loan-repayment form. The body
+  // keeps the factual "your recorded repayment" wording.
+  const dueSoonLoanCandidates = data.recurringItems
+    .filter((r) => r.active && r.type === 'expense' && loanItemIds.has(r.id) && loanItemHasPositiveBalance(data, r))
+    .filter((r) => daysBetween(today, new Date(r.nextDueDate)) === 1);
+  for (const dueSoonLoanItem of dueSoonLoanCandidates) {
+    const liability = data.liabilities.find((l) => l.id === dueSoonLoanItem.linkedLiabilityId)!;
+    const reminder: SmartReminder = {
+      id: `loan-soon-${dueSoonLoanItem.id}-${dueSoonLoanItem.nextDueDate}`,
+      kind: 'loan_repayment_due',
+      title: `Your ${dueSoonLoanItem.label} is due tomorrow`,
+      body: `Your recorded repayment of $${Math.round(dueSoonLoanItem.amount).toLocaleString()} is due ${shortDate(dueSoonLoanItem.nextDueDate)}.`,
+      recurringItemId: dueSoonLoanItem.id,
+      liabilityId: liability.id,
+      liabilityType: liability.type,
+      amount: dueSoonLoanItem.amount,
+      occurrenceDate: dueSoonLoanItem.nextDueDate,
     };
     if (!isExcluded(reminder)) return reminder;
   }

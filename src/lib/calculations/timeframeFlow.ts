@@ -1,3 +1,4 @@
+import { LocalDate, localDatesEqual } from './localCalendar';
 /**
  * Pass C.1 correction — the Available-Until-Payday card's timeframe chooser ↔
  * native date-picker transition, as an explicit, pure state machine.
@@ -59,3 +60,26 @@ export function timeframeFlowTransition(stage: TimeframeStage, event: TimeframeE
 /** Exactly one surface is presented per stage — and never two at once. */
 export const timeframeSheetVisible = (stage: TimeframeStage): boolean => stage === 'chooser';
 export const datePickerVisible = (stage: TimeframeStage): boolean => stage === 'picker';
+
+// --- Pass C.2 correction — which chooser row is ACTIVE -----------------------
+
+export type TimeframeSelection = 'payday' | 'month_end' | 'custom';
+
+/** Pure: which Timeframe-sheet row the card's current target corresponds to.
+ * `null` → Until payday; the month-end quick choice's exact date → End of this
+ * month; anything else → a custom date. Display-only; never writes. */
+export function resolveTimeframeSelection(
+  currentTarget: LocalDate | null | undefined,
+  monthEndTarget: LocalDate | null,
+  /** Pass C.2 closure — HOW the current target was chosen. When known it wins
+   * outright, so a custom date that happens to equal month end (or payday, or
+   * a payday that falls on month end) still highlights the row the customer
+   * actually used. Date equality is only the fallback for callers that did
+   * not record the mode. */
+  mode?: TimeframeSelection | null
+): TimeframeSelection {
+  if (!currentTarget) return 'payday';
+  if (mode === 'month_end' || mode === 'custom') return mode;
+  if (monthEndTarget && localDatesEqual(currentTarget, monthEndTarget)) return 'month_end';
+  return 'custom';
+}

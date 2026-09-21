@@ -300,6 +300,15 @@ export interface Transaction {
    * `principalAmount` absent), and not-a-loan-repayment
    * (`isLoanRepayment` absent). Absent on every other transaction. */
   isLoanRepayment?: boolean;
+  /** Pass C.5.2 — the liability a loan repayment was recorded against, captured
+   * at recording time beside `principalAmount` (its exact liability effect) and
+   * `appliedBalanceEffect` (its exact funding effect). Additive and optional:
+   * absent on every record created before this field existed, which keep
+   * resolving their liability through the recurring item's structured link.
+   * Deliberately NOT `liabilityId`, which means a loan-FUNDED purchase. It lets
+   * a deletion reverse the liability that was actually changed even if the
+   * source bill is later re-linked, and never changes any recorded amount. */
+  repaymentLiabilityId?: string;
   /** A1 — the customer's explicit, persisted classification of this
    * transaction against the schedule (see `TransactionOccurrenceResolution`).
    * The single authoritative resolution field; consumers never re-derive a
@@ -473,6 +482,17 @@ export interface UserProfile {
   incomeSource?: string;
   payFrequency: PayFrequency;
   nextPayday: string | null; // ISO date
+  /** Pass C.2 closure — the customer's EXPLICIT Main payday: the stable id of
+   * the active income-type RecurringItem whose schedule anchors Available
+   * Until Payday and the Look Ahead guard. Additive and optional: absent on
+   * every payload saved before this field existed. It is never inferred,
+   * never written by loading or rendering, and only ever set by one
+   * deliberate customer choice (`setMainPaydayIncome`). With exactly one
+   * active income source it is not needed (that source is authoritative);
+   * with several and no valid id here, AUP and the daily guide fail closed
+   * and ask the customer to choose. Cleared atomically when the chosen
+   * source is deleted or deactivated. */
+  mainPaydayIncomeId?: string | null;
   /** Highest Score milestone (10/20/.../100) already celebrated — prevents
    * re-firing the same celebration on every re-render, and lets a score
    * that jumps past several bands at once still only celebrate the highest

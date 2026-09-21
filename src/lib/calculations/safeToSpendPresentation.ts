@@ -1,5 +1,6 @@
 import { SafeToSpendResult, SafeToSpendHeroState, selectSafeToSpendHeroState } from './safeToSpend';
 import { MoneyHeroCopy } from './moneyPersona';
+import { formatDollarsCentsAware } from './money';
 
 /** Whole-dollar, comma-grouped Available Until Payday display formatting —
  * presentation only. Never used for exact-cent calculation or persistence;
@@ -9,7 +10,81 @@ import { MoneyHeroCopy } from './moneyPersona';
  * amounts elsewhere in the app (see money.ts/reminders.ts's own
  * formatDisclosureAmount for that, a deliberately different formatter). */
 export function formatSafeToSpendAmount(value: number): string {
-  return `$${Math.round(value).toLocaleString()}`;
+  // Pass C.2 closure — normalise negative zero: Math.round(-0.4) is -0 and
+  // (-0).toLocaleString() renders "-0", which produced "$-0"/"-$0" on device.
+  const rounded = Math.round(value);
+  const normalised = Object.is(rounded, -0) || rounded === 0 ? 0 : rounded;
+  return `$${normalised.toLocaleString()}`;
+}
+
+/** A DEDUCTION line ("Bills due by that date"): "-$1,150" for a positive
+ * magnitude, and exactly "$0" when nothing is deducted — never "-$0". Shared
+ * so every explanation row formats a zero deduction the same way.
+ *
+ * Pass C.3 — exact cents are kept when they exist ("-$746.67"): the rounded
+ * rows visibly added to $5,888.00 on device while the remainder read
+ * $5,888.52, leaving a residual the customer could not reproduce. Whole-dollar
+ * inputs still read "-$1,150". */
+export function formatSafeToSpendDeduction(value: number): string {
+  const text = formatDollarsCentsAware(Math.abs(value));
+  return text === '$0' ? '$0' : `-${text}`;
+}
+
+/** One line of "How this was calculated" (Pass C.3), in exact integer cents. */
+export interface AupExplanationRow {
+  key: string;
+  label: string;
+  /** Signed cents as displayed: balances positive, deductions negative. */
+  cents: number;
+  kind: 'balance' | 'account' | 'deduction' | 'rounding';
+  /** Present only for the savings row when no allocation is set. */
+  placeholder?: string;
+}
+
+export interface AupExplanation {
+  rows: AupExplanationRow[];
+  /** The exact remainder the rows reconcile to — the SAME cents the hero shows
+   * (signed; a negative pool is shown as the negative remainder the
+   * commitments-exceed-cash state describes in words). */
+  remainderCents: number;
+  /** Non-zero only when independently cent-rounded rows would miss the exact
+   * remainder by a cent or two — shown as an explicit "Rounding" row so no
+   * hidden residual remains. */
+  roundingCents: number;
+}
+
+/**
+ * Pass C.3 — every contributing line in exact cents, reconciled so that
+ * `sum(rows) === remainderCents` by construction. Presentation only: it reads
+ * the authoritative SafeToSpendResult numbers and never changes the
+ * arithmetic (`cycleRemainingPool = includedMoneyBalance − cycleBillsExpected −
+ * cycleSavingsReserved − cycleGoalsReserved` is untouched). The savings and
+ * goal shares are exact fractions of a monthly figure, so their cent-rounded
+ * displays can miss the exact remainder by a cent; that difference is shown
+ * as an explicit rounding row rather than silently absorbed.
+ */
+export function buildAupExplanation(s: SafeToSpendResult): AupExplanation {
+  const toCents = (v: number) => (Number.isFinite(v) ? Math.round(v * 100) : 0);
+  const rows: AupExplanationRow[] = [];
+  rows.push({ key: 'balances', label: 'Balances included', cents: toCents(s.includedMoneyBalance), kind: 'balance' });
+  for (const account of s.includedMoneyBalanceAccounts) {
+    rows.push({ key: `account:${account.id}`, label: `— ${account.label}`, cents: toCents(account.value), kind: 'account' });
+  }
+  rows.push({ key: 'bills', label: 'Bills due by that date', cents: -Math.abs(toCents(s.cycleBillsExpected)), kind: 'deduction' });
+  rows.push({ key: 'goals', label: "Goal allocations (this cycle's share)", cents: -Math.abs(toCents(s.cycleGoalsReserved)), kind: 'deduction' });
+  rows.push({
+    key: 'savings',
+    label: "Savings allocation (this cycle's share)",
+    cents: -Math.abs(toCents(s.cycleSavingsReserved)),
+    kind: 'deduction',
+    placeholder: s.cycleSavingsReserved > 0 ? undefined : 'Not set',
+  });
+  const remainderCents = toCents(s.cycleRemainingPool);
+  // Account rows are a breakdown OF the balances row, not additional terms.
+  const contributing = rows.filter((r) => r.kind !== 'account').reduce((sum, r) => sum + r.cents, 0);
+  const roundingCents = remainderCents - contributing;
+  if (roundingCents !== 0) rows.push({ key: 'rounding', label: 'Rounding', cents: roundingCents, kind: 'rounding' });
+  return { rows, remainderCents, roundingCents };
 }
 
 /** Dollars -> integer cents, defensively guarding against a non-finite
@@ -180,6 +255,43 @@ export function selectSafeToSpendPresentation(safeToSpend: SafeToSpendResult, he
         action: AUP_ACTION,
         compactSummary: 'Unavailable',
       };
+    case 'main_payday_unselected':
+      // Pass C.2 closure — several regular incomes, no explicit Main payday.
+      // A missing INPUT (neutral, like the no-balance state), not a warning:
+      // no amount, no daily figure; the one action is to choose.
+      return {
+        heroState,
+        tone: 'normal',
+        heading: eyebrow,
+        primaryCopy: 'Choose your main payday',
+        supportingCopy: 'You have more than one regular income. Choose the one your pay cycle follows to see this estimate.',
+        ...resolveAmount(null),
+        amountIsAvailableMoney: false,
+        action: AUP_ACTION,
+        compactSummary: 'Choose main payday',
+      };
+    case 'payday_expired': {
+      // Pass C.2 correction — the expected payday has passed without its
+      // income being confirmed. Never a current spending answer: no amount,
+      // no daily figure, no "0 days left". The only action is to REVIEW the
+      // income (the existing editor/reminder handoff); nothing is advanced,
+      // confirmed or written by showing this.
+      // Locale-independent "11 Sep" (the same day-month form the money
+      // timeline and Look Ahead status lines use), never toLocaleDateString.
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const expected = `${safeToSpend.cycleEnd.getDate()} ${MONTHS[safeToSpend.cycleEnd.getMonth()]}`;
+      return {
+        heroState,
+        tone: 'warning',
+        heading: eyebrow,
+        primaryCopy: 'Income not confirmed',
+        supportingCopy: `Payday expected ${expected}. Review your income to refresh this estimate.`,
+        ...resolveAmount(null),
+        amountIsAvailableMoney: false,
+        action: AUP_ACTION,
+        compactSummary: 'Income not confirmed',
+      };
+    }
     case 'no_known_payday': {
       const hasIncludedBalance = safeToSpend.includedMoneyBalance > 0;
       return {

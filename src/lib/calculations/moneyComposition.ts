@@ -216,7 +216,9 @@ export function summariseIncludedBalances(
  * factual, never advice, never a promise, never shaming.
  */
 export const MONEY_MEASURE_DEFINITIONS = {
-  availableUntilPayday: 'Your included balances, less the bills, savings and goals still due before payday.',
+  // Pass C.3 — "due by payday": the cycle window is INCLUSIVE of the payday
+  // date (a bill due on payday is deducted), so the definition says so.
+  availableUntilPayday: 'Your included balances, less the bills, savings and goals still due by payday.',
   paydayProgress: 'How far through your current pay cycle you are today.',
   includedBalances: 'Only these balances count toward your available amount. Changing them does not change your net worth.',
   thisMonth: 'What you have actually recorded so far this calendar month.',
@@ -322,3 +324,21 @@ export function resolveOtherCardBalances(
 /** One clarification, shown once — never repeated per row. */
 export const CARD_BALANCE_DISCLOSURE =
   'Card balances are current snapshots and are not added to this month’s spending.';
+
+// ---------------------------------------------------------------------------
+// Pass C.2 closure — the ONE day-count caption formatter
+// ---------------------------------------------------------------------------
+
+/**
+ * "For tomorrow" / "For the next N days" — the caption under a per-day
+ * amount (Available Until Payday's About per day and Look Ahead's guide).
+ * One day is "For tomorrow" rather than the ungrammatical "For the next 1
+ * day"; zero (payday is today) is never captioned this way — callers hide the
+ * daily figure instead. Phrases that stay grammatical with a count ("1 day
+ * left", "1 day remaining") are deliberately NOT routed through here.
+ */
+export function forTheNextDaysLabel(days: number): string {
+  if (!Number.isFinite(days) || days <= 0) return '';
+  if (days === 1) return 'For tomorrow';
+  return `For the next ${Math.round(days)} days`;
+}

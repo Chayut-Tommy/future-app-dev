@@ -14,6 +14,7 @@ import { daysUntilDue, resolveExpectedMonthlyRepayment } from './creditHealth';
 import { resolveSavingsAllocationMonthly } from './savingsAllocation';
 import { computeBnplCostsForWindow, listBnplLiabilities, projectBnplOccurrencesForLiability } from './bnpl';
 import { occurrenceIdForCard, occurrenceIdForRecurringItem } from './occurrenceSources';
+import { MainPaydayStatus, mainPaydayNeedsChoice, resolveMainPayday } from './incomeEngine';
 
 /** The kind of forward-dated commitment a single Available-Until-Payday
  * deduction came from. Mirrors the three (and only three) dated things
@@ -141,6 +142,22 @@ export interface SafeToSpendResult {
    * yet entered) must never present a daily figure as if a real payday
    * cycle backs it (PRD ask, §4: "do not invent one"). */
   hasKnownPayday: boolean;
+  /** Pass C.2 correction (expired-boundary presentation) — true when a payday
+   * IS known but its local calendar date is strictly BEFORE the injected
+   * calculation date (`today`): the expected payday has passed and the income
+   * occurrence has not been confirmed/advanced. A FACT about the boundary
+   * only — it changes no amount, never advances a schedule and never confirms
+   * income; presentation selectors use it to fail closed instead of showing
+   * an expired horizon as a normal "0 days left" answer. Payday TODAY is not
+   * expired. An invalid/unparseable payday is not expired either (it is
+   * already attributed to `availability`). */
+  paydayExpired: boolean;
+  /** Pass C.2 closure — which income source anchors this cycle (see
+   * `resolveMainPayday`). `unselected`/`invalid` mean several active sources
+   * exist and the customer has not made (or no longer has) a valid explicit
+   * choice: `nextPayday` is null, no cycle is asserted, and consumers fail
+   * closed with "Choose your main payday". Read-only; never persists. */
+  mainPaydayStatus: MainPaydayStatus;
 
   // --- Available Until Payday: the real dated cash-flow view (PRD ask,
   // §1). Everything above stays a monthly-rate figure — Money Flow, Money
@@ -302,6 +319,8 @@ function calendarDaysBetween(from: Date, to: Date): number {
 export type SafeToSpendHeroState =
   | 'unavailable_balance_data'
   | 'unavailable_other_data'
+  | 'main_payday_unselected'
+  | 'payday_expired'
   | 'no_known_payday'
   | 'missing_balance'
   | 'recorded_overspend'
@@ -317,6 +336,17 @@ export function selectSafeToSpendHeroState(safeToSpend: SafeToSpendResult): Safe
   // pointing the user at balance management would be actively wrong.
   if (safeToSpend.availability === 'unavailable_balance_data') return 'unavailable_balance_data';
   if (safeToSpend.availability === 'unavailable_other_data') return 'unavailable_other_data';
+  // Pass C.2 correction — an EXPIRED boundary (known payday strictly before
+  // the calculation date, income occurrence not yet confirmed) is not a
+  // current spending answer. Fail closed here, ahead of every amount state,
+  // so Money and Today (both read this one selector) can never show a stale
+  // "0 days left" figure as though the horizon were still valid.
+  // Pass C.2 closure — several active income sources and no valid explicit
+  // Main payday: no cycle can be asserted, so fail closed and ask. Ranked
+  // after data-integrity failures (invalid data is still the first problem)
+  // and before every payday-based state (there IS no payday yet to expire).
+  if (mainPaydayNeedsChoice(safeToSpend.mainPaydayStatus)) return 'main_payday_unselected';
+  if (safeToSpend.hasKnownPayday && safeToSpend.paydayExpired) return 'payday_expired';
   if (!safeToSpend.hasKnownPayday) return 'no_known_payday';
 
   // A derived pool is not authoritative without a participating balance.
@@ -614,6 +644,14 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
   const plannedDailyAllowance = daysRemaining > 0 ? (cycleRemainingPool + todaysSpend) / daysRemaining : 0;
 
   const hasKnownPayday = !!user.nextPayday;
+  // Pass C.2 correction — a known payday whose LOCAL calendar date is before
+  // today's is expired (see the field's own doc comment). Uses the same
+  // DST-safe calendar-date difference `daysRemaining` uses; an unparseable
+  // payday yields NaN, and `NaN < 0` is false, so it is never called expired.
+  const paydayExpired = hasKnownPayday && calendarDaysBetween(today, cycleEnd) < 0;
+  // Pass C.2 closure — read-only resolution of the Main payday authority
+  // (the same resolver the persist pipeline derives user.nextPayday from).
+  const mainPaydayStatus = resolveMainPayday(data.recurringItems, data.user.mainPaydayIncomeId).status;
 
   // Invalid-data guard (Pass 1 closure correction, 2026-08-11):
   // moneyBalanceStatus is computed ONCE from data.assets and NEVER
@@ -677,6 +715,8 @@ export function computeSafeToSpend(data: AppData, today: Date = new Date()): Saf
     spendSoFarThisCycle: variableSpendSoFar,
     cashVariableSpendSoFar,
     hasKnownPayday,
+    paydayExpired,
+    mainPaydayStatus,
     includedMoneyBalance,
     includedMoneyBalanceAccounts,
     cycleIncomeExpected,

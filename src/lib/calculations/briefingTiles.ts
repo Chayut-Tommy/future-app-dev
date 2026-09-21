@@ -58,6 +58,7 @@ const REMINDER_ICON: Record<SmartReminderKind, keyof typeof Ionicons.glyphMap> =
   card_due_soon: 'card-outline',
   bnpl_repayment_due: 'bag-handle-outline',
   loan_repayment_due: 'home-outline',
+  repayment_source_review: 'alert-circle-outline',
 };
 
 /** A short, fixed category word per reminder kind — never "overdue"
@@ -91,6 +92,8 @@ function reminderTileStatus(reminder: SmartReminder): string {
       return 'Repayment due';
     case 'loan_repayment_due':
       return 'Repayment due';
+    case 'repayment_source_review':
+      return 'Review repayment source';
   }
 }
 

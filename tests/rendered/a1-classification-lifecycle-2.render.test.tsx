@@ -23,6 +23,11 @@ import { QuickAddModal } from '../../src/components/dashboard/QuickAddModal';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { occurrenceIdForRecurringItem } from '../../src/lib/calculations/occurrenceSources';
 import { resolveOccurrence } from '../../src/lib/calculations/occurrenceResolution';
+import { installLateTimerDrain } from './helpers/drainLateTimers';
+
+// Pass C.5 — test-only: cancel component timers still pending after the final test
+// (they otherwise fire after Jest's teardown and force a nonzero exit code).
+installLateTimerDrain();
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')

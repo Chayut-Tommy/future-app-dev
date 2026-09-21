@@ -5,6 +5,7 @@ import { eventOccurrenceIdentity, occurrenceIdentityKey, occurrenceDateKey } fro
 import { SafeToSpendResult } from './safeToSpend';
 import { monthToDateWindowStart, isWithinMonthToDate, computeThisMonthRecordedSummary, ThisMonthSpendingSource } from './monthlySummary';
 import { resolveTransactionCategoryCoachingAmount } from './repaymentAccounting';
+import { resolveLeadingCategoryIds, resolveRecordedTransactionCategoryId } from './billCategory';
 import { moneyAmountToCents } from './money';
 
 /**
@@ -374,10 +375,12 @@ function buildSpendingCategoryConcentration(data: AppData, today: Date): WorthKn
     if (amount <= 0) continue;
     const v = moneyAmountToCents(amount);
     if (!v.valid) continue;
-    const entry = byCategory.get(t.categoryId) ?? { cents: 0, count: 0 };
+    // Pass C.5 — the shared display category (see billCategory.ts).
+    const displayCategoryId = resolveRecordedTransactionCategoryId(data, t);
+    const entry = byCategory.get(displayCategoryId) ?? { cents: 0, count: 0 };
     entry.cents += v.cents;
     entry.count += 1;
-    byCategory.set(t.categoryId, entry);
+    byCategory.set(displayCategoryId, entry);
     totalCents += v.cents;
   }
   if (byCategory.size === 0 || totalCents < CATEGORY_MIN_TOTAL_CENTS) return null;
@@ -395,17 +398,13 @@ function buildSpendingCategoryConcentration(data: AppData, today: Date): WorthKn
   // while keeping "largest recorded category" wording. A different, valid
   // Worth Knowing candidate may still win via pickWorthKnowingInsight's own
   // selection across all four types.
-  let topCategoryId: string | null = null;
-  let topEntry = { cents: 0, count: 0 };
-  for (const [categoryId, entry] of byCategory) {
-    // Deterministic tie-break (categoryId ascending) for the structurally
-    // unreachable case of two categories tied to the exact cent — never
-    // Map iteration order.
-    if (!topCategoryId || entry.cents > topEntry.cents || (entry.cents === topEntry.cents && categoryId < topCategoryId)) {
-      topCategoryId = categoryId;
-      topEntry = entry;
-    }
-  }
+  // Pass C.5.1 — the shared exact-cent rule. A tie (device-proven reachable:
+  // three $1,000 rent payments against one $3,000 mortgage repayment) has no
+  // single "largest" category, so — exactly like a leader that fails a
+  // requirement — it yields no candidate rather than an arbitrary name.
+  const leadingIds = resolveLeadingCategoryIds(new Map([...byCategory].map(([id, entry]) => [id, entry.cents])), data.categories);
+  const topCategoryId: string | null = leadingIds.length === 1 ? leadingIds[0] : null;
+  const topEntry = (topCategoryId ? byCategory.get(topCategoryId) : undefined) ?? { cents: 0, count: 0 };
   if (!topCategoryId) return null;
   if (topEntry.count < CATEGORY_MIN_TRANSACTIONS) return null;
 

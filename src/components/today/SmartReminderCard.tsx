@@ -1362,6 +1362,24 @@ export function SmartReminderCard({
             </TouchableOpacity>
           ) : null}
 
+          {reminder.kind === 'repayment_source_review' ? (
+            /* Pass C.5.2.1 — fail closed. This repayment's loan can't be
+               resolved, so there is nothing to record from here: no "Mark as
+               paid", no amount, no transition. The one control names its real
+               intent (Wave 6: never a bare "Got it"), mutates nothing, and the
+               customer corrects the bill itself. */
+            <TouchableOpacity
+              style={styles.primaryAction}
+              onPress={acknowledgeReminder}
+              accessibilityRole="button"
+              accessibilityLabel="I’ll review this bill"
+              accessibilityHint="Closes this reminder. Nothing is recorded."
+              testID="reminder-review-acknowledge"
+            >
+              <Text style={[styles.actionText, styles.actionTextOnPrimary]}>I’ll review this bill</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {/* ------------------------------------------------------------------
               Wave 6 final — the two SUPPRESSION steps.
 

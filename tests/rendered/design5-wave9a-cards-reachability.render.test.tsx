@@ -21,6 +21,11 @@ import { CelebrationProvider } from '../../src/state/CelebrationContext';
 import { SavingsAllocationPromptProvider } from '../../src/state/SavingsAllocationPromptContext';
 import { RootNavigator } from '../../src/navigation/RootNavigator';
 import { createEmptyAppData } from '../../src/lib/storage';
+import { installLateTimerDrain } from './helpers/drainLateTimers';
+
+// Pass C.5 — test-only: cancel component timers still pending after the final test
+// (they otherwise fire after Jest's teardown and force a nonzero exit code).
+installLateTimerDrain();
 
 /**
  * Nolie Design 5.1 Wave 9a closure, Correction A — the STABLE customer

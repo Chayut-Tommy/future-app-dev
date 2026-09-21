@@ -66,8 +66,9 @@ describe('Pass C.1 — Why this amount? detail', () => {
     expect(await screen.findByText('$1,200.00')).toBeOnTheScreen();
     expect(screen.getByText('$5,000.00')).toBeOnTheScreen();
     expect(screen.getByText('-$2,150.00')).toBeOnTheScreen();
-    expect(screen.getByTestId('look-ahead-assumed')).toHaveTextContent('Includes 2 assumed income payments');
-    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/not subtracted here/);
+    expect(screen.getByTestId('look-ahead-assumed')).toHaveTextContent(/Includes 2 assumed income payments/);
+    await user.press(screen.getByTestId('look-ahead-assumptions-toggle'));
+    expect(await screen.findByTestId('look-ahead-savings')).toHaveTextContent(/set aside about \$600 for savings and goals\. That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./); // C.3 single statement
     expect(screen.getByTestId('look-ahead-protected')).toBeOnTheScreen();
   }, 30000);
 

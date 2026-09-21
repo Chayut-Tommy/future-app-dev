@@ -133,7 +133,9 @@ export function SavingsAllocationDetailSheet({
         <DetailRow label="Selected by you" value={selectedByYouText} />
         <DetailRow label="Estimated monthly amount" value={formatMoney(monthlyAmount)} />
         <DetailRow label="This pay cycle" value={formatMoney(cycleAmount)} />
-        <DetailRow label="Primary pay frequency" value={FREQUENCY_LABEL[data.user.payFrequency]} />
+        {/* Pass C.3 — the cycle follows the customer's explicit Main payday
+            (C.2 closure), so the stale "Primary" term is retired here. */}
+        <DetailRow label="Main payday frequency" value={FREQUENCY_LABEL[data.user.payFrequency]} />
         {occurrenceDate ? (
           <DetailRow label="Occurrence date" value={occurrenceDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })} />
         ) : null}

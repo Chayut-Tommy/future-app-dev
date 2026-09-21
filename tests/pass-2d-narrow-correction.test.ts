@@ -503,7 +503,7 @@ console.log('=== SECTION 5: Transaction History row presentation (Gate 5, struct
   assert("5b. a credit-card repayment is labelled 'not counted as spending'", /Repayment — not counted as spending/.test(src));
   assert("5c. an unknown-split loan repayment is labelled 'Balance not updated'", /Balance not updated — split unknown/.test(src));
   assert("5d. an interest-only loan repayment is labelled distinctly from a principal-bearing one", /All interest — no change to recorded balance/.test(src));
-  assert('5e. a known-split loan repayment shows both the principal and interest amounts (never just the raw total)', /principal, \$\$\{Math\.round\(interest\)\.toLocaleString\(\)\} interest/.test(src));
+  assert('5e. a known-split loan repayment shows both the principal and interest amounts (never just the raw total)', /principal \(not spending\), \$\$\{Math\.round\(interest\)\.toLocaleString\(\)\} interest and fees \(counted as spending\)/.test(src)); // C.5.2.1 — estimate wording, both amounts still shown
   assert('5f. the badge is wired into the row JSX (rendered, not just defined)', /repaymentBadge\(data, item\)/.test(src) && /styles\.txnBadge/.test(src));
   assert('5g. a BNPL repayment gets the same not-counted-as-spending badge (consistent with credit-card treatment)', /liability\?\.type === 'bnpl'\) return 'Repayment/.test(src));
   assert('5h. the monthly header total uses resolveTransactionAggregateSpendingAmount (never the cashflow resolver) — real behaviour proven directly against this same resolver in SECTION 6 (6k-iv)', /const expenses = txns\.filter\(\(t\) => t\.type === 'expense'\)\.reduce\(\(sum, t\) => sum \+ resolveTransactionAggregateSpendingAmount\(data, t\), 0\)/.test(src));
@@ -522,7 +522,10 @@ console.log('=== SECTION 6: Aggregate debt cost vs category-based coaching (fina
   // customer-chosen) for a repayment transaction.
   const appStateSrc = fs.readFileSync(path.join(__dirname, '../src/state/AppStateContext.tsx'), 'utf8');
   const defaultCategoriesSrc = fs.readFileSync(path.join(__dirname, '../src/lib/defaultCategories.ts'), 'utf8');
-  assert("6-cat-a. confirmLoanRepaymentTransition stamps categoryId: 'cat-debt' on every loan repayment", /categoryId: 'cat-debt',[\s\S]{0,40}date: input\.date,[\s\S]{0,40}note: `\$\{liability\.label\} repayment`/.test(appStateSrc));
+  // Pass C.5 — a loan repayment is now classified by its FAMILY through the one shared
+  // recording authority (mortgage → Mortgage, car loan → Transport, personal / other
+  // loan → Debt repayments). Still automatically assigned, never customer-chosen.
+  assert('6-cat-a. confirmLoanRepaymentTransition stamps the shared repayment-family category on every loan repayment', /categoryId: resolveRecurringExpenseCategory\(data, item\),[\s\S]{0,40}date: input\.date,[\s\S]{0,40}note: `\$\{liability\.label\} repayment`/.test(appStateSrc));
   assert("6-cat-b. confirmCreditCardRepaymentTransition stamps the SAME categoryId: 'cat-debt'", /categoryId: 'cat-debt',[\s\S]{0,40}date: input\.date,[\s\S]{0,40}note: `\$\{card\.label\} repayment`/.test(appStateSrc));
   assert("6-cat-c. 'cat-debt' resolves to the generic, pre-existing 'Debt repayments' label — not a dedicated interest/fees category", /\{ id: 'cat-debt', name: 'Debt repayments', type: 'expense'/.test(defaultCategoriesSrc));
   assert('6-cat-d. no dedicated debt-interest category (e.g. an id/name containing "interest") exists anywhere in the category list', !/interest/i.test(defaultCategoriesSrc));

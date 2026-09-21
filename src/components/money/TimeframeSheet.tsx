@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -11,6 +11,10 @@ import {
   endOfNextMonth,
   localDateFromDate,
 } from '../../lib/calculations/localCalendar';
+import { TimeframeSelection, resolveTimeframeSelection } from '../../lib/calculations/timeframeFlow';
+import { typeStyle } from '../../theme/textStyle';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 /**
  * Pass C.1 — the Timeframe chooser.
@@ -29,6 +33,12 @@ import {
  * picker only after the sheet's native dismissal has completed (`onDismissed`,
  * forwarded from the underlying Modal's own onDismiss).
  *
+ * Pass C.2 correction — the ACTIVE choice is immediately apparent when the
+ * sheet reopens: the current row carries a selected treatment (Ocean Blue
+ * border + check glyph), `accessibilityState.selected`, and — for a custom
+ * date — that date beneath "Choose a date". Purely derived from the
+ * `currentTarget` the parent already owns; Cancel changes nothing.
+ *
  * The sheet owns NO money maths and writes NOTHING. It only reports the chosen
  * target (`LocalDate`, or `null` for "until payday") or a request to open the
  * date picker.
@@ -46,6 +56,8 @@ export function TimeframeSheet({
   visible,
   asOf,
   paydayDate,
+  currentTarget = null,
+  currentMode = null,
   onSelect,
   onChooseDate,
   onClose,
@@ -56,9 +68,15 @@ export function TimeframeSheet({
   asOf: Date;
   /** The next payday, if known — labels the "Until payday" default row. */
   paydayDate: LocalDate | null;
+  /** The timeframe the card is CURRENTLY showing (`null` = until payday), so
+   * the matching row reads as selected. Display only. */
+  currentTarget?: LocalDate | null;
+  /** Pass C.2 closure — HOW the current target was chosen, so a custom date
+   * that equals month end (or payday) still highlights the row actually used. */
+  currentMode?: TimeframeSelection | null;
   /** Report the chosen timeframe: a target `LocalDate`, or `null` to reset to
-   * the authoritative Available-Until-Payday view. */
-  onSelect: (target: LocalDate | null) => void;
+   * the authoritative Available-Until-Payday view, plus WHICH row chose it. */
+  onSelect: (target: LocalDate | null, mode: TimeframeSelection) => void;
   /** Request the native date picker. The parent dismisses this sheet first,
    * then presents the picker once dismissal completes — never both at once. */
   onChooseDate: () => void;
@@ -67,7 +85,8 @@ export function TimeframeSheet({
    * sheet has fully left the screen, so the parent can present the picker. */
   onDismissed?: () => void;
 }) {
-  const { colors, spacing, radius, typography } = useTheme();
+  const { colors, spacing, radius, semantic } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const asOfLocal = useMemo(() => {
     try {
       return localDateFromDate(startOfDay(asOf));
@@ -79,11 +98,13 @@ export function TimeframeSheet({
   const isLastDayOfMonth = asOfLocal ? asOfLocal.day === daysInLocalMonth(asOfLocal.year, asOfLocal.month) : false;
   const monthEndTarget = asOfLocal ? (isLastDayOfMonth ? endOfNextMonth(asOfLocal) : endOfMonth(asOfLocal)) : null;
   const monthEndLabel = isLastDayOfMonth ? 'End of next month' : 'End of this month';
+  const selection = resolveTimeframeSelection(currentTarget, monthEndTarget, currentMode);
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        subhead: { ...typography.body, fontSize: 14, color: colors.textSecondary, marginBottom: spacing.md },
+        // Pass C.2 closure — Design 5.1 roles + semantic ink (support / titleCard / meta).
+        subhead: { ...typeStyle('support', locale), color: semantic.textSecondary, marginBottom: spacing.md },
         row: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -94,13 +115,29 @@ export function TimeframeSheet({
           paddingVertical: spacing.md,
           paddingHorizontal: spacing.md,
           marginBottom: spacing.sm,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'transparent',
         },
-        label: { ...typography.body, fontSize: 15, color: colors.textPrimary, fontWeight: '600' },
-        sub: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-        quiet: { ...typography.caption, fontSize: 12, color: colors.textMuted, marginTop: spacing.sm, textAlign: 'center' },
+        // Selected treatment: Ocean Blue border + tint, paired with a check
+        // glyph and the selected accessibility state — never colour alone.
+        rowSelected: { borderWidth: 1.5, borderColor: semantic.interactive, backgroundColor: semantic.interactiveTint },
+        label: { ...typeStyle('titleCard', locale), color: semantic.textPrimary },
+        sub: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: 2 },
+        quiet: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: spacing.sm, textAlign: 'center' },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, semantic, locale]
   );
+
+  const trailing = (selected: boolean, testID: string) =>
+    selected ? (
+      <Ionicons name="checkmark-circle" size={20} color={semantic.interactive} importantForAccessibility="no" testID={testID} />
+    ) : (
+      <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} importantForAccessibility="no" />
+    );
+
+  const paydaySelected = selection === 'payday';
+  const monthEndSelected = selection === 'month_end';
+  const customSelected = selection === 'custom';
 
   return (
     <KeyboardSheet
@@ -116,47 +153,59 @@ export function TimeframeSheet({
         <Text style={styles.subhead}>Choose how far ahead this card looks.</Text>
 
         <TouchableOpacity
-          style={styles.row}
-          onPress={() => onSelect(null)}
+          style={[styles.row, paydaySelected ? styles.rowSelected : null]}
+          onPress={() => onSelect(null, 'payday')}
           accessibilityRole="button"
-          accessibilityLabel={paydayDate ? `Until payday, ${fmtLocal(paydayDate)}` : 'Until payday'}
+          accessibilityState={{ selected: paydaySelected }}
+          accessibilityLabel={`${paydayDate ? `Until payday, ${fmtLocal(paydayDate)}` : 'Until payday'}${paydaySelected ? ', currently selected' : ''}`}
           testID="timeframe-until-payday"
         >
           <View>
             <Text style={styles.label}>Until payday</Text>
             {paydayDate ? <Text style={styles.sub}>{fmtLocal(paydayDate)}</Text> : null}
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} importantForAccessibility="no" />
+          {trailing(paydaySelected, 'timeframe-selected-payday')}
         </TouchableOpacity>
 
         {monthEndTarget ? (
           <TouchableOpacity
-            style={styles.row}
-            onPress={() => onSelect(monthEndTarget)}
+            style={[styles.row, monthEndSelected ? styles.rowSelected : null]}
+            onPress={() => onSelect(monthEndTarget, 'month_end')}
             accessibilityRole="button"
-            accessibilityLabel={`${monthEndLabel}, ${fmtLocal(monthEndTarget)}`}
+            accessibilityState={{ selected: monthEndSelected }}
+            accessibilityLabel={`${monthEndLabel}, ${fmtLocal(monthEndTarget)}${monthEndSelected ? ', currently selected' : ''}`}
             testID="timeframe-month-end"
           >
             <View>
               <Text style={styles.label}>{monthEndLabel}</Text>
               <Text style={styles.sub}>{fmtLocal(monthEndTarget)}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} importantForAccessibility="no" />
+            {trailing(monthEndSelected, 'timeframe-selected-month-end')}
           </TouchableOpacity>
         ) : null}
 
         <TouchableOpacity
-          style={styles.row}
+          style={[styles.row, customSelected ? styles.rowSelected : null]}
           onPress={onChooseDate}
           accessibilityRole="button"
-          accessibilityLabel="Choose a date"
+          accessibilityState={{ selected: customSelected }}
+          accessibilityLabel={customSelected && currentTarget ? `Choose a date, currently ${fmtLocal(currentTarget)}, currently selected` : 'Choose a date'}
           testID="timeframe-choose-date"
         >
-          <Text style={styles.label}>Choose a date</Text>
-          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} importantForAccessibility="no" />
+          <View>
+            <Text style={styles.label}>Choose a date</Text>
+            {customSelected && currentTarget ? (
+              <Text style={styles.sub} testID="timeframe-custom-date">
+                {fmtLocal(currentTarget)}
+              </Text>
+            ) : null}
+          </View>
+          {trailing(customSelected, 'timeframe-selected-custom')}
         </TouchableOpacity>
 
-        <Text style={styles.quiet}>Nothing will be saved.</Text>
+        <Text style={styles.quiet} maxFontSizeMultiplier={2}>
+          Nothing will be saved.
+        </Text>
       </View>
     </KeyboardSheet>
   );

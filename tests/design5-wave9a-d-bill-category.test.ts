@@ -281,7 +281,9 @@ console.log('\n=== 7. The specialised repayment path is untouched (Class A) ==='
   // A GENUINELY linked repayment: the bill points at the liability. Note it
   // also carries an ordinary purpose — proving the mapper cannot redirect
   // this path even when a category is present.
-  const linked = bill({ id: 'b-linked', label: 'Toyota', amount: 500, categoryId: 'cat-transport', linkedLiabilityId: 'l1' });
+  // Pass C.5 — the purpose is deliberately NOT the family's category, so the
+  // proof below cannot pass by coincidence.
+  const linked = bill({ id: 'b-linked', label: 'Toyota', amount: 500, categoryId: 'cat-insurance', linkedLiabilityId: 'l1' });
   const data = world({ liabilities: [liability], assets: [everyday(5000)], recurringItems: [linked] });
   const r = confirmLoanRepaymentTransition(data, {
     recurringItemId: 'b-linked',
@@ -300,8 +302,12 @@ console.log('\n=== 7. The specialised repayment path is untouched (Class A) ==='
     const after = (r as unknown as { data: AppData }).data;
     const txns = added(data, after);
     assert('7b. exactly one transaction', txns.length === 1);
-    assert('7c. it keeps cat-debt (Debt repayments)', txns[0].categoryId === 'cat-debt');
-    assert('7d. …even though the bill carries an ordinary cat-transport purpose', linked.categoryId === 'cat-transport' && txns[0].categoryId === 'cat-debt');
+    // Pass C.5 (founder decision, 19 Sep) — a repayment is classified by its
+    // loan FAMILY through the existing preset mapping (Car Loan → Transport,
+    // Mortgage → Mortgage, Personal/other → Debt repayments). The boundary this
+    // section protects is unchanged: the bill's own PURPOSE cannot redirect it.
+    assert('7c. it takes the loan family category (car loan → cat-transport, the existing Car Loan mapping)', txns[0].categoryId === 'cat-transport');
+    assert('7d. …and NOT the unrelated purpose the bill carries (cat-insurance)', linked.categoryId === 'cat-insurance' && txns[0].categoryId !== 'cat-insurance');
     assert('7e. it IS flagged as a loan repayment', (txns[0] as { isLoanRepayment?: boolean }).isLoanRepayment === true);
     assert('7f. the source reduced exactly once', after.assets[0].currentValue === 4500);
     assert('7g. the liability is reconciled by the unchanged engine', after.liabilities[0].id === 'l1');
@@ -312,7 +318,10 @@ console.log('\n=== 7. The specialised repayment path is untouched (Class A) ==='
 console.log('\n=== 8. Structural — one resolver, in the shared domain module (Class C) ===');
 {
   const CTX = code(read('src/state/AppStateContext.tsx'));
-  assert('8a. the expense branch calls the shared resolver', CTX.includes('resolveBillTransactionCategory(item)'));
+  // Pass C.5 — the recording-time resolver now wraps the purpose resolver and
+  // adds the loan-family rule; BOTH transitions call it, and it still delegates
+  // an ordinary bill to resolveBillTransactionCategory.
+  assert('8a. the expense branch calls the shared resolver', (CTX.match(/resolveRecurringExpenseCategory\(data, item\)/g) ?? []).length === 2 && /return resolveBillTransactionCategory\(item\);/.test(code(read('src/lib/calculations/billCategory.ts'))));
   assert('8b. the unconditional literal is gone from that branch', !/: 'cat-other-expense';/.test(CTX));
   // No screen may hold its own copy of this decision.
   for (const rel of [

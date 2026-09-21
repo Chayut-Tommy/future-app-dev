@@ -64,6 +64,114 @@ export function findPrimaryIncomeItem(recurringItems: RecurringItem[]): Recurrin
   return active[0] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Pass C.2 closure — the EXPLICIT Main payday authority (founder decision)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which income source anchors Available Until Payday and the Look Ahead
+ * guard. Replaces the inferred "soonest date" heuristic above as the
+ * financial authority (that heuristic let a $1,000 weekly side income silently
+ * take over from a $5,000 fortnightly salary after a confirmation).
+ *
+ *  - `none`       — no active income source: no payday can be known.
+ *  - `single`     — exactly one active source: it is authoritative
+ *                   automatically (no choice needed, nothing persisted).
+ *  - `selected`   — several sources and `mainPaydayIncomeId` names one of
+ *                   them (matched by stable id only — never by label, amount,
+ *                   date or position).
+ *  - `unselected` — several sources and no id recorded: FAIL CLOSED and ask
+ *                   the customer to choose. Never the largest, earliest, most
+ *                   recently confirmed or first-created source.
+ *  - `invalid`    — several sources and the recorded id no longer names an
+ *                   active income (deleted/deactivated/corrupt): fail closed
+ *                   exactly like `unselected`; replacing it needs a new
+ *                   explicit choice.
+ *
+ * Pure and read-only: it never persists a guess.
+ */
+export type MainPaydayResolution =
+  | { status: 'none'; source: null; candidates: RecurringItem[] }
+  | { status: 'single'; source: RecurringItem; candidates: RecurringItem[] }
+  | { status: 'selected'; source: RecurringItem; candidates: RecurringItem[] }
+  | { status: 'unselected'; source: null; candidates: RecurringItem[] }
+  | { status: 'invalid'; source: null; candidates: RecurringItem[] };
+
+export type MainPaydayStatus = MainPaydayResolution['status'];
+
+export function resolveMainPayday(recurringItems: RecurringItem[], mainPaydayIncomeId: string | null | undefined): MainPaydayResolution {
+  const candidates = recurringItems.filter((r) => r.type === 'income' && r.active);
+  if (candidates.length === 0) return { status: 'none', source: null, candidates };
+  if (candidates.length === 1) return { status: 'single', source: candidates[0], candidates };
+  if (typeof mainPaydayIncomeId !== 'string' || mainPaydayIncomeId.length === 0) return { status: 'unselected', source: null, candidates };
+  const chosen = candidates.find((r) => r.id === mainPaydayIncomeId);
+  if (!chosen) return { status: 'invalid', source: null, candidates };
+  return { status: 'selected', source: chosen, candidates };
+}
+
+/** True when the customer must choose before a payday can be asserted. */
+export function mainPaydayNeedsChoice(status: MainPaydayStatus): boolean {
+  return status === 'unselected' || status === 'invalid';
+}
+
+/**
+ * Pass C.4 — whether an income source can BE the Main payday: it must be an
+ * active income on a predictable cadence with a known, valid next expected
+ * payment, because the Main payday's only job is to give Available until
+ * payday a real pay-cycle date. Irregular, inactive, undated or invalid
+ * sources cannot produce one. Identity is never part of this check — the
+ * authority stays `user.mainPaydayIncomeId`; no per-income flag exists.
+ */
+export function isEligibleMainPaydaySource(item: Pick<RecurringItem, 'type' | 'active' | 'frequency' | 'nextDueDate' | 'nextDueDateUnknown'>): boolean {
+  if (item.type !== 'income' || !item.active) return false;
+  if (item.frequency === 'irregular') return false;
+  if (item.nextDueDateUnknown) return false;
+  if (!item.nextDueDate) return false;
+  return Number.isFinite(new Date(item.nextDueDate).getTime());
+}
+
+/**
+ * Pass C.5 — the ONE list every Main-payday entry point offers (the Money
+ * chooser, the Wealth income-sources chooser and the income editor all read
+ * `isEligibleMainPaydaySource`). Active incomes are split into the sources a
+ * customer CAN choose and the ones they cannot, each with the same
+ * plain-language reason the editor shows, so no surface can offer a source
+ * another refuses.
+ */
+export function listMainPaydayChoices(recurringItems: RecurringItem[]): { eligible: RecurringItem[]; ineligible: { item: RecurringItem; reason: string }[] } {
+  const active = recurringItems.filter((r) => r.type === 'income' && r.active);
+  const eligible = active.filter((r) => isEligibleMainPaydaySource(r));
+  const ineligible = active.filter((r) => !isEligibleMainPaydaySource(r)).map((item) => ({ item, reason: mainPaydayIneligibleReason(item) ?? '' }));
+  return { eligible, ineligible };
+}
+
+/** The chooser's supporting line, naming any source that cannot be chosen. */
+/** Pass C.5.1 — what choosing a Main payday actually does, in the income editor.
+ * The Main payday anchors Available until payday AND the guard payday behind
+ * the Look Ahead daily guide (device-observed: the 24 Oct estimate stayed
+ * $18,350 while the guide moved $467 → $539 a day). No calculation reads this. */
+export const MAIN_PAYDAY_EFFECT_COPY =
+  'Sets the payday used for Available until payday and your daily-spend guide. Other income is still included in Look Ahead.';
+
+export function mainPaydayChooserSubtitle(recurringItems: RecurringItem[]): string {
+  // Pass C.5.2 — ONE copy authority: both choosers say exactly what the income
+  // editor says (the Main payday also anchors the daily-spend guide).
+  const base = MAIN_PAYDAY_EFFECT_COPY;
+  const { eligible, ineligible } = listMainPaydayChoices(recurringItems);
+  if (ineligible.length === 0) return base;
+  const names = ineligible.map((i) => i.item.label).join(', ');
+  const why = `${names} can’t be chosen: a main payday needs a regular schedule and a next expected payment date.`;
+  return eligible.length === 0 ? why : `${base} ${why}`;
+}
+
+/** Plain-language reason a source cannot be chosen (null when it can). */
+export function mainPaydayIneligibleReason(item: Pick<RecurringItem, 'type' | 'active' | 'frequency' | 'nextDueDate' | 'nextDueDateUnknown'>): string | null {
+  if (isEligibleMainPaydaySource(item)) return null;
+  if (!item.active) return 'This income is inactive, so it can’t set your pay-cycle date.';
+  if (item.frequency === 'irregular') return 'Irregular income doesn’t have a predictable payday, so it can’t set your pay-cycle date.';
+  return 'Add a next expected payment date to use this income as your main payday.';
+}
+
 export function frequencyAdverb(frequency: PayFrequency): string {
   switch (frequency) {
     case 'weekly':

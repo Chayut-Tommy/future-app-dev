@@ -18,6 +18,7 @@ import { useCreditCardRepaymentForm } from '../../hooks/useCreditCardRepaymentFo
 import { LoanRepaymentFormFields } from '../credit/LoanRepaymentFormFields';
 import { CreditCardRepaymentFormFields } from '../credit/CreditCardRepaymentFormFields';
 import { PaymentRecordedContent } from '../credit/PaymentRecordedContent';
+import { loanRepaymentRecordedMessage } from '../../lib/reminderPresentation';
 import {
   reduceReminderLifecycle,
   ReminderLifecycleState,
@@ -463,6 +464,10 @@ export function ReminderDetailSheet({
   let gesturesEnabled = false;
   let onSheetClose = handleForceClose;
 
+  // Pass C.5.2 — the loan confirmation states what happened to the liability, read
+  // from the transaction that was actually recorded.
+  const loanRecordedTransactionId = presentedState.kind === 'loan_recorded' ? presentedState.transactionId : null;
+  const loanRecordedMessage = loanRepaymentRecordedMessage(loanRecordedTransactionId ? data.transactions.find((t) => t.id === loanRecordedTransactionId) : null);
   if (presentedState.kind === 'loan_form') {
     title = 'Record a payment';
     isDirty = loanForm.isDirty;
@@ -562,7 +567,7 @@ export function ReminderDetailSheet({
       {presentedState.kind === 'loan_form' && loanLiability && loanRecurringItem ? (
         <LoanRepaymentFormFields liability={loanLiability} recurringItem={loanRecurringItem} form={loanForm} headingRef={loanFormHeadingRef} />
       ) : null}
-      {presentedState.kind === 'loan_recorded' ? <PaymentRecordedContent focusRef={recordedContentRef} /> : null}
+      {presentedState.kind === 'loan_recorded' ? <PaymentRecordedContent focusRef={recordedContentRef} message={loanRecordedMessage} /> : null}
       {presentedState.kind === 'card_form' && cardCard ? (
         <CreditCardRepaymentFormFields card={cardCard} form={cardForm} headingRef={cardFormHeadingRef} />
       ) : null}

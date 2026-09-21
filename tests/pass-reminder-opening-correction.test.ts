@@ -392,6 +392,8 @@ function assertKindOpensWithContent(kind: SmartReminderKind, reminder: SmartRemi
     // reachable, contentful JSX branch.
     bnpl_repayment_due: /reminder\.kind === 'bnpl_repayment_due' && awaitingSource \? \(/,
     loan_repayment_due: /reminder\.kind === 'loan_repayment_due' \? \(/,
+    // Pass C.5.2.1 — the fail-closed review reminder: a real content branch whose only action acknowledges.
+    repayment_source_review: /reminder\.kind === 'repayment_source_review' \? \(/,
   };
   (Object.keys(KIND_BRANCH_PATTERNS) as SmartReminderKind[]).forEach((kind) => {
     assert(`2.${kind}-c. SmartReminderCard.tsx has a real, reachable JSX branch for kind '${kind}' — never a contentless default`, KIND_BRANCH_PATTERNS[kind].test(SMART_REMINDER_SRC));

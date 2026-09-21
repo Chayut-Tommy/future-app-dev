@@ -18,7 +18,7 @@ import { useTheme } from '../../theme/ThemeContext';
  * accessibilityLiveRegion="polite" (Android-only, and redundant once focus
  * genuinely lands here) is removed to avoid a duplicate announcement.
  */
-export function PaymentRecordedContent({ focusRef }: { focusRef?: RefObject<any> }) {
+export function PaymentRecordedContent({ focusRef, message = 'Payment recorded.' }: { focusRef?: RefObject<any>; message?: string }) {
   const { colors, spacing, typography } = useTheme();
   const styles = useMemo(
     () =>
@@ -28,8 +28,8 @@ export function PaymentRecordedContent({ focusRef }: { focusRef?: RefObject<any>
     [colors, spacing, typography]
   );
   return (
-    <Text ref={focusRef} style={styles.successText}>
-      Payment recorded.
+    <Text ref={focusRef} style={styles.successText} testID="payment-recorded-message">
+      {message}
     </Text>
   );
 }

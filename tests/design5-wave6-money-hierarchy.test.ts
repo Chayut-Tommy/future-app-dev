@@ -486,7 +486,9 @@ console.log('\n=== 12. Wave 6 final refinement (Class A + C) ===');
   assert('12d. and the cells reflow whole at accessibility sizes rather than shrinking labels', /flexDirection: stackMetrics \? 'column' : 'row'/.test(CARD_CODE) && !/fontSize: 1[01]/.test(CARD_CODE));
 
   // --- Recent activity uses the canonical mapping ---
-  assert('12e. rows carry the CANONICAL category glyph, not one generic arrow', /categoryIconSpec\(t\.categoryId\)\.name/.test(MONEY_CODE) && /categoryIconSpec\(t\.categoryId\)\.tone/.test(MONEY_CODE));
+  // Pass C.5 — the glyph follows the ONE shared display category (so a provable
+  // mortgage repayment shows the Mortgage glyph, matching its label).
+  assert('12e. rows carry the CANONICAL category glyph, not one generic arrow', /const displayCategoryId = resolveRecordedTransactionCategoryId\(data, t\);/.test(MONEY_CODE) && /categoryIconSpec\(displayCategoryId\)\.name/.test(MONEY_CODE) && /categoryIconSpec\(displayCategoryId\)\.tone/.test(MONEY_CODE));
   assert('12f. Groceries resolves to a cart, Dining out to a restaurant, Bonus to a gift', categoryIconSpec('cat-groceries').name === 'cart-outline' && categoryIconSpec('cat-dining').name === 'restaurant-outline' && categoryIconSpec('cat-bonus').name === 'gift-outline');
   assert('12g. Groceries and Dining out are distinguishable, and Bonus reads as income', categoryIconSpec('cat-groceries').name !== categoryIconSpec('cat-dining').name && categoryIconSpec('cat-bonus').tone === 'mint');
   assert('12h. an unmapped category falls back safely, never to an emoji', !!categoryIconSpec('cat-nonexistent').name && !/[\u{1F300}-\u{1FAFF}]/u.test(categoryIconSpec('cat-nonexistent').name));

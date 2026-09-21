@@ -215,7 +215,13 @@ export function DebtCoachSheet({ visible, onClose }: { visible: boolean; onClose
                       <View style={styles.suggestionRow}>
                         <Ionicons name="checkmark-circle" size={16} color={colors.accent} />
                         <Text style={styles.suggestionText}>
-                          Recorded debt repayments are about {Math.round(summary.debtToIncomeRatio * 100)}% of recorded income —
+                          {/* Pass C.2 correction — this ratio is PLANNED monthly repayments
+                              (each card's expected repayment and each linked loan/BNPL
+                              schedule, via computeDebtCoachSummary) over SCHEDULED monthly
+                              income (user.monthlyIncome). It never reads recorded repayment
+                              transactions or recorded income, so the sentence now says
+                              exactly what is measured. */}
+                          Planned debt repayments are about {Math.round(summary.debtToIncomeRatio * 100)}% of your monthly income —
                           general reference: staying below 30–35% may leave more flexibility for other expenses.
                         </Text>
                       </View>

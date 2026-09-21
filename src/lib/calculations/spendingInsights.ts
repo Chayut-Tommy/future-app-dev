@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { AppData, Transaction } from '../../types/models';
-import { resolveTransactionCategoryCoachingAmount } from './repaymentAccounting';
+import { resolveTransactionAggregateSpendingAmount, resolveTransactionCategoryCoachingAmount } from './repaymentAccounting';
+import { resolveLeadingCategoryIds, resolveRecordedTransactionCategoryId } from './billCategory';
+import { formatCentsCentsAware } from './money';
 
 export interface SpendingInsight {
   icon: keyof typeof Ionicons.glyphMap;
@@ -24,6 +26,8 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
  * never the transaction's raw `t.amount`. */
 interface ResolvedExpense {
   t: Transaction;
+  /** The shared display category (billCategory.resolveRecordedTransactionCategoryId). */
+  categoryId: string;
   amount: number;
 }
 
@@ -36,14 +40,16 @@ interface ResolvedExpense {
 function resolvedExpenses(data: AppData): ResolvedExpense[] {
   return data.transactions
     .filter((t) => t.type === 'expense')
-    .map((t) => ({ t, amount: resolveTransactionCategoryCoachingAmount(data, t) }))
+    // Pass C.5 — grouped by the shared DISPLAY category, so an insight can never
+    // name a different category than Transactions shows for the same record.
+    .map((t) => ({ t, categoryId: resolveRecordedTransactionCategoryId(data, t), amount: resolveTransactionCategoryCoachingAmount(data, t) }))
     .filter((e) => e.amount > 0);
 }
 
 function sumByCategory(expenses: ResolvedExpense[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const e of expenses) {
-    map.set(e.t.categoryId, (map.get(e.t.categoryId) ?? 0) + e.amount);
+    map.set(e.categoryId, (map.get(e.categoryId) ?? 0) + e.amount);
   }
   return map;
 }
@@ -163,22 +169,41 @@ export function computeSpendingInsights(data: AppData): SpendingInsight[] {
     }
   }
 
-  // Largest category this period
-  let largestCategoryId: string | null = null;
-  let largestAmount = 0;
-  for (const [categoryId, amount] of thisMap) {
-    if (amount > largestAmount) {
-      largestAmount = amount;
-      largestCategoryId = categoryId;
-    }
-  }
-  if (largestCategoryId) {
-    const category = data.categories.find((c) => c.id === largestCategoryId);
+  // Pass C.5.2.1 — CONTRACT, made visible. Under the accepted 2D-NARROW rules the
+  // interest/fees part of a loan repayment IS spending (This Month "Spent"), but
+  // it is deliberately kept OUT of category coaching, because no debt-interest
+  // category exists to attribute it to honestly. Rather than let the headline and
+  // the category lines disagree silently, say so, with the exact amount.
+  const excludedInterestCents = data.transactions
+    .filter((t) => t.type === 'expense' && t.isLoanRepayment === true && new Date(t.date).getTime() >= periodStart)
+    .reduce((sum, t) => sum + Math.round(resolveTransactionAggregateSpendingAmount(data, t) * 100), 0);
+  if (excludedInterestCents > 0) {
     insights.push({
-      icon: 'pie-chart-outline',
-      title: `${category?.name ?? 'This category'} is your largest category`,
-      body: `$${Math.round(largestAmount)} in the last ${PERIOD_DAYS} days.`,
+      icon: 'information-circle-outline',
+      title: 'Loan interest is counted in spending',
+      body: `${formatCentsCentsAware(excludedInterestCents)} of estimated repayment interest and fees in the last ${PERIOD_DAYS} days is in your spending total, but not in these category comparisons.`,
     });
+  }
+
+  // Largest category this period. Pass C.5.1 — exact-cent comparison through the
+  // shared rule; a tie is worded as a tie, never as one arbitrary "largest".
+  const thisCents = new Map<string, number>();
+  for (const [categoryId, amount] of thisMap) thisCents.set(categoryId, Math.round(amount * 100));
+  const leadingIds = resolveLeadingCategoryIds(thisCents, data.categories);
+  if (leadingIds.length > 0) {
+    const names = leadingIds.map((id) => data.categories.find((c) => c.id === id)?.name ?? 'This category');
+    // Pass C.5.2 — the shared customer-facing formatter ("$3,000", never "$3000").
+    const amountLabel = formatCentsCentsAware(thisCents.get(leadingIds[0]) ?? 0);
+    insights.push(
+      names.length === 1
+        ? { icon: 'pie-chart-outline', title: `${names[0]} is your largest category`, body: `${amountLabel} in the last ${PERIOD_DAYS} days.` }
+        : {
+            // Rendered as "Rent and Mortgage are tied · $3,000 each over 30 days."
+            icon: 'pie-chart-outline',
+            title: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are tied`,
+            body: `${amountLabel} each over ${PERIOD_DAYS} days.`,
+          }
+    );
   }
 
   // Subscription total — a real, recurring cost worth surfacing on its own,

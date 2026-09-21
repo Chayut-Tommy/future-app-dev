@@ -230,7 +230,9 @@ console.log('\n=== 6. Accessibility (Class A + C) ===');
   // Both still announce the amount together with its measure label.
   assert(
     '6a. the amount is announced with its measure label (two-region payday layout + no-payday figure)',
-    /accessibilityLabel=\{`\$\{r\.label\}: \$\{spokenSignedDisplay\(r\.value\)\}\. \$\{r\.caption\}`\}/.test(read('src/components/money/CardResultRegions.tsx')) &&
+    // Pass C.2 — a region may carry an explicit spoken label (the daily guide's
+    // amount + period + "an estimate"); the default remains "LABEL: value. caption".
+    /accessibilityLabel=\{r\.accessibilityLabel \?\? `\$\{r\.label\}: \$\{spokenSignedDisplay\(r\.value\)\}\. \$\{r\.caption\}`\}/.test(read('src/components/money/CardResultRegions.tsx')) &&
       /accessibilityLabel=\{`\$\{presentation\.heading\}, \$\{spokenSignedDisplay\(presentation\.displayAmount!\)\}`\}/.test(CODE)
   );
   assert('6b. a negative amount is spoken as "minus", never left as a glyph — via the shared sign authority', /spokenSignedDisplay/.test(CODE) && /replace\(\/\^\[-−\]\/, 'minus '\)/.test(read('src/lib/a11yStrings.ts')));

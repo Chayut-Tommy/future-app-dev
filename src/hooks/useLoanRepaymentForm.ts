@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state/AppStateContext';
 import { Liability, RecurringItem } from '../types/models';
 import { moneyAmountToCents, parseMoneyInputAllowZero } from '../lib/calculations/money';
@@ -32,7 +32,30 @@ function formatMoney(value: number): string {
  * success) the REAL transactionId confirmLoanRepayment's own call just
  * generated (see AppStateContext.tsx's own extended return value this round
  * — never a synthetic id).
+ *
+ * Pass C.5.2 — two additions, no rule changed:
+ * - the amount is PREFILLED with the customer's own recorded repayment for
+ *   this occurrence (still fully editable, and still validated by the same
+ *   exact-cent validator). `isDirty` is measured against that prefill, so an
+ *   untouched form still dismisses instantly;
+ * - 'completed' is reported only after the authoritative storage write has
+ *   RESOLVED (`confirmLoanRepayment`'s own `persistence` promise). While it is
+ *   pending the form stays submitting — a second tap cannot start another
+ *   transition — and a failed write keeps the customer in the form with the
+ *   existing error treatment and no success confirmation. Pass C.5.2.1: the
+ *   action is WRITE-FIRST, so a failed write leaves in-memory AppData exactly
+ *   as it was — "nothing was recorded" is literally true, and Retry is safe.
  */
+export type LoanBalanceChoice = 'update' | 'skip';
+
+/** The scheduled repayment as editable text: "3000" or "1234.56". */
+export function prefilledRepaymentAmountText(recurringItem: Pick<RecurringItem, 'amount'> | null): string {
+  if (!recurringItem) return '';
+  const validated = moneyAmountToCents(recurringItem.amount);
+  if (!validated.valid) return '';
+  return validated.cents % 100 === 0 ? String(validated.cents / 100) : (validated.cents / 100).toFixed(2);
+}
+
 export function useLoanRepaymentForm({
   liability,
   recurringItem,
@@ -49,20 +72,39 @@ export function useLoanRepaymentForm({
   const { data, confirmLoanRepayment } = useAppState();
   const [amountText, setAmountText] = useState('');
   const [source, setSource] = useState<BillPaymentSourceOption | null>(null);
-  const [updateBalance, setUpdateBalance] = useState(false);
+  // Pass C.5.2.1 — the lender-balance decision is an explicit, two-way choice
+  // that starts UNANSWERED. An untouched default is never read as consent to
+  // "record without updating": Save stays disabled until the customer picks one.
+  const [balanceChoice, setBalanceChoice] = useState<LoanBalanceChoice | null>(null);
+  const updateBalance = balanceChoice === 'update';
   const [newBalanceText, setNewBalanceText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
 
+  const prefilledAmountText = prefilledRepaymentAmountText(recurringItem);
+  const mountedRef = useRef(true);
+  const submittingRef = useRef(false);
   useEffect(() => {
-    if (active) return;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (active) {
+      // Entering the form: start from the scheduled repayment for THIS occurrence.
+      setAmountText(prefilledAmountText);
+      return;
+    }
     setAmountText('');
     setSource(null);
-    setUpdateBalance(false);
+    setBalanceChoice(null);
     setNewBalanceText('');
     setIsSubmitting(false);
     setErrorText(null);
-  }, [active]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, recurringItem?.id, recurringItem?.nextDueDate]);
 
   const eligibleSources = useMemo(
     () => resolveEligibleBillPaymentSources(data.assets, []).filter((o) => o.kind === 'asset'),
@@ -78,20 +120,22 @@ export function useLoanRepaymentForm({
   const principalWithinBounds =
     derivedPrincipal !== undefined && derivedPrincipal >= 0 && (!validatedAmount.valid || derivedPrincipal <= validatedAmount.cents / 100);
   const balanceStepValid = !updateBalance || (validatedNewBalance?.valid && principalWithinBounds);
-  const canConfirm = validatedAmount.valid && !!source && balanceStepValid && !isSubmitting;
+  const canConfirm = validatedAmount.valid && !!source && balanceChoice !== null && balanceStepValid && !isSubmitting;
 
   // Interaction-integrity correction (unchanged this round) — an untouched
   // form dismisses instantly; a form with entered data prompts before
   // discarding.
-  const isDirty = amountText !== '' || !!source || updateBalance || newBalanceText !== '';
+  const isDirty = amountText !== prefilledAmountText || !!source || balanceChoice !== null || newBalanceText !== '';
 
   function handleConfirm() {
-    if (!liability || !recurringItem || !occurrenceKey || !validatedAmount.valid || !source) return;
+    if (submittingRef.current) return; // a second tap in the same tick is ignored, not answered with an error
+    if (!liability || !recurringItem || !occurrenceKey || !validatedAmount.valid || !source || balanceChoice === null) return;
     if (updateBalance && (!validatedNewBalance?.valid || !principalWithinBounds)) return;
     const newBalanceAmount = updateBalance && validatedNewBalance?.valid ? validatedNewBalance.amount : undefined;
     setErrorText(null);
+    submittingRef.current = true;
     setIsSubmitting(true);
-    const { transition, transactionId } = confirmLoanRepayment({
+    const { transition, persistence, transactionId } = confirmLoanRepayment({
       recurringItemId: recurringItem.id,
       liabilityId: liability.id,
       expectedNextDueDate: recurringItem.nextDueDate,
@@ -103,10 +147,23 @@ export function useLoanRepaymentForm({
       expectedCurrentBalance: liability.currentBalance,
     });
     if (transition.applied) {
-      setIsSubmitting(false);
-      onResult({ kind: 'completed', occurrenceKey, transactionId });
+      persistence.then(
+        () => {
+          submittingRef.current = false;
+          if (!mountedRef.current) return;
+          setIsSubmitting(false);
+          onResult({ kind: 'completed', occurrenceKey, transactionId });
+        },
+        () => {
+          submittingRef.current = false;
+          if (!mountedRef.current) return;
+          setIsSubmitting(false);
+          setErrorText("We couldn't save that repayment, so nothing was recorded. Please try again.");
+        }
+      );
       return;
     }
+    submittingRef.current = false;
     setIsSubmitting(false);
     switch (transition.reason) {
       case 'stale':
@@ -151,7 +208,8 @@ export function useLoanRepaymentForm({
     source,
     setSource,
     updateBalance,
-    setUpdateBalance,
+    balanceChoice,
+    setBalanceChoice,
     newBalanceText,
     setNewBalanceText,
     isSubmitting,

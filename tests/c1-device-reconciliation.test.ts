@@ -88,7 +88,7 @@ console.log('=== End-of-month scenario 31 Aug: estimated & lowest $5,300 ===');
     assert('savings/goals ~$8.96 informational, not subtracted', (result.informationalPlan.combinedCents ?? 0) > 0 && result.targetCents === cents(5300));
     assert('estimated renders cents-aware as "$5,300"', formatCentsCentsAware(result.targetCents) === '$5,300');
     const p = selectLookAheadPresentation(result);
-    assert('presentation headline names the date', /Estimated position by 31 Aug 2026/.test(p.headline));
+    assert('presentation headline names the date (C.2 wording: Estimated balance)', /Estimated balance by 31 Aug 2026/.test(p.headline));
   }
 }
 

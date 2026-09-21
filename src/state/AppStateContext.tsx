@@ -36,8 +36,8 @@ function localDateFromKey(key: string): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 import { computeLuluScore } from '../lib/calculations/luluScore';
-import { resolveBillTransactionCategory } from '../lib/calculations/billCategory';
-import { computeTotalMonthlyIncome, findPrimaryIncomeItem } from '../lib/calculations/incomeEngine';
+import { resolveRecurringExpenseCategory } from '../lib/calculations/billCategory';
+import { computeTotalMonthlyIncome, isEligibleMainPaydaySource, resolveMainPayday } from '../lib/calculations/incomeEngine';
 import { resolveValidAnchorDay, usesScheduleAnchor } from '../lib/calculations/recurringSchedule';
 import { advanceRecurringItemSchedule } from '../lib/calculations/reminders';
 import {
@@ -98,9 +98,19 @@ function upsertNetWorthHistory(data: AppData): AppData {
 // reminders — ~25 files) keeps working unmodified, since it's still just
 // one aggregate number/date; only how that number gets produced changed,
 // from direct user entry to a live sum over however many sources exist.
-function syncIncomeAggregate(data: AppData): AppData {
+// Exported (Pass C.2 correction) so the payday-authority regression test can
+// run the REAL persist-pipeline step after a real confirmation transition —
+// never a mirrored copy of this derivation. Behaviour unchanged.
+export function syncIncomeAggregate(data: AppData): AppData {
   const monthlyIncome = computeTotalMonthlyIncome(data.recurringItems);
-  const primary = findPrimaryIncomeItem(data.recurringItems);
+  // Pass C.2 closure — the anchor is the EXPLICIT Main payday (or the single
+  // active source), never the inferred soonest-date heuristic. With several
+  // sources and no valid choice, `source` is null, so nextPayday is null and
+  // every consumer fails closed. This step READS `mainPaydayIncomeId` only —
+  // it never writes, guesses or clears it; loading and rendering cannot
+  // persist a selection.
+  const main = resolveMainPayday(data.recurringItems, data.user.mainPaydayIncomeId);
+  const primary = main.source;
   return {
     ...data,
     user: {
@@ -737,7 +747,11 @@ export function confirmRecurringOccurrenceTransition(
   const categoryId =
     item.type === 'income'
       ? data.categories.find((c) => c.type === 'income' && c.name.toLowerCase() === item.label.toLowerCase())?.id ?? 'cat-other-income'
-      : resolveBillTransactionCategory(item);
+      : // Pass C.5 — a liability-linked repayment bill (created by the liability
+        // flow, so it has no purpose of its own) takes its loan family's
+        // existing category instead of falling through to "Other". The structured
+        // family decides; a purpose on the bill never redirects it. Classification only.
+        resolveRecurringExpenseCategory(data, item);
 
   // Final narrow Pass 2D correction — an ordinary confirmed EXPENSE
   // (bill) occurrence now gets the same stable, durable occurrence
@@ -2514,7 +2528,10 @@ export function confirmLoanRepaymentTransition(data: AppData, input: ConfirmLoan
   const transactionInput: Omit<Transaction, 'id'> = {
     type: 'expense',
     amount: paymentCents / 100,
-    categoryId: 'cat-debt',
+    // Pass C.5 — the SAME recording-time resolver the ordinary bill path uses,
+    // so a mortgage is "Mortgage" whichever reminder tier recorded it. Every
+    // accounting resolver keys on `isLoanRepayment`, never on this id.
+    categoryId: resolveRecurringExpenseCategory(data, item),
     date: input.date,
     note: `${liability.label} repayment`,
     paymentSource: input.paymentSource,
@@ -2527,6 +2544,7 @@ export function confirmLoanRepaymentTransition(data: AppData, input: ConfirmLoan
     balanceEffect: 'update',
     principalAmount: principalCents !== undefined ? principalCents / 100 : undefined,
     isLoanRepayment: true,
+    repaymentLiabilityId: liability.id,
   };
 
   const withTransaction = applyNewTransaction(data, transactionInput, input.transactionId);
@@ -2591,34 +2609,49 @@ export function reverseLoanRepaymentTransaction(data: AppData, transactionId: st
   if (!t) return { applied: false, reason: 'not_found' };
   if (!t.recurringOccurrenceKey || !t.recurringItemId) return { applied: false, reason: 'not_a_loan_repayment' };
 
-  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
-  if (!item || !item.linkedLiabilityId) return { applied: false, reason: 'missing_liability' };
-  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
-  if (!liability || !LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type)) {
-    return { applied: false, reason: 'missing_liability' };
-  }
+  // Pass C.5.2.1 — the reversal is governed by what the TRANSACTION stored, not
+  // by whether its source still exists:
+  //   funding side   → `appliedBalanceEffect`
+  //   liability side → `principalAmount` against `repaymentLiabilityId`
+  // The live recurring item is needed only to REOPEN its occurrence. If the
+  // customer has since deleted that source, its schedule is never recreated;
+  // if they deleted the liability, there is no balance left to restore. A
+  // source is never identified from a name, amount, date or category.
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId) ?? null;
+  const structuralLiabilityId = item?.linkedLiabilityId;
+  const recordedLiabilityId = t.repaymentLiabilityId ?? structuralLiabilityId;
+  const provenLoanRepayment = t.isLoanRepayment === true;
+  if (!provenLoanRepayment && !structuralLiabilityId) return { applied: false, reason: 'missing_liability' };
+
+  const liability = recordedLiabilityId ? data.liabilities.find((l) => l.id === recordedLiabilityId) ?? null : null;
+  if (liability && !LOAN_REPAYMENT_LIABILITY_TYPES.includes(liability.type)) return { applied: false, reason: 'missing_liability' };
+  if (!liability && !provenLoanRepayment) return { applied: false, reason: 'missing_liability' };
+
+  const hasLiabilityEffect = typeof t.principalAmount === 'number' && t.principalAmount > 0;
+  // A liability effect exists but the record predates the liability snapshot and
+  // its source is gone: the liability cannot be identified, and is never guessed.
+  if (hasLiabilityEffect && !recordedLiabilityId) return { applied: false, reason: 'missing_liability' };
 
   const restoredDueDate = occurrenceKeyDueDate(t);
   if (!restoredDueDate || !isValidCanonicalDate(restoredDueDate)) return { applied: false, reason: 'not_a_loan_repayment' };
 
   if (!isLatestLoanRepaymentTransaction(data, transactionId)) return { applied: false, reason: 'not_latest' };
 
-  // --- success path only from here; nothing above this line ever mutates. ---
   const { data: withSourceReversed } = applyEffectDelta(data, t.appliedBalanceEffect, -1);
   let withLiabilityRestored = withSourceReversed;
-  if (typeof t.principalAmount === 'number' && t.principalAmount > 0) {
+  if (hasLiabilityEffect && liability) {
     const { data: restored } = applyEffectDelta(
       withSourceReversed,
-      { targetKind: 'liability', targetId: liability.id, delta: t.principalAmount },
+      { targetKind: 'liability', targetId: liability.id, delta: t.principalAmount as number },
       1
     );
     withLiabilityRestored = restored;
   }
 
-  const restoredItem: RecurringItem = { ...item, nextDueDate: restoredDueDate };
   const finalData: AppData = upsertNetWorthHistory({
     ...withLiabilityRestored,
-    recurringItems: withLiabilityRestored.recurringItems.map((r) => (r.id === item.id ? restoredItem : r)),
+    // Reopen the occurrence only on a source that still exists.
+    recurringItems: item ? withLiabilityRestored.recurringItems.map((r) => (r.id === item.id ? { ...item, nextDueDate: restoredDueDate } : r)) : withLiabilityRestored.recurringItems,
     transactions: withLiabilityRestored.transactions.filter((x) => x.id !== transactionId),
   });
 
@@ -2713,9 +2746,18 @@ interface AppStateContextValue {
    * a reset write is already `'pending'`). */
   retryPersist: () => void;
   updateUser: (patch: Partial<UserProfile>) => void;
-  addRecurringItem: (item: Omit<RecurringItem, 'id'>) => void;
-  updateRecurringItem: (id: string, patch: Partial<Omit<RecurringItem, 'id'>>) => void;
+  /** Pass C.4 — `options.setAsMainPayday` records this income as the Main
+   * payday IN THE SAME persistence write as the add/edit (one coherent
+   * transition; no intermediate state). Ignored unless the saved record is an
+   * eligible income (`isEligibleMainPaydaySource`). Absent/false changes
+   * nothing about the existing authority. */
+  addRecurringItem: (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean }) => Promise<void>;
+  updateRecurringItem: (id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }) => Promise<void>;
   deleteRecurringItem: (id: string) => void;
+  /** Pass C.2 closure — records the customer's explicit Main payday (the stable
+   * id of an ACTIVE income source) in exactly one persistence write. Returns
+   * false and writes nothing when the id does not name an active income. */
+  setMainPaydayIncome: (id: string) => boolean;
   addTransaction: (t: Omit<Transaction, 'id'>) => void;
   /** Always reconciles: reverses whatever balance effect the transaction's
    * prior state actually had applied (via its stored appliedBalanceEffect
@@ -2771,8 +2813,9 @@ interface AppStateContextValue {
     itemInput: Omit<RecurringItem, 'id'>,
     recurringItemId: string,
     choice: MidCycleIncomeOccurrenceChoice,
-    precedingOccurrenceDate: string
-  ) => void;
+    precedingOccurrenceDate: string,
+    options?: { setAsMainPayday?: boolean }
+  ) => Promise<void>;
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
@@ -3070,17 +3113,40 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addRecurringItem = useCallback(
-    (item: Omit<RecurringItem, 'id'>) => {
+    (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean }) => {
       const scheduleAnchorDay = resolveScheduleAnchorDay(null, item);
-      persist({ ...data, recurringItems: [...data.recurringItems, { ...item, scheduleAnchorDay, id: generateId() }] });
+      const id = generateId();
+      // Pass C.4 — an intentional "Use as my main payday" on the add form is
+      // recorded atomically with the new source (one persist), and only for an
+      // eligible income. Without the option the authority is untouched.
+      const makeMain = !!options?.setAsMainPayday && isEligibleMainPaydaySource(item);
+      // Returns the write's own promise (C.4) so a caller can confirm success
+      // only once the authoritative save has completed.
+      return persist({
+        ...data,
+        user: makeMain ? { ...data.user, mainPaydayIncomeId: id } : data.user,
+        recurringItems: [...data.recurringItems, { ...item, scheduleAnchorDay, id }],
+      });
     },
     [data, persist]
   );
 
   const updateRecurringItem = useCallback(
-    (id: string, patch: Partial<Omit<RecurringItem, 'id'>>) => {
-      persist({
+    (id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }) => {
+      // Pass C.2 closure — deactivating the chosen Main payday clears the
+      // authority in the SAME write (atomic; no second persist), so the app
+      // returns to the fail-closed "choose your main payday" state rather
+      // than silently keeping (or later resurrecting) a stale choice.
+      const clearsMain = patch.active === false && data.user.mainPaydayIncomeId === id;
+      // Pass C.4 — an intentional Main-payday replacement from the income
+      // editor lands in the SAME write as the edit, judged against the record
+      // AS SAVED (existing fields + patch). It replaces the previous id
+      // outright — there is never a moment with two, or with a stale one.
+      const existing = data.recurringItems.find((r) => r.id === id);
+      const makeMain = !!options?.setAsMainPayday && !clearsMain && !!existing && isEligibleMainPaydaySource({ ...existing, ...patch });
+      return persist({
         ...data,
+        user: clearsMain ? { ...data.user, mainPaydayIncomeId: null } : makeMain ? { ...data.user, mainPaydayIncomeId: id } : data.user,
         recurringItems: data.recurringItems.map((r) =>
           r.id === id ? { ...r, ...patch, scheduleAnchorDay: resolveScheduleAnchorDay(r, patch) } : r
         ),
@@ -3091,7 +3157,31 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const deleteRecurringItem = useCallback(
     (id: string) => {
-      persist({ ...data, recurringItems: data.recurringItems.filter((r) => r.id !== id) });
+      // Pass C.2 closure — deleting the chosen Main payday clears the
+      // authority atomically with the deletion (see updateRecurringItem).
+      const clearsMain = data.user.mainPaydayIncomeId === id;
+      persist({
+        ...data,
+        user: clearsMain ? { ...data.user, mainPaydayIncomeId: null } : data.user,
+        recurringItems: data.recurringItems.filter((r) => r.id !== id),
+      });
+    },
+    [data, persist]
+  );
+
+  // Pass C.2 closure — the ONE deliberate write that records the customer's
+  // Main payday. Validates the id names a currently active income source
+  // (never inferred from label/amount/date), then persists exactly once via
+  // the ordinary pipeline. Opening or cancelling a chooser never reaches here.
+  const setMainPaydayIncome = useCallback(
+    (id: string): boolean => {
+      // Pass C.5 — the SAME eligibility authority the editor and both choosers
+      // use: an irregular, undated, invalid or inactive source is refused here
+      // too, so no entry point can persist a Main payday another would reject.
+      const ok = data.recurringItems.some((r) => r.id === id && isEligibleMainPaydaySource(r));
+      if (!ok) return false;
+      persist({ ...data, user: { ...data.user, mainPaydayIncomeId: id } });
+      return true;
     },
     [data, persist]
   );
@@ -3174,10 +3264,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // the first call's already-recorded occurrence and is correctly rejected
   // as a no-op by the existing, unmodified duplicate-identity guard.
   const addRecurringIncomeWithMidCycleOccurrence = useCallback(
-    (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string) => {
+    (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string, options?: { setAsMainPayday?: boolean }) => {
       const transactionId = generateId();
-      const next = createRecurringIncomeWithMidCycleOccurrence(dataRef.current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
-      persist(next);
+      const current = dataRef.current;
+      const next = createRecurringIncomeWithMidCycleOccurrence(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
+      // Pass C.4 — same single write; skipped when the creation itself was a
+      // duplicate no-op (next === current) or the saved source is ineligible.
+      const created = next !== current ? next.recurringItems.find((r) => r.id === recurringItemId) : undefined;
+      const makeMain = !!options?.setAsMainPayday && !!created && isEligibleMainPaydaySource(created);
+      return persist(makeMain ? { ...next, user: { ...next.user, mainPaydayIncomeId: recurringItemId } } : next);
     },
     [persist]
   );
@@ -3444,20 +3539,78 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // own contract exactly: reads dataRef.current fresh, transactionId/date
   // generated exactly once here, one persist() call, only on the success
   // path.
+  // Pass C.5.2.1 — WRITE-FIRST commit for a mutation that must be atomic with
+  // its storage write (the same primitives `completeOnboarding` uses, made
+  // safe against a concurrent update). `apply` is a PURE function of the
+  // latest accepted AppData:
+  //   1. compute `next` from dataRef.current and write it;
+  //   2. a REJECTED write changes nothing — in-memory state was never touched,
+  //      so nothing can appear behind the editor or ride along with a later,
+  //      unrelated successful write;
+  //   3. a resolved write commits in memory ONLY if no other accepted update
+  //      landed meanwhile. If one did, that update is never overwritten: the
+  //      same pure mutation is re-applied on top of it and written again.
+  // Never a stale-closure rollback, never a global replacement of newer state.
+  const persistWriteFirst = useCallback(
+    async (apply: (current: AppData) => AppData | null): Promise<void> => {
+      let wroteSuperseded = false;
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const base = dataRef.current;
+          const next = apply(base);
+          if (!next) throw new Error('write-first mutation no longer applies');
+          const prepared = upsertLuluScoreHistory(supersedeSetupAcknowledgements(syncIncomeAggregate(next)));
+          const write = saveAppData(prepared);
+          trackWrite(write, 'ordinary');
+          await write;
+          if (dataRef.current === base) {
+            commitData(prepared);
+            return;
+          }
+          wroteSuperseded = true; // storage holds a version memory never accepted
+        }
+        throw new Error('write-first mutation could not settle');
+      } catch (error) {
+        // Storage must never keep a mutation memory did not accept.
+        if (wroteSuperseded) {
+          const restore = saveAppData(dataRef.current);
+          trackWrite(restore, 'ordinary');
+          await restore.catch(() => undefined);
+        }
+        throw error;
+      }
+    },
+    [commitData, trackWrite]
+  );
+
+  // Pass C.5.2.1 — persistence-failure atomicity. The repayment is validated
+  // synchronously (so the form still gets its exact refusal reason), but it
+  // is committed in memory only AFTER its storage write resolves. While that
+  // write is pending the occurrence is held in-flight, so a second tap in the
+  // same tick cannot start a second transition.
+  const loanRepaymentsInFlightRef = useRef(new Set<string>());
   const confirmLoanRepayment = useCallback(
     (
       input: Omit<ConfirmLoanRepaymentInput, 'transactionId' | 'date'>
     ): { transition: ConfirmLoanRepaymentResult; persistence: Promise<void>; transactionId: string } => {
       const transactionId = generateId();
       const date = new Date().toISOString();
+      const occurrenceKey = `${input.recurringItemId}:${input.expectedNextDueDate}`;
+      if (loanRepaymentsInFlightRef.current.has(occurrenceKey)) {
+        return { transition: { applied: false, reason: 'already_confirmed' }, persistence: Promise.resolve(), transactionId };
+      }
       const transition = confirmLoanRepaymentTransition(dataRef.current, { ...input, transactionId, date });
       if (!transition.applied) return { transition, persistence: Promise.resolve(), transactionId };
-      const persistence = persist(transition.data);
-      // Final Pass 2D device-test correction (native-Modal-lifecycle round)
-      // — see confirmCreditCardRepayment's identical own comment above.
+      loanRepaymentsInFlightRef.current.add(occurrenceKey);
+      const persistence = persistWriteFirst((current) => {
+        const result = confirmLoanRepaymentTransition(current, { ...input, transactionId, date });
+        return result.applied ? result.data : null;
+      }).finally(() => {
+        loanRepaymentsInFlightRef.current.delete(occurrenceKey);
+      });
       return { transition, persistence, transactionId };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   // Mirrors reverseBnplRepayment/reverseCreditCardRepayment's own contract:
@@ -3703,6 +3856,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addRecurringItem,
       updateRecurringItem,
       deleteRecurringItem,
+      setMainPaydayIncome,
       addTransaction,
       updateTransaction,
       deleteTransaction,
@@ -3756,6 +3910,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       addRecurringItem,
       updateRecurringItem,
       deleteRecurringItem,
+      setMainPaydayIncome,
       addTransaction,
       updateTransaction,
       deleteTransaction,

@@ -32,9 +32,14 @@ export interface CardResultRegion {
   label: string;
   value: string;
   caption: string;
-  /** Optional emphasis tone for the value (e.g. a shortfall). */
-  tone?: 'default' | 'warning';
+  /** Optional emphasis tone for the value (e.g. a shortfall); 'muted' for a
+   * placeholder such as an unavailable daily guide (Pass C.2). */
+  tone?: 'default' | 'warning' | 'muted';
   testID?: string;
+  /** Optional spoken label override (Pass C.2) — used when the visible value
+   * is a placeholder ("—") or when the region needs a fuller explanation than
+   * "LABEL: VALUE. CAPTION". */
+  accessibilityLabel?: string;
 }
 
 export function CardResultRegions({ left, right }: { left: CardResultRegion; right?: CardResultRegion | null }) {
@@ -56,6 +61,7 @@ export function CardResultRegions({ left, right }: { left: CardResultRegion; rig
         label: { ...typeStyle('meta', locale), color: semantic.textSecondary, letterSpacing: 0.5, fontWeight: '700', textTransform: 'uppercase' },
         value: { ...typeStyle('figureHero', locale), fontSize: 30, fontWeight: '700', color: semantic.interactive, marginTop: designSpacing.xs },
         valueWarning: { color: semantic.warning },
+        valueMuted: { color: semantic.textSecondary },
         caption: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.xs },
         // A 1pt vertical hairline between columns, inset so it spans label →
         // caption without touching the card edges (the row's `gap` gives the
@@ -71,12 +77,12 @@ export function CardResultRegions({ left, right }: { left: CardResultRegion; rig
     <View
       style={styles.region}
       accessible
-      accessibilityLabel={`${r.label}: ${spokenSignedDisplay(r.value)}. ${r.caption}`}
+      accessibilityLabel={r.accessibilityLabel ?? `${r.label}: ${spokenSignedDisplay(r.value)}. ${r.caption}`}
     >
       <Text style={styles.label} importantForAccessibility="no" maxFontSizeMultiplier={2}>
         {r.label}
       </Text>
-      <Text style={[styles.value, r.tone === 'warning' ? styles.valueWarning : null]} importantForAccessibility="no" maxFontSizeMultiplier={2} testID={r.testID}>
+      <Text style={[styles.value, r.tone === 'warning' ? styles.valueWarning : r.tone === 'muted' ? styles.valueMuted : null]} importantForAccessibility="no" maxFontSizeMultiplier={2} testID={r.testID}>
         {r.value}
       </Text>
       <Text style={styles.caption} importantForAccessibility="no" maxFontSizeMultiplier={2}>

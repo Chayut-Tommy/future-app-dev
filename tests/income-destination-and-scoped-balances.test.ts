@@ -965,13 +965,15 @@ console.log('\n=== Section 12: setup-reconciliation dataRef fix — counter-proo
 
   assert(
     'Structural: addRecurringIncomeWithMidCycleOccurrence now reads dataRef.current, not the closed-over `data` — the exact fix for the pre-correction double-tap gap',
-    /const next = createRecurringIncomeWithMidCycleOccurrence\(dataRef\.current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);/.test(
+    // C.4 — the read is captured once as `current` (so a duplicate no-op can be
+    // detected by identity); it is still dataRef.current, never the closed-over `data`.
+    /const current = dataRef\.current;\s*\n\s*const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);/.test(
       APP_STATE_SRC
     )
   );
   assert(
     'Structural: its useCallback dependency array is now [persist] only — data is no longer a dependency, confirming it no longer closes over a per-render data snapshot',
-    /const next = createRecurringIncomeWithMidCycleOccurrence\(dataRef\.current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);\s*\n\s*persist\(next\);\s*\n\s*\},\s*\n\s*\[persist\]/.test(
+    /const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);[\s\S]{0,700}return persist\(makeMain \? \{ \.\.\.next, user: \{ \.\.\.next\.user, mainPaydayIncomeId: recurringItemId \} \} : next\);\s*\n\s*\},\s*\n\s*\[persist\]/.test(
       APP_STATE_SRC
     )
   );
@@ -1204,7 +1206,7 @@ console.log('\n=== Section 14: reconciliation branches A-E — 10 Aug / 4 Sept s
     const ADD_INCOME_SRC_LOCAL = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
     assert(
       'Branch C/D wiring: chooseMidCycleNoOccurrence calls the REAL addRecurringItem action, never a bespoke mutation',
-      /function chooseMidCycleNoOccurrence\(\) \{[\s\S]{0,200}addRecurringItem\(midCyclePayload\);/.test(ADD_INCOME_SRC_LOCAL)
+      /function chooseMidCycleNoOccurrence\(\) \{[\s\S]{0,200}addRecurringItem\(midCyclePayload, \{ setAsMainPayday: willSetMainPayday \}\);/.test(ADD_INCOME_SRC_LOCAL)
     );
     const data = startingData();
     const newItem: RecurringItem = { ...scenarioItemInput(), id: 'income1' };

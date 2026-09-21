@@ -83,11 +83,18 @@ describe('Pass C.1 — card hierarchy + no duplicate horizon control', () => {
 
     const card = await screen.findByTestId('money-scenario-card');
     expect(card).toBeOnTheScreen();
-    expect(screen.getByText('ESTIMATED POSITION')).toBeOnTheScreen();
-    expect(screen.getByText('LOWEST POSITION')).toBeOnTheScreen();
-    expect(screen.getByText('Scenario')).toBeOnTheScreen();
-    // Scenario never shows the AUP per-day figure.
-    expect(screen.queryByText('ABOUT PER DAY')).toBeNull();
+    // C.2: Estimated balance + the guarded About per day, in place of the
+    // AUP hero (so exactly ONE "ABOUT PER DAY" is on screen); no Scenario
+    // badge; the lowest position is a subordinate status, not a region.
+    expect(screen.getByText('ESTIMATED BALANCE')).toBeOnTheScreen();
+    expect(screen.getByText('Before everyday spending')).toBeOnTheScreen();
+    expect(screen.getAllByText('ABOUT PER DAY')).toHaveLength(1);
+    expect(screen.getByTestId('money-scenario-daily')).toBeOnTheScreen();
+    expect(screen.getByTestId('money-scenario-cashflow')).toBeOnTheScreen();
+    expect(screen.queryByText('Scenario')).toBeNull();
+    expect(screen.queryByText('LOWEST POSITION')).toBeNull();
+    expect(screen.queryByText('ESTIMATED POSITION')).toBeNull();
+    expect(screen.queryByText('AVAILABLE')).toBeNull();
 
     fireEvent.press(await screen.findByTestId('money-back-to-payday'));
     await waitFor(() => expect(screen.queryByTestId('money-scenario-card')).toBeNull());

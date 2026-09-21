@@ -162,7 +162,7 @@ export const AddRecurringItemModal = forwardRef<
   ref
 ) {
   const { addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('home-outline');
   const [billTypeLabel, setBillTypeLabel] = useState<string | null>(null);
   // Wave 9a-D — the canonical category this bill will persist. Seeded ONLY
@@ -457,15 +457,17 @@ export const AddRecurringItemModal = forwardRef<
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
         chipRow: { flexDirection: 'row', gap: spacing.sm },
         chip: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        chipActive: { backgroundColor: colors.accentSoft },
+        // Pass C.3 — the same Design 5.1 interactive selection pairing the
+        // savings-percent and income-frequency chips now use.
+        chipActive: { backgroundColor: semantic.interactive },
         chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
+        chipTextActive: { color: semantic.onInteractive, fontWeight: '600' },
         dateHint: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs },
         footerButton: { flex: 1 },
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic]
   );
 
   // Design 5.1 Wave 4 — `icon` defaults to 'home-outline' on reset, which
@@ -524,7 +526,14 @@ export const AddRecurringItemModal = forwardRef<
         {FREQUENCIES.map((f) => {
           const active = frequency === f.value;
           return (
-            <TouchableOpacity key={f.value} style={[styles.chip, active ? styles.chipActive : null]} onPress={() => chooseFrequency(f.value)}>
+            <TouchableOpacity
+              key={f.value}
+              style={[styles.chip, active ? styles.chipActive : null]}
+              onPress={() => chooseFrequency(f.value)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={f.label}
+            >
               <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>{f.label}</Text>
             </TouchableOpacity>
           );

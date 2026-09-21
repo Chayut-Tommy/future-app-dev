@@ -137,6 +137,10 @@ function isBnplRepaymentTransaction(data: AppData, t: Transaction): boolean {
 const LOAN_REPAYMENT_LIABILITY_TYPES = ['mortgage', 'car_loan', 'personal_loan', 'other'];
 function isLoanRepaymentTransaction(data: AppData, t: Transaction): boolean {
   if (!t.recurringItemId || !t.recurringOccurrenceKey) return false;
+  // Pass C.5.2.1 — the flag persisted at recording time is proof on its own, so
+  // a repayment stays view-only and keeps its two-sided reversal even after the
+  // customer deletes its source bill or its liability.
+  if (t.isLoanRepayment === true) return true;
   const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
   if (!item || !item.linkedLiabilityId) return false;
   const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);

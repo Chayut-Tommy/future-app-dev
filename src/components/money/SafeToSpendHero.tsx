@@ -6,15 +6,19 @@ import { useTheme } from '../../theme/ThemeContext';
 import { spokenSignedDisplay } from '../../lib/a11yStrings';
 import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
 import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
+import { buildAupExplanation, formatSafeToSpendDeduction } from '../../lib/calculations/safeToSpendPresentation';
+import { formatDollarsCentsAware } from '../../lib/calculations/money';
+import { forTheNextDaysLabel } from '../../lib/calculations/moneyComposition';
 import { InfoSheet } from '../shared/InfoSheet';
 import { MoneyHeroCopy } from '../../lib/calculations/moneyPersona';
 import { ON_FEATURED, onFeaturedAlpha, designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
 import { MoneyPaydayBar } from './MoneyPaydayBar';
 import { CardResultRegions } from './CardResultRegions';
 import { TimelineLegend } from './TimelineLegend';
-import { formatCentsCentsAware } from '../../lib/calculations/money';
+
 import { TimelineRail } from '../../lib/calculations/timelineMarkers';
 import { PaydayProgress, MONEY_MEASURE_DEFINITIONS } from '../../lib/calculations/moneyComposition';
+import { formatCentsCentsAware } from '../../lib/calculations/money';
 import { textStyle, typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
@@ -37,8 +41,12 @@ const CHOOSE_BALANCES_CTA = 'Choose balances';
 // Wave 11 — the local minus-glyph helper moved verbatim into the shared
 // pure spoken-string authority (lib/a11yStrings.spokenSignedDisplay).
 
+// Pass C.2 closure — "How this was calculated" rows resolve every role
+// through the Design 5.1 typography authority: labels are the support role
+// (or the titleCard role for the total), values are the tabular figureRow
+// money role. No ad-hoc sizes, no synthetic fontWeight, semantic ink only.
 function BreakdownRow({ label, value, isTotal }: { label: string; value: string; isTotal?: boolean }) {
-  const { colors, spacing } = useTheme();
+  const { semantic, spacing } = useTheme();
   // Own binding: this helper renders outside the main component's scope.
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   return (
@@ -46,14 +54,22 @@ function BreakdownRow({ label, value, isTotal }: { label: string; value: string;
       style={{
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: spacing.md,
         paddingVertical: spacing.sm,
         borderTopWidth: isTotal ? StyleSheet.hairlineWidth : 0,
-        borderTopColor: colors.border,
+        borderTopColor: semantic.border,
         marginTop: isTotal ? spacing.xs : 0,
       }}
+      accessible
+      accessibilityLabel={`${label}: ${spokenSignedDisplay(value)}`}
     >
-      <Text style={{ ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '400' }}>{label}</Text>
-      <Text style={{ ...typeStyle('titleCard', locale), fontSize: 14, color: colors.textPrimary, fontWeight: isTotal ? '700' : '600' }}>{value}</Text>
+      <Text style={{ ...typeStyle(isTotal ? 'titleCard' : 'support', locale), color: isTotal ? semantic.textPrimary : semantic.textSecondary, flex: 1 }} maxFontSizeMultiplier={2} importantForAccessibility="no">
+        {label}
+      </Text>
+      <Text style={{ ...typeStyle('figureRow', locale), color: semantic.textPrimary, flexShrink: 0 }} maxFontSizeMultiplier={2} importantForAccessibility="no">
+        {value}
+      </Text>
     </View>
   );
 }
@@ -77,6 +93,8 @@ export function SafeToSpendHero({
   addPaydayLabel = 'Add an expected payday',
   onSelectBalances,
   onReviewInWealth,
+  onReviewIncome,
+  onChooseMainPayday,
   heroCopy,
   paydayProgress = null,
   aupRail = null,
@@ -109,6 +127,16 @@ export function SafeToSpendHero({
    * AddWealthItemModal -> updateAsset), reusing plain tab navigation only,
    * not the broader Pass 2 cross-tab section-focus architecture. */
   onReviewInWealth?: () => void;
+  /** Pass C.2 correction — opens the EXISTING income editor for the payday
+   * source whose expected date has passed (the `payday_expired` state).
+   * Reuses the owning screen's established edit handoff; this card never
+   * advances, confirms or writes anything itself. */
+  onReviewIncome?: () => void;
+  /** Pass C.2 closure — opens the Main-payday chooser (the existing
+   * OptionsSheet over the active income sources) for the fail-closed
+   * "Choose your main payday" state. The choice itself is persisted by the
+   * owning screen through setMainPaydayIncome — one write, on selection only. */
+  onChooseMainPayday?: () => void;
   /** Persona-appropriate labels (Employee/Freelancer/Retiree/Investor/
    * Business owner) wrapping this exact same calculation — never changes
    * a number, only which words describe it (PRD ask, §3/§12). */
@@ -159,6 +187,11 @@ export function SafeToSpendHero({
   // own JSX/CTA structure; only the literal text now comes from `presentation`.
   const presentation = selectSafeToSpendPresentation(safeToSpend, heroCopy);
   const heroState = presentation.heroState;
+  // Pass C.3 — the exact-cent explanation rows, reconciled by construction.
+  const aupExplanation = useMemo(() => buildAupExplanation(safeToSpend), [safeToSpend]);
+  // Pass C.3 — whether the pay-cycle rail carries an expected-income marker,
+  // so the legend names that shape only when it is actually drawn.
+  const hasExpectedIncome = !!aupRail && aupRail.markers.some((m) => m.kind === 'expected_income');
 
   const { goalAllocation } = safeToSpend;
   const hasGoalReservation = safeToSpend.goalContributionsMonthly > 0;
@@ -280,7 +313,7 @@ export function SafeToSpendHero({
           alignSelf: 'stretch',
         },
         reactionText: { ...typeStyle('meta', locale), fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
-        breakdownFooter: { ...typeStyle('labelTab', locale), fontSize: 11, color: colors.textMuted, lineHeight: 15, marginTop: spacing.md },
+        breakdownFooter: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: spacing.md },
         // Stacked, single-column presentation for the daily-estimate row
         // specifically (Stream A follow-up §2) — replaces the generic
         // two-column BreakdownRow only here, since that row's dynamic label
@@ -290,12 +323,14 @@ export function SafeToSpendHero({
         dailyEstimateBlock: {
           paddingVertical: spacing.sm,
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
+          borderTopColor: semantic.border,
           marginTop: spacing.xs,
         },
-        dailyEstimateLabel: { ...typeStyle('body', locale), fontSize: 14, color: colors.textPrimary, fontWeight: '700' },
-        dailyEstimateValue: { ...typeStyle('titleSection', locale), fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginTop: 2 },
-        dailyEstimateContext: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+        // Design 5.1 roles only (Pass C.2 closure): heading = titleCard,
+        // amount = tabular figureLarge, context = support.
+        dailyEstimateLabel: { ...typeStyle('titleCard', locale), color: semantic.textPrimary },
+        dailyEstimateValue: { ...typeStyle('figureLarge', locale), color: semantic.textPrimary, marginTop: 2 },
+        dailyEstimateContext: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: 2 },
       }),
     [colors, radius, spacing, typography, locale, glow]
   );
@@ -336,27 +371,34 @@ export function SafeToSpendHero({
         label="Next expected payday"
         value={safeToSpend.hasKnownPayday ? safeToSpend.cycleEnd.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : 'Not set'}
       />
-      <BreakdownRow label="Balances included" value={formatMoney(safeToSpend.includedMoneyBalance)} />
-      {safeToSpend.includedMoneyBalanceAccounts.map((account) => (
-        <BreakdownRow key={account.id} label={`— ${account.label}`} value={formatMoney(account.value)} />
+      {/* Pass C.2 closure / C.3 — every money line is the authoritative
+          exact-cent figure (cents shown only when they exist), so the rows a
+          customer can see add up EXACTLY to the remainder the hero shows: the
+          device recording's -$4,000 / -$65 / -$747 visibly summed to
+          $5,888.00 against a $5,888.52 remainder. `buildAupExplanation`
+          reconciles the cent-rounded rows to the exact remainder and surfaces
+          any cent of difference as an explicit "Rounding" row, so no hidden
+          residual remains; a zero deduction is "$0", never "-$0". Only the
+          explicitly approximate daily amount below keeps whole-dollar rounding.
+          "Bills due BY that date": the cycle window includes the payday date. */}
+      {aupExplanation.rows.map((row) => (
+        <BreakdownRow
+          key={row.key}
+          label={row.label}
+          value={row.placeholder ?? (row.kind === 'deduction' ? formatSafeToSpendDeduction(row.cents / 100) : formatDollarsCentsAware(row.cents / 100))}
+        />
       ))}
-      <BreakdownRow label="Bills due before that date" value={`-${formatMoney(safeToSpend.cycleBillsExpected)}`} />
-      <BreakdownRow label="Goal allocations (this cycle's share)" value={`-${formatMoney(safeToSpend.cycleGoalsReserved)}`} />
-      <BreakdownRow
-        label="Savings allocation (this cycle's share)"
-        value={safeToSpend.cycleSavingsReserved > 0 ? `-${formatMoney(safeToSpend.cycleSavingsReserved)}` : 'Not set'}
-      />
-      <BreakdownRow label="Estimated remainder" value={formatMoney(Math.max(0, safeToSpend.cycleRemainingPool))} isTotal />
+      <BreakdownRow label="Estimated remainder" value={formatDollarsCentsAware(aupExplanation.remainderCents / 100)} isTotal />
       {safeToSpend.hasKnownPayday && safeToSpend.daysRemaining > 0 ? (
         <View style={styles.dailyEstimateBlock}>
-          <Text style={styles.dailyEstimateLabel}>Estimated daily amount</Text>
-          <Text style={styles.dailyEstimateValue}>{formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day</Text>
-          <Text style={styles.dailyEstimateContext}>
+          <Text style={styles.dailyEstimateLabel} maxFontSizeMultiplier={2}>Estimated daily amount</Text>
+          <Text style={styles.dailyEstimateValue} maxFontSizeMultiplier={1.6}>{formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day</Text>
+          <Text style={styles.dailyEstimateContext} maxFontSizeMultiplier={2}>
             {safeToSpend.daysRemaining} day{safeToSpend.daysRemaining === 1 ? '' : 's'} remaining
           </Text>
         </View>
       ) : null}
-      <Text style={styles.breakdownFooter}>
+      <Text style={styles.breakdownFooter} maxFontSizeMultiplier={2}>
         This estimate updates automatically whenever your income, bills, or spending change. Educational only — not personal financial
         advice.
       </Text>
@@ -491,7 +533,7 @@ export function SafeToSpendHero({
           {opts.showRail && paydayProgress && !paydayProgress.unknown ? (
             <View style={styles.heroFooter} testID="money-aup-hero-payday">
               <MoneyPaydayBar progress={paydayProgress} rail={aupRail} />
-              <TimelineLegend mode="aup" />
+              <TimelineLegend mode="aup" hasExpectedIncome={hasExpectedIncome} />
             </View>
           ) : null}
 
@@ -524,6 +566,38 @@ export function SafeToSpendHero({
       stateText: presentation.primaryCopy,
       supportText: presentation.supportingCopy,
       cta: null,
+      showInfo: false,
+    });
+  }
+
+  // Pass C.2 closure — several regular incomes and no explicit Main payday:
+  // a missing INPUT (neutral, like the no-balance state). No amount, no daily
+  // figure, no rail; one action opens the Main-payday chooser. Nothing is
+  // guessed, and nothing is written until the customer chooses.
+  if (heroState === 'main_payday_unselected') {
+    return renderShell({
+      testID: 'money-aup-hero-main-payday',
+      stateText: presentation.primaryCopy,
+      supportText: presentation.supportingCopy,
+      cta: onChooseMainPayday ? { label: 'Choose your main payday', onPress: onChooseMainPayday, testID: 'money-aup-cta-main-payday' } : null,
+      showRail: false,
+      showInfo: false,
+    });
+  }
+
+  // Pass C.2 correction — EXPIRED boundary: the expected payday has passed
+  // and the income occurrence is not confirmed. Fail closed: no amount, no
+  // daily figure, no pay-cycle rail ("0 days left"), no breakdown of an
+  // expired cycle. One action: review the income through the existing
+  // editor handoff. Viewing or dismissing this writes nothing.
+  if (heroState === 'payday_expired') {
+    return renderShell({
+      testID: 'money-aup-hero-payday-expired',
+      tone: 'warning',
+      stateText: presentation.primaryCopy,
+      supportText: presentation.supportingCopy,
+      cta: onReviewIncome ? { label: 'Review your income', onPress: onReviewIncome, testID: 'money-aup-cta-review-income' } : null,
+      showRail: false,
       showInfo: false,
     });
   }
@@ -652,7 +726,7 @@ export function SafeToSpendHero({
             ? {
                 label: 'ABOUT PER DAY',
                 value: formatMoney(Math.max(0, safeToSpend.dailyAllowance)),
-                caption: `For the next ${safeToSpend.daysRemaining} day${safeToSpend.daysRemaining === 1 ? '' : 's'}`,
+                caption: forTheNextDaysLabel(safeToSpend.daysRemaining),
                 testID: 'money-aup-hero-daily',
               }
             : null

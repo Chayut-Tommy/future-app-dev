@@ -199,7 +199,7 @@ console.log('\n=== 4. Correction B — completion before creation in Money ===')
   // date on a predictable cadence clears the lingering unknown flag.
   assert('4k. picking a payment date clears the legacy unknown flag', /setNextDueDate\(next\.toISOString\(\)\);\s*\n\s*setUnknownDate\(false\);/.test(INCOME_MODAL));
   assert('4l. the save payload contract itself is unchanged', /nextDueDate: unknownDate \|\| !nextDueDate \? new Date\(\)\.toISOString\(\) : nextDueDate,/.test(INCOME_MODAL));
-  assert('4m. editing updates the SAME id, adding creates — the existing CRUD, untouched', /updateRecurringItem\(editItem\.id, payload\);/.test(INCOME_MODAL) && /addRecurringItem\(payload\);/.test(INCOME_MODAL));
+  assert('4m. editing updates the SAME id, adding creates — the existing CRUD, untouched', /updateRecurringItem\(editItem\.id, payload, \{ setAsMainPayday: willSetMainPayday \}\)/.test(INCOME_MODAL) && /addRecurringItem\(payload, \{ setAsMainPayday: willSetMainPayday \}\)/.test(INCOME_MODAL)); // C.4: same CRUD, plus the atomic main-payday option
 
   // Explicit Add-another-income paths survive, and are the ONLY creators.
   assert('4n. the "+" workspace income destination is intact', /incomeSource: 'Add income source'/.test(code(read('src/components/navigation/AddAnythingSheet.tsx'))));

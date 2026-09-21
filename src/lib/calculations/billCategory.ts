@@ -33,7 +33,8 @@
  */
 
 import { DEFAULT_CATEGORIES } from '../defaultCategories';
-import { RecurringItem } from '../../types/models';
+import { AppData, LiabilityType, RecurringItem, Transaction } from '../../types/models';
+import { OCCURRENCE_ID_NAMESPACE } from './occurrenceIdentity';
 
 /** The canonical id used when a purpose is genuinely absent, legacy,
  * invalid or unmapped. Never a convenience default. */
@@ -136,4 +137,142 @@ export function resolveBillTransactionCategory(item: Pick<RecurringItem, 'catego
  * behalf. */
 export function billNeedsCategoryChoice(item: Pick<RecurringItem, 'categoryId'>): boolean {
   return !isCanonicalExpenseCategoryId(item.categoryId);
+}
+
+// ---------------------------------------------------------------------------
+// Pass C.5 — repayment families (the SAME taxonomy, no new categories)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE DEFECT THIS CORRECTS (19 Sep device recording). "Richmond repayment" —
+ * a $3,000 monthly bill LINKED to a mortgage liability — was marked paid from
+ * its ordinary "due tomorrow" reminder. That reminder runs the ordinary bill
+ * transition, which classified by the bill's own `categoryId` alone. A
+ * liability-linked repayment bill is created by the liability flow, not by
+ * the bill-purpose picker, so it never had one: the transaction was PERSISTED
+ * as `cat-other-expense` and Transactions / This Month showed "Other". The
+ * dedicated loan transition had the sibling gap: it stamped every loan,
+ * mortgage included, `cat-debt`.
+ *
+ * THE MAPPING IS NOT NEW. It is the bill-preset table above, read by the
+ * liability's own structured subtype instead of by a preset the customer was
+ * never asked for: Mortgage → `cat-mortgage`, Car Loan → `cat-transport`,
+ * Personal Loan → `cat-debt`. A supported "other" loan, a credit-card
+ * repayment and a BNPL repayment keep the `cat-debt` they already carried.
+ * No category is added and no accounting path is selected here: repayment
+ * accounting keys on structured flags, never on `categoryId`.
+ */
+export type RepaymentFamily = Extract<LiabilityType, 'mortgage' | 'car_loan' | 'personal_loan' | 'other'> | 'credit_card' | 'bnpl';
+
+const REPAYMENT_FAMILY_CATEGORY: Readonly<Record<RepaymentFamily, string>> = {
+  mortgage: BILL_PRESET_CATEGORY.Mortgage,
+  car_loan: BILL_PRESET_CATEGORY['Car Loan'],
+  personal_loan: BILL_PRESET_CATEGORY['Personal Loan'],
+  other: 'cat-debt',
+  credit_card: 'cat-debt',
+  bnpl: 'cat-debt',
+};
+
+/** The loan subtypes a repayment can be linked to (never card or BNPL). */
+/** A proven loan repayment whose family can no longer be resolved. */
+const CONSERVATIVE_LOAN_CATEGORY = 'cat-debt';
+
+export const LOAN_REPAYMENT_FAMILIES: readonly LiabilityType[] = ['mortgage', 'car_loan', 'personal_loan', 'other'];
+
+export function categoryForRepaymentFamily(family: RepaymentFamily): string {
+  const id = REPAYMENT_FAMILY_CATEGORY[family];
+  return isCanonicalExpenseCategoryId(id) ? id : 'cat-debt';
+}
+
+/** The loan liability a recurring item repays, from STRUCTURED state only
+ * (`linkedLiabilityId` → `Liability.type`); never its label, amount or date. */
+function linkedLoanFamily(data: Pick<AppData, 'liabilities'>, item: Pick<RecurringItem, 'linkedLiabilityId'> | undefined): RepaymentFamily | null {
+  if (!item?.linkedLiabilityId) return null;
+  const liability = data.liabilities.find((l) => l.id === item.linkedLiabilityId);
+  if (!liability || !LOAN_REPAYMENT_FAMILIES.includes(liability.type)) return null;
+  return liability.type as RepaymentFamily;
+}
+
+/**
+ * THE ONE RESOLVER for a confirmed recurring EXPENSE at RECORDING time — the
+ * ordinary bill transition and the dedicated loan transition both call it, so
+ * the two paths can no longer disagree, whichever reminder tier recorded the
+ * payment. A repayment LINKED to a loan liability takes that liability's
+ * family category — from the structured subtype alone, so a bill's own
+ * purpose can never redirect a repayment (the Wave 9a-D boundary, kept). Any
+ * other bill keeps the purpose the customer chose, else the explicit
+ * `cat-other-expense` fallback, exactly as before.
+ */
+export function resolveRecurringExpenseCategory(data: Pick<AppData, 'liabilities'>, item: Pick<RecurringItem, 'categoryId' | 'linkedLiabilityId'>): string {
+  const family = linkedLoanFamily(data, item);
+  if (family) return categoryForRepaymentFamily(family);
+  return resolveBillTransactionCategory(item);
+}
+
+/** True when the transaction's PERSISTED canonical occurrence identity names a
+ * loan repayment (`oid1:loan:<sourceId>:…`) for its own recorded source. That
+ * identity is written once at confirmation and never rewritten. */
+function hasPersistedLoanIdentity(t: Pick<Transaction, 'occurrenceResolution' | 'recurringItemId'>): boolean {
+  const r = t.occurrenceResolution;
+  if (!r || r.state !== 'linked' || !t.recurringItemId) return false;
+  // Structured fields of the canonical id (namespace : source kind : source id
+  // : period) — compared exactly, never pattern-matched. A source id can never
+  // contain the ':' delimiter (occurrenceIdentity.ts's own contract).
+  const [namespace, sourceKind, sourceId] = String(r.occurrenceId).split(':');
+  return namespace === OCCURRENCE_ID_NAMESPACE && sourceKind === 'loan' && sourceId === t.recurringItemId;
+}
+
+/**
+ * THE ONE RESOLVER every surface that SHOWS or GROUPS a recorded transaction's
+ * category must use (Transactions, This Month recent activity, spending
+ * insights, Worth Knowing). It returns the persisted category untouched for
+ * everything except a repayment that is PROVABLY a loan repayment and was
+ * recorded before this correction:
+ *
+ *   - proof of "loan repayment" is persisted on the transaction itself — the
+ *     canonical occurrence identity (`oid1:loan:…`) or the `isLoanRepayment`
+ *     flag — never a label, amount or date;
+ *   - the subtype then comes from the still-present structured link
+ *     (recurring item → liability type). Pass C.5.1 — if the source or
+ *     liability is gone, the persisted identity still proves "a loan
+ *     repayment" but no longer which family, so the record shows the existing
+ *     conservative "Debt repayments" category: never "Other", never "Rent",
+ *     never a family guessed from its name, amount or date.
+ *
+ * A manually entered "Other" expense has neither proof and always stays
+ * "Other". Nothing is migrated or rewritten; deleting and re-recording (the
+ * established P0 correction) persists the right category going forward.
+ */
+export function resolveRecordedTransactionCategoryId(data: Pick<AppData, 'recurringItems' | 'liabilities'>, t: Transaction): string {
+  if (t.type !== 'expense') return t.categoryId;
+  const legacyLoanShape = (t.categoryId === UNCATEGORISED_EXPENSE_ID && hasPersistedLoanIdentity(t)) || (t.categoryId === 'cat-debt' && t.isLoanRepayment === true);
+  if (!legacyLoanShape) return t.categoryId;
+  const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
+  const family = linkedLoanFamily(data, item);
+  return family ? categoryForRepaymentFamily(family) : CONSERVATIVE_LOAN_CATEGORY;
+}
+
+/**
+ * Pass C.5.1 — the ONE "largest category" rule, shared by the Money spending
+ * insight and Worth Knowing.
+ *
+ * Device finding (20 Sep): "Rent is your largest category · $3000" appeared
+ * beside a $3,000 Mortgage row. Nothing was mislabelled — three $1,000 rent
+ * payments and one $3,000 mortgage repayment were TIED to the cent, and each
+ * consumer silently named one of them (Map insertion order in one, category-id
+ * order in the other, so the two surfaces could even disagree). A tie has no
+ * single "largest" category, so this returns EVERY category at the exact-cent
+ * maximum, in the category registry's own order, and each caller words the
+ * tie honestly. Totals are integer cents; nothing is inferred from a label.
+ */
+export function resolveLeadingCategoryIds(totalsCents: ReadonlyMap<string, number>, categories: ReadonlyArray<{ id: string }>): string[] {
+  let maxCents = 0;
+  for (const cents of totalsCents.values()) if (cents > maxCents) maxCents = cents;
+  if (maxCents <= 0) return [];
+  const registryOrder = new Map(categories.map((c, index) => [c.id, index]));
+  const position = (id: string) => registryOrder.get(id) ?? Number.MAX_SAFE_INTEGER;
+  return [...totalsCents]
+    .filter(([, cents]) => cents === maxCents)
+    .map(([id]) => id)
+    .sort((a, b) => position(a) - position(b) || (a < b ? -1 : a > b ? 1 : 0));
 }

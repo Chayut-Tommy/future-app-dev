@@ -46,6 +46,14 @@ export function useCurrentLocalDate(): Date {
       setDate(new Date());
       scheduleMidnightRefresh();
     }, delay);
+    // Pass C.3 evidence closure — under Node (Jest), a timer that outlives a
+    // sandbox torn down before React's deferred unmount cleanup runs would
+    // keep the whole process alive for hours ("Jest did not exit one second
+    // after the test run has completed"). Marking it as not holding the
+    // process open has NO effect on device: React Native timer ids are plain
+    // numbers with no `unref`, and the timer still fires and is still cleared
+    // exactly as before.
+    (timerRef.current as unknown as { unref?: () => void }).unref?.();
   }, []);
 
   useEffect(() => {

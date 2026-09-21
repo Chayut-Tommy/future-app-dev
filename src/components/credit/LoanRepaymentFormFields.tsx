@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { InputAccessoryView, Keyboard, Platform, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { InputAccessoryView, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { RefObject } from 'react';
 import { AccountChoiceList } from '../shared/AccountChoiceList';
 import { billPaymentSourceRows } from '../../lib/calculations/accountChoice';
@@ -7,6 +8,15 @@ import { useTheme } from '../../theme/ThemeContext';
 import { Liability, LiabilityType, RecurringItem } from '../../types/models';
 import { LoanRepaymentFormBundle } from '../../hooks/useLoanRepaymentForm';
 import { useAnnounceOnce } from '../../hooks/useAnnounceOnce';
+
+import { LOAN_BALANCE_DECLINED_COPY, LOAN_BALANCE_EXPLAINER_COPY, LOAN_SPLIT_ESTIMATE_COPY } from '../../lib/reminderPresentation';
+import type { LoanBalanceChoice } from '../../hooks/useLoanRepaymentForm';
+
+const BALANCE_CHOICES: { value: LoanBalanceChoice; label: string; hint: string }[] = [
+  { value: 'update', label: 'Update my lender balance', hint: LOAN_BALANCE_EXPLAINER_COPY },
+  { value: 'skip', label: 'Record without updating the balance', hint: LOAN_BALANCE_DECLINED_COPY },
+];
+
 
 function formatMoney(value: number): string {
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -79,8 +89,11 @@ export function LoanRepaymentFormFields({
           color: colors.textPrimary,
           marginBottom: spacing.md,
         },
-        toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
-        toggleLabel: { ...typography.body, fontSize: 13, color: colors.textPrimary, fontWeight: '600', flex: 1, marginRight: spacing.sm },
+        choiceGroup: { marginBottom: spacing.md, gap: spacing.xs },
+        choiceRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44, paddingHorizontal: spacing.sm, borderRadius: radius.control, borderWidth: 1, borderColor: colors.border },
+        choiceRowSelected: { borderColor: colors.accent, backgroundColor: colors.surfaceMuted },
+        choiceLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, flex: 1, paddingVertical: spacing.xs },
+        summaryHeading: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 6 },
         summaryBox: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.md },
         summaryLine: { ...typography.caption, fontSize: 12, color: colors.textPrimary, marginBottom: 4 },
         disclosure: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 16, marginBottom: spacing.md },
@@ -172,9 +185,34 @@ export function LoanRepaymentFormFields({
 
       <View style={styles.divider} />
 
-      <View style={styles.toggleRow}>
-        <Text style={styles.toggleLabel}>Update my recorded loan balance</Text>
-        <Switch value={form.updateBalance} onValueChange={form.setUpdateBalance} disabled={form.isSubmitting} />
+      {/* Pass C.5.2 — why the lender balance is worth adding, said once, beside the
+          choice itself. The customer either supplies it or explicitly leaves it off. */}
+      <Text style={styles.disclosure} testID="loan-balance-explainer">
+        {LOAN_BALANCE_EXPLAINER_COPY}
+      </Text>
+      {/* Pass C.5.2.1 — a deliberate two-way choice (the account chooser's own
+          radio-row pattern), unanswered until the customer picks one. */}
+      <View accessibilityRole="radiogroup" accessibilityLabel="Lender balance" style={styles.choiceGroup}>
+        {BALANCE_CHOICES.map((choice) => {
+          const selected = form.balanceChoice === choice.value;
+          return (
+            <TouchableOpacity
+              key={choice.value}
+              style={[styles.choiceRow, selected ? styles.choiceRowSelected : null]}
+              onPress={() => form.setBalanceChoice(choice.value)}
+              disabled={form.isSubmitting}
+              activeOpacity={0.7}
+              accessibilityRole="radio"
+              accessibilityLabel={choice.label}
+              accessibilityHint={choice.hint}
+              accessibilityState={{ selected, checked: selected, disabled: form.isSubmitting }}
+              testID={`loan-balance-choice-${choice.value}`}
+            >
+              <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={20} color={selected ? colors.accent : colors.textMuted} importantForAccessibility="no" />
+              <Text style={styles.choiceLabel}>{choice.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {form.updateBalance ? (
@@ -191,6 +229,7 @@ export function LoanRepaymentFormFields({
           />
           {form.validatedNewBalance?.valid && form.derivedPrincipal !== undefined ? (
             <View style={styles.summaryBox}>
+              <Text style={styles.summaryHeading} testID="loan-split-estimate">{LOAN_SPLIT_ESTIMATE_COPY}</Text>
               <Text style={styles.summaryLine}>{`${form.source ? form.source.label.split(' (')[0] : 'Selected account'}: -${
                 form.validatedAmount.valid ? formatMoney(form.validatedAmount.cents / 100) : '$0.00'
               }`}</Text>
@@ -207,11 +246,11 @@ export function LoanRepaymentFormFields({
           ) : null}
           <Text style={styles.disclosure}>Nolie records the amounts you enter. Your lender may allocate repayments differently.</Text>
         </>
-      ) : (
-        <Text style={styles.disclosure}>
-          {`Your payment will be recorded, but your recorded balance will stay at ${formatMoney(liability.currentBalance)} until you update it.`}
+      ) : form.balanceChoice === 'skip' ? (
+        <Text style={styles.disclosure} testID="loan-balance-declined">
+          {`${LOAN_BALANCE_DECLINED_COPY} Your recorded balance stays at ${formatMoney(liability.currentBalance)}.`}
         </Text>
-      )}
+      ) : null}
 
       {form.validatedAmount.valid && form.source ? (
         <Text style={styles.disclosure}>

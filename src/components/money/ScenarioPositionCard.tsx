@@ -4,11 +4,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { CardResultRegions } from './CardResultRegions';
-import { TimelineMarkerTrack } from './TimelineMarkerTrack';
+import { FutureTimelineRail } from './FutureTimelineRail';
 import { TimelineLegend } from './TimelineLegend';
-import { TimelineRail } from '../../lib/calculations/timelineMarkers';
-import { LookAheadPresentation } from '../../lib/calculations/lookAheadPresentation';
+import { buildBalancePath } from '../../lib/calculations/balancePath';
+import { ProjectedEvent } from '../../lib/calculations/projectedEvents';
+import { LookAheadPresentation, selectDailyGuidePresentation } from '../../lib/calculations/lookAheadPresentation';
 import { LookAheadResult } from '../../lib/calculations/lookAheadProjection';
+import { DailyGuideResult } from '../../lib/calculations/dailyGuide';
 import { formatCentsCentsAware } from '../../lib/calculations/money';
 import { LocalDate } from '../../lib/calculations/localCalendar';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
@@ -17,44 +19,67 @@ import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 
 const HERO_TILE_SIZE = 36;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const shortDate = (d: LocalDate) => `${d.day} ${MONTHS[d.month - 1]}`;
 
 /**
- * Pass C.1 — the selected-date (scenario) presentation of the ONE Money card.
+ * Pass C.1 / C.2 / C.3 — the selected-date ("Look ahead") presentation of the
+ * ONE Money card.
  *
  * Rendered IN PLACE of the Available-Until-Payday hero when the customer has
  * chosen a specific date, inside the SAME Design 5.1 hero shell, so it reads
- * as the same card in a different mode — never a second card. It shows ONLY
- * the Pass B estimate and its honest scenario framing: it never shows AUP-only
- * content (no "available", no daily amount, no pay-cycle wording, no claim
- * that savings/goals are subtracted, no implication that assumed income has
- * been received). Crucially it NEVER divides a future position into a daily
- * spend — the right region uses the existing Pass B lowest-position or
- * shortfall output instead. All numbers come from the Pass B result via one
- * cents-aware formatter; this component owns no maths.
+ * as the same card in a different mode — never a second card.
+ *
+ * C.2 (Specification v1.3 §5.4, §16): two amounts of equal standing —
+ * LEFT "Estimated balance" (the projected balance at the selected date,
+ * captioned "Before everyday spending") and RIGHT "About per day" (the
+ * guarded, illustrative daily guide, captioned "For the next N days").
+ *
+ * C.5: the future-date drawing is ONE extended time rail in the accepted Pay
+ * cycle progress language — "Timeline to [date]", from the authoritative
+ * cycle start through Today to the selected date (see FutureTimelineRail). It
+ * shows calendar time, not balance movement; the C.3/C.4 monetary graph is
+ * retired. The customer's risk insight is unchanged: the cash-flow status
+ * (no scheduled shortfall / lowest scheduled end-of-day balance / first
+ * possible shortfall / a positive ending after an earlier shortfall) still
+ * sits BELOW the rail and still comes from Pass B's complete daily cash path.
+ * Complete occurrences stay in "View upcoming events". This
+ * component owns NO maths: it never divides the estimated balance by the
+ * number of days and never deducts the daily guide from the path.
  */
 export function ScenarioPositionCard({
   presentation,
   result,
-  rail,
+  guide,
+  events,
+  cycleStart = null,
   targetDateLabel,
   onOpenTimeframe,
   onWhyThisAmount,
   onBackToPayday,
+  onViewUpcomingEvents,
   headingRef,
 }: {
   presentation: LookAheadPresentation;
   /** The Pass B projection for the selected date (or the unavailable result). */
   result: LookAheadResult;
-  /** Scenario rail (green assumed income, gold bills, coral shortfall) — or
-   * null when the estimate is unavailable. */
-  rail: TimelineRail | null;
+  /** The C.2 guarded daily guide for the same date — null when the estimate
+   * itself is unavailable. */
+  guide: DailyGuideResult | null;
+  /** The SAME canonical A3 event stream Pass B consumed
+   * (`computeProjectedEvents(data, asOf, target, { windowStart: asOf })`), or
+   * null when the estimate is unavailable. Read for marker grouping only. */
+  events: ProjectedEvent[] | null;
+  /** Pass C.5 — AUP's own authoritative current pay-cycle start (the left end
+   * of the timeline). Null when no payday is known; the rail then starts at
+   * today. Read only for positioning — never recomputed here. */
+  cycleStart?: LocalDate | null;
   /** The selected-date label for the date subline, e.g. "Mon, 31 Aug 2026". */
   targetDateLabel: string;
   onOpenTimeframe: () => void;
   onWhyThisAmount: () => void;
   onBackToPayday: () => void;
+  /** Pass C.3 — scrolls to the existing "What happens next" list, where every
+   * occurrence behind the chart is listed in full. */
+  onViewUpcomingEvents?: () => void;
   headingRef?: React.Ref<View>;
 }) {
   const { colors, semantic } = useTheme();
@@ -81,14 +106,19 @@ export function ScenarioPositionCard({
           backgroundColor: semantic.interactiveTint,
         },
         identityTitle: { ...typeStyle('titleSection', locale), color: semantic.interactive, flexShrink: 1 },
-        scenarioChip: { paddingHorizontal: designSpacing.sm, paddingVertical: 2, borderRadius: designRadius.tile, backgroundColor: semantic.interactiveTint },
-        scenarioChipText: { ...typeStyle('meta', locale), color: semantic.interactive, fontWeight: '700' },
         dateControlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: designSpacing.sm, marginTop: designSpacing.xs, flexWrap: 'wrap' },
         dateText: { ...typeStyle('titleSection', locale), color: semantic.textPrimary, flexShrink: 1 },
         changeDateButton: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, minHeight: designLayout.touchTargetMin, paddingHorizontal: designSpacing.sm },
         changeDateText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
-        railTitle: { ...typeStyle('support', locale), color: semantic.textPrimary, fontWeight: '600', marginTop: designSpacing.lg },
-        assumed: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
+        // The subordinate cash-flow status: text + icon, never colour alone.
+        // Healthy is neutral (secondary text, Ocean Blue icon) — never green;
+        // a possible shortfall uses the caution (yellow) tone.
+        statusRow: { flexDirection: 'row', alignItems: 'flex-start', gap: designSpacing.xs, marginTop: designSpacing.md },
+        statusText: { ...typeStyle('support', locale), color: semantic.textSecondary, flexShrink: 1 },
+        statusCaution: { color: semantic.warning },
+        deficit: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
+        provenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
+        upcomingLink: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, minHeight: designLayout.touchTargetMin, alignSelf: 'flex-start', marginTop: designSpacing.xs },
         footerRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -107,36 +137,39 @@ export function ScenarioPositionCard({
     [colors, semantic, locale]
   );
 
+  const guidePresentation = useMemo(() => (guide ? selectDailyGuidePresentation(guide) : null), [guide]);
+  // Pass C.3 — the drawable forecast, mapped (never computed) from the Pass B
+  // result and the canonical events. Null when the estimate is unavailable.
+  const balancePath = useMemo(() => (result.available && events ? buildBalancePath(result, events, { cycleStart }) : null), [result, events, cycleStart]);
+
   // The two result regions (available only). LEFT is always the estimated
-  // position at the target (sign-aware). RIGHT is the lowest projected
-  // position, or — when a shortfall is projected — the positive shortfall
-  // amount and its first date. NEVER a per-day figure.
+  // balance at the target (sign-aware) BEFORE everyday spending. RIGHT is the
+  // guarded About-per-day guide — an amount, "$0", or a placeholder with the
+  // reason — never a per-day figure derived from the left amount.
   const regions = useMemo(() => {
     if (!result.available) return null;
     const left = {
-      label: 'ESTIMATED POSITION',
+      label: 'ESTIMATED BALANCE',
       value: formatCentsCentsAware(result.targetCents),
-      caption: `By ${shortDate(result.target)}`,
+      caption: 'Before everyday spending',
       tone: (result.targetCents < 0 ? 'warning' : 'default') as 'warning' | 'default',
       testID: 'money-scenario-amount',
     };
-    const right = result.firstShortfall
+    const right = guidePresentation
       ? {
-          label: 'POTENTIAL SHORTFALL',
-          value: formatCentsCentsAware(result.firstShortfall.shortfallCents),
-          caption: `First expected on ${shortDate(result.firstShortfall.date)}`,
-          tone: 'warning' as const,
-          testID: 'money-scenario-shortfall',
+          label: guidePresentation.label,
+          value: guidePresentation.value,
+          caption: guidePresentation.caption,
+          tone: guidePresentation.tone,
+          testID: 'money-scenario-daily',
+          accessibilityLabel: guidePresentation.accessibilityLabel,
         }
-      : {
-          label: 'LOWEST POSITION',
-          value: formatCentsCentsAware(result.lowest.cents),
-          caption: `On ${shortDate(result.lowest.date)}`,
-          tone: (result.lowest.cents < 0 ? 'warning' : 'default') as 'warning' | 'default',
-          testID: 'money-scenario-lowest',
-        };
+      : null;
     return { left, right };
-  }, [result]);
+  }, [result, guidePresentation]);
+
+  const caution = presentation.cashFlowTone === 'caution';
+  const hasEvents = balancePath ? balancePath.eventCounts.income + balancePath.eventCounts.outgoing > 0 : false;
 
   return (
     <LinearGradient
@@ -150,13 +183,10 @@ export function ScenarioPositionCard({
         <View style={styles.identityTile} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           <Ionicons name="calendar-outline" size={20} color={semantic.interactive} />
         </View>
-        <View ref={headingRef} style={{ flexShrink: 1 }} accessible accessibilityRole="header" accessibilityLabel={`Estimated position by ${targetDateLabel}`} testID="money-scenario-heading">
+        <View ref={headingRef} style={{ flexShrink: 1 }} accessible accessibilityRole="header" accessibilityLabel={`Estimated balance by ${targetDateLabel}`} testID="money-scenario-heading">
           <Text style={styles.identityTitle} maxFontSizeMultiplier={1.8} importantForAccessibility="no">
-            Estimated position by
+            Estimated balance by
           </Text>
-        </View>
-        <View style={styles.scenarioChip}>
-          <Text style={styles.scenarioChipText}>Scenario</Text>
         </View>
       </View>
 
@@ -181,26 +211,77 @@ export function ScenarioPositionCard({
       {available && regions ? (
         <>
           <CardResultRegions left={regions.left} right={regions.right} />
-          {presentation.cashFlowLine ? (
-            <Text style={styles.assumed} testID="money-scenario-cashflow">
-              {presentation.cashFlowLine}
-            </Text>
-          ) : null}
 
-          {rail ? (
+          {balancePath ? (
             <>
-              <Text style={styles.railTitle}>Timeline to {shortDate((result as Extract<LookAheadResult, { available: true }>).target)}</Text>
-              <TimelineMarkerTrack rail={rail} testID="money-scenario-rail" />
-              <TimelineLegend mode="scenario" hasShortfall={result.available && result.firstShortfall !== null} />
+              {/* Pass C.5 — ONE extended time rail in the Pay cycle progress
+                  language ("Timeline to 30 Oct"); the monetary graph is retired. */}
+              <FutureTimelineRail path={balancePath} testID="money-scenario-timeline" />
+              {hasEvents ? (
+                <TimelineLegend mode="scenario" hasShortfall={result.available && result.firstShortfall !== null} showNote={false} />
+              ) : (
+                // Pass C.2 correction (P3) — an empty path has no markers to
+                // explain; say so instead of showing a legend for markers that
+                // aren't there.
+                <Text style={styles.provenance} maxFontSizeMultiplier={2} testID="money-scenario-no-events">
+                  No scheduled events before this date
+                </Text>
+              )}
+              {balancePath.disclosure ? (
+                <Text style={styles.provenance} maxFontSizeMultiplier={2} testID="money-scenario-rail-density">
+                  {balancePath.disclosure}
+                </Text>
+              ) : null}
             </>
           ) : null}
 
-          {presentation.assumedLine ? (
-            <Text style={styles.assumed} testID="money-scenario-assumed">
-              {presentation.assumedLine}
+          {/* Pass C.3 — the existing shortfall / lowest-position status, BELOW the chart. */}
+          {presentation.cashFlowLine ? (
+            <View style={styles.statusRow} testID="money-scenario-cashflow-row">
+              <Ionicons
+                name={caution ? 'alert-circle' : 'checkmark-circle-outline'}
+                size={16}
+                color={caution ? semantic.warning : semantic.interactive}
+                importantForAccessibility="no"
+                accessibilityElementsHidden
+                testID={caution ? 'money-scenario-cashflow-icon-caution' : 'money-scenario-cashflow-icon-neutral'}
+              />
+              <Text
+                style={[styles.statusText, caution ? styles.statusCaution : null]}
+                accessibilityLabel={`Cash-flow status: ${presentation.cashFlowLine}`}
+                maxFontSizeMultiplier={2}
+                testID="money-scenario-cashflow"
+              >
+                {presentation.cashFlowLine}
+              </Text>
+            </View>
+          ) : null}
+          {presentation.deficitLine ? (
+            <Text style={styles.deficit} maxFontSizeMultiplier={2} testID="money-scenario-deficit">
+              {presentation.deficitLine}
             </Text>
           ) : null}
-          {presentation.subtext ? <Text style={styles.assumed}>{presentation.subtext}</Text> : null}
+
+          {onViewUpcomingEvents ? (
+            <TouchableOpacity
+              style={styles.upcomingLink}
+              onPress={onViewUpcomingEvents}
+              accessibilityRole="button"
+              accessibilityLabel="View upcoming events"
+              accessibilityHint="Scrolls to the full list of scheduled bills, income and repayments"
+              testID="money-view-upcoming-events"
+            >
+              <Ionicons name="calendar-number-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+              <Text style={styles.actionText}>View upcoming events</Text>
+              <Ionicons name="chevron-forward" size={16} color={semantic.interactive} importantForAccessibility="no" />
+            </TouchableOpacity>
+          ) : null}
+
+          {presentation.subtext ? (
+            <Text style={styles.provenance} maxFontSizeMultiplier={2} testID="money-scenario-provenance">
+              {presentation.subtext}
+            </Text>
+          ) : null}
         </>
       ) : (
         <Text style={styles.unavailableBody} testID="money-scenario-unavailable">

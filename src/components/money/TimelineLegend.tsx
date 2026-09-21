@@ -16,15 +16,29 @@ import i18n from '../../i18n';
  * not mistaken for a complete picture of undated, plan-only amounts (savings
  * and goals), which are informational and never placed on the rail.
  *
- * AUP mode shows bills/repayments and the not-included payday endpoint (AUP
- * adds no future income, so there is no income marker to explain). Scenario
- * mode adds assumed income, and the potential-shortfall item ONLY when the
- * rail actually carries a shortfall marker — a healthy estimate never shows a
- * shortfall legend entry with no corresponding marker (C1-02).
+ * AUP mode shows bills/repayments and the not-included payday endpoint, plus
+ * (Pass C.3) the expected-income marker ONLY when the rail actually carries
+ * one — an honest legend never lists a shape that is not drawn. Scenario mode
+ * adds assumed income, and the potential-shortfall item ONLY when the rail
+ * actually carries a shortfall marker (C1-02). (Pass C.5 retired the C.3
+ * graph-only entries — estimated-balance area and $0 line — with the graph.)
  */
 const SWATCH = 12;
 
-export function TimelineLegend({ mode, hasShortfall = false }: { mode: 'aup' | 'scenario'; hasShortfall?: boolean }) {
+export function TimelineLegend({
+  mode,
+  hasShortfall = false,
+  hasExpectedIncome = false,
+  showNote = true,
+}: {
+  mode: 'aup' | 'scenario';
+  hasShortfall?: boolean;
+  /** AUP mode only — true when at least one expected-income marker is drawn. */
+  hasExpectedIncome?: boolean;
+  /** Pass C.2 — the selected-date card moves this technical marker note into
+   * "Why this amount?" (progressive disclosure); AUP mode keeps it unchanged. */
+  showNote?: boolean;
+}) {
   const { semantic } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
@@ -57,6 +71,16 @@ export function TimelineLegend({ mode, hasShortfall = false }: { mode: 'aup' | '
             </Text>
           </View>
         ) : null}
+        {mode === 'aup' && hasExpectedIncome ? (
+          <View style={styles.item} accessible accessibilityLabel="Green circle: expected income, not included in Available until payday" testID="timeline-legend-expected-income">
+            <View style={styles.swatchBox} importantForAccessibility="no">
+              <View style={styles.circle} />
+            </View>
+            <Text style={styles.label} importantForAccessibility="no" maxFontSizeMultiplier={2}>
+              Expected income (not included)
+            </Text>
+          </View>
+        ) : null}
         <View style={styles.item} accessible accessibilityLabel="Gold diamond: bills and repayments">
           <View style={styles.swatchBox} importantForAccessibility="no">
             <View style={styles.diamond} />
@@ -85,9 +109,11 @@ export function TimelineLegend({ mode, hasShortfall = false }: { mode: 'aup' | '
           </View>
         ) : null}
       </View>
-      <Text style={styles.note} importantForAccessibility="no" maxFontSizeMultiplier={2}>
-        Markers show dated events only. Planned savings and goals aren’t shown here.
-      </Text>
+      {showNote ? (
+        <Text style={styles.note} importantForAccessibility="no" maxFontSizeMultiplier={2}>
+          Markers show dated events only. Planned savings and goals aren’t shown here.
+        </Text>
+      ) : null}
     </View>
   );
 }

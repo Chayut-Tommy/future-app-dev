@@ -36,7 +36,7 @@ import {
   validateLookAheadTarget,
 } from './localCalendar';
 import { allocateInclusiveRangeCents } from './monthlyCentAllocation';
-import { computeProjectedEvents, ProjectedEditDestination, ProjectedEvent } from './projectedEvents';
+import { computeProjectedEvents, ProjectedEditDestination, ProjectedEvent, ProjectedIssue } from './projectedEvents';
 import { OccurrenceId, OccurrenceSourceKind } from './occurrenceIdentity';
 
 // --- result contract ------------------------------------------------------
@@ -174,6 +174,13 @@ const A3_ISSUE_TO_B: Record<string, LookAheadIssueCode> = {
   invalid_occurrence: 'occurrence_invalid',
 };
 
+/** The ONE mapping from an A3 blocking issue to this engine's typed issue —
+ * exported (Pass C.2) so the daily guide fails closed with the identical
+ * source attribution rather than a duplicated table. */
+export function mapProjectedIssueToLookAhead(i: ProjectedIssue): LookAheadIssue {
+  return { code: A3_ISSUE_TO_B[i.code] ?? 'occurrence_invalid', sourceKind: i.sourceKind, sourceId: i.sourceId, reason: i.reason, editDestination: i.editDestination };
+}
+
 // --- the engine -----------------------------------------------------------
 
 export function computeLookAheadProjection(data: AppData, asOf: LocalDate, target: LocalDate): LookAheadResult {
@@ -206,10 +213,7 @@ export function computeLookAheadProjection(data: AppData, asOf: LocalDate, targe
   const projected = computeProjectedEvents(data, asOf, target, { windowStart: asOf });
   const blocking = projected.issues.filter((i) => i.blocking);
   if (blocking.length > 0) {
-    return {
-      available: false,
-      issues: blocking.map((i) => ({ code: A3_ISSUE_TO_B[i.code] ?? 'occurrence_invalid', sourceKind: i.sourceKind, sourceId: i.sourceId, reason: i.reason, editDestination: i.editDestination })),
-    };
+    return { available: false, issues: blocking.map(mapProjectedIssueToLookAhead) };
   }
   const notices: LookAheadNotice[] = projected.issues.filter((i) => !i.blocking).map((i) => ({ code: i.code, sourceKind: i.sourceKind, sourceId: i.sourceId, reason: i.reason }));
 

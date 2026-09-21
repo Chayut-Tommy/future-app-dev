@@ -8,6 +8,7 @@ export function ProgressBar({
   height = 6,
   accessibilityLabel,
   tone,
+  trackColor,
 }: {
   progress: number;
   color?: string;
@@ -16,6 +17,11 @@ export function ProgressBar({
    * explicit `color` still wins, so every pre-existing caller's fill colour
    * is unchanged. */
   tone?: 'accent' | 'positive' | 'warning' | 'negative';
+  /** Pass C.5 — ADDITIVE: the colour of the unfilled remainder. Omitted by
+   * every pre-existing caller, whose track stays `surfaceMuted` exactly as
+   * before. The future-date timeline passes the pale Ocean Blue tint so the
+   * span from Today to the selected date reads as time still to come. */
+  trackColor?: string;
   /** Pass 2E — omitted by every pre-existing caller (unchanged, byte-
    * identical behaviour: a plain, non-accessible decorative View, since its
    * value is already conveyed by adjacent sibling/parent text). When
@@ -46,7 +52,7 @@ export function ProgressBar({
 
   return (
     <View
-      style={[styles.track, { height }]}
+      style={[styles.track, { height }, trackColor ? { backgroundColor: trackColor } : null]}
       {...(accessibilityLabel
         ? {
             accessible: true,

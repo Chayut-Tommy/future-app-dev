@@ -14,6 +14,7 @@ import { EmptyState } from '../../components/shared/EmptyState';
 import { Button } from '../../components/shared/Button';
 import { monthHeaderAccessibilityLabel, monthSummaryAccessibilityLabel, transactionAccessibilityLabel } from '../../lib/a11yStrings';
 import { computeSpendingInsights } from '../../lib/calculations/spendingInsights';
+import { resolveRecordedTransactionCategoryId } from '../../lib/calculations/billCategory';
 import { resolveTransactionAggregateSpendingAmount } from '../../lib/calculations/repaymentAccounting';
 import { AppData, Transaction } from '../../types/models';
 import { brand } from '../../lib/brand';
@@ -39,11 +40,15 @@ interface MonthGroup {
 function repaymentBadge(data: AppData, t: Transaction): string | null {
   if (t.isRepayment) return 'Repayment — not counted as spending';
   if (t.isLoanRepayment) {
-    if (t.principalAmount === undefined) return 'Balance not updated — split unknown';
+    // Pass C.5.2 — the established repayment disclosure, plus why: no lender balance
+    // was supplied, so no part of it can be presented as spending.
+    if (t.principalAmount === undefined) return 'Repayment — not counted as spending · Balance not updated — split unknown';
     if (t.principalAmount === 0) return 'All interest — no change to recorded balance';
     const interest = Math.max(0, t.amount - t.principalAmount);
-    if (interest === 0) return `$${Math.round(t.principalAmount).toLocaleString()} to principal — no interest`;
-    return `$${Math.round(t.principalAmount).toLocaleString()} principal, $${Math.round(interest).toLocaleString()} interest`;
+    // Pass C.5.2.1 — derived from two balances the customer entered, so it is an
+    // ESTIMATE, and it says where each part went: only the interest part is spending.
+    if (interest === 0) return `Estimated split: $${Math.round(t.principalAmount).toLocaleString()} to principal — not counted as spending`;
+    return `Estimated split: $${Math.round(t.principalAmount).toLocaleString()} principal (not spending), $${Math.round(interest).toLocaleString()} interest and fees (counted as spending)`;
   }
   if (t.recurringItemId) {
     const item = data.recurringItems.find((r) => r.id === t.recurringItemId);
@@ -294,7 +299,9 @@ export function TransactionsScreen() {
               {expanded ? (
                 <View style={styles.txnList}>
                   {group.transactions.map((item) => {
-                    const category = categoryMap.get(item.categoryId);
+                    // Pass C.5 — the one shared display resolver (a provable loan
+                    // repayment recorded as "Other"/"Debt repayments" shows its family).
+                    const category = categoryMap.get(resolveRecordedTransactionCategoryId(data, item));
                     const displayLabel = transactionDisplayLabel(item);
                     const badge = repaymentBadge(data, item);
                     return (

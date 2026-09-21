@@ -15,7 +15,7 @@ import { ISSUER_TERMS_QUALIFICATION, formatAnnualRate } from './creditCardPresen
 // branches, which is exactly how they drifted apart. Centralising them here
 // means a wording change cannot silently become a behaviour change.
 
-import { SmartReminderKind } from './calculations/reminders';
+import { REPAYMENT_SOURCE_REVIEW_COPY, SmartReminderKind } from './calculations/reminders';
 
 // ---------------------------------------------------------------------------
 // Queue position
@@ -54,6 +54,9 @@ export interface ReminderStatus {
  */
 export function resolveReminderStatus(kind: SmartReminderKind, daysUntil: number | null): ReminderStatus {
   if (kind === 'salary_check') return { label: 'Expected', tone: 'informational' };
+  // Pass C.5.2.1 — nothing is payable from a repayment whose loan can't be
+  // resolved, so it is never presented as "due" or "overdue".
+  if (kind === 'repayment_source_review') return { label: 'Review needed', tone: 'caution' };
 
   if (daysUntil === null || !Number.isFinite(daysUntil)) {
     return { label: 'Upcoming', tone: 'informational' };
@@ -262,6 +265,9 @@ const PRIMARY_BY_KIND: Record<SmartReminderKind, { label: string; hint: string }
   // means exactly "Yes, received" and this pass was told to PRESERVE the
   // income journey, so the established string wins over a synonym.
   salary_check: { label: 'Yes, it arrived', hint: 'Confirms this income arrived. You choose which balance it is added to next.' },
+  // Pass C.5.2.1 — a repayment whose loan can't be resolved has NO financial
+  // action: nothing can be recorded from it (fail closed).
+  repayment_source_review: null,
 };
 
 /**
@@ -428,6 +434,11 @@ export function resolveReminderIdentity(input: {
     return { status, title, supportLine: parts.length > 0 ? parts.join(' ') : null };
   }
 
+  if (input.kind === 'repayment_source_review') {
+    // No amount and no due timing: the only honest line is what to do about it.
+    return { status, title, supportLine: REPAYMENT_SOURCE_REVIEW_COPY };
+  }
+
   const timing = timingClause(input.daysUntil);
   const head = amount ? `${amount} ${timing}` : timing.charAt(0).toUpperCase() + timing.slice(1);
   // An overdue item's date IS the timing, so it is not repeated after a
@@ -513,4 +524,16 @@ export const SNOOZE_ROW_MIN_HEIGHT = 52;
  * showing only the word left the customer guessing which day that was. */
 export function snoozeChoiceDateLabel(date: Date): string {
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/** Pass C.5.2 — loan-repayment form copy and confirmation wording (pure, so the
+ * pure suites can pin it). The confirmation states what happened to the
+ * liability, read from the transaction that was actually recorded: a principal
+ * component exists only when the customer supplied a lender balance. */
+export const LOAN_BALANCE_EXPLAINER_COPY = 'Add your latest lender balance to keep your liability and spending split up to date.';
+export const LOAN_BALANCE_DECLINED_COPY = 'We’ll record the repayment, but we won’t estimate principal or change your liability.';
+/** Pass C.5.2.1 — two balances the customer typed are not a lender statement. */
+export const LOAN_SPLIT_ESTIMATE_COPY = 'Estimated split based on the balances you entered.';
+export function loanRepaymentRecordedMessage(transaction: { principalAmount?: number } | null | undefined): string {
+  return transaction && typeof transaction.principalAmount === 'number' ? 'Repayment recorded · Liability updated' : 'Repayment recorded · Balance not updated';
 }

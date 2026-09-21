@@ -51,7 +51,7 @@ export function SavingsAllocationPickerBody({
   hasRecurringIncome: boolean;
   monthlyIncome: number;
 }) {
-  const { colors, radius, spacing } = useTheme();
+  const { colors, radius, spacing, semantic } = useTheme();
   // Wave 9c visual/checklist correction (Correction I) — the shared
   // off/percent/fixed picker (rendered by BOTH the one-time "Plan around
   // your income?" prompt and EditSavingsAllocationModal) resolves the
@@ -147,9 +147,16 @@ export function SavingsAllocationPickerBody({
         subSection: { marginTop: spacing.xs, marginBottom: spacing.md },
         chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
         chip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        chipActive: { backgroundColor: colors.accentSoft },
+        // Pass C.3 — the SELECTED chip uses the Design 5.1 interactive
+        // selection pairing (filled `semantic.interactive` with
+        // `semantic.onInteractive` ink), the same tokens the Money-flow period
+        // control and every other filter-state selection use. The former
+        // legacy `accentSoft`/`accentStrong` pale-mint pairing was barely
+        // readable on device (the 5% chip at 02:55–02:59). Selection is also
+        // exposed as accessibilityState, never colour alone.
+        chipActive: { backgroundColor: semantic.interactive },
         chipText: { ...typeStyle('meta', locale), color: colors.textSecondary, fontVariant: ['tabular-nums'] },
-        chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
+        chipTextActive: { color: semantic.onInteractive, fontWeight: '600' },
         input: {
           ...typeStyle('body', locale),
           backgroundColor: colors.surfaceMuted,
@@ -164,7 +171,7 @@ export function SavingsAllocationPickerBody({
         label: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.xs },
         calcOnlyText: { ...typeStyle('meta', locale), color: colors.textMuted, marginBottom: spacing.sm },
       }),
-    [colors, radius, spacing, locale]
+    [colors, radius, spacing, locale, semantic]
   );
 
   return (
@@ -196,19 +203,33 @@ export function SavingsAllocationPickerBody({
       {mode === 'percent' && hasRecurringIncome ? (
         <View style={styles.subSection}>
           <View style={styles.chipRow}>
-            {PERCENT_PRESETS.map((p) => (
-              <TouchableOpacity
-                key={p}
-                style={[styles.chip, !usingCustomPercent && percent === p ? styles.chipActive : null]}
-                onPress={() => selectPreset(p)}
-              >
-                <Text style={[styles.chipText, !usingCustomPercent && percent === p ? styles.chipTextActive : null]}>
-                  {Math.round(p * 100)}%
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={[styles.chip, usingCustomPercent ? styles.chipActive : null]} onPress={selectCustom}>
-              <Text style={[styles.chipText, usingCustomPercent ? styles.chipTextActive : null]}>Custom</Text>
+            {PERCENT_PRESETS.map((p) => {
+              const selected = !usingCustomPercent && percent === p;
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.chip, selected ? styles.chipActive : null]}
+                  onPress={() => selectPreset(p)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`${Math.round(p * 100)} percent of expected recurring income`}
+                  testID={`savings-percent-chip-${Math.round(p * 100)}`}
+                >
+                  <Text style={[styles.chipText, selected ? styles.chipTextActive : null]} maxFontSizeMultiplier={2}>
+                    {Math.round(p * 100)}%
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[styles.chip, usingCustomPercent ? styles.chipActive : null]}
+              onPress={selectCustom}
+              accessibilityRole="button"
+              accessibilityState={{ selected: usingCustomPercent }}
+              accessibilityLabel="Custom percentage"
+              testID="savings-percent-chip-custom"
+            >
+              <Text style={[styles.chipText, usingCustomPercent ? styles.chipTextActive : null]} maxFontSizeMultiplier={2}>Custom</Text>
             </TouchableOpacity>
           </View>
           {usingCustomPercent ? (

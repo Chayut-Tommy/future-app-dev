@@ -9,7 +9,9 @@ import { Button } from '../shared/Button';
 import { AddWealthItemModal } from '../wealth/AddWealthItemModal';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { PayFrequency, RecurringItem } from '../../types/models';
-import { toMonthlyAmount } from '../../lib/calculations/incomeEngine';
+import { MAIN_PAYDAY_EFFECT_COPY, isEligibleMainPaydaySource, mainPaydayIneligibleReason, resolveMainPayday, toMonthlyAmount } from '../../lib/calculations/incomeEngine';
+import { useCelebration } from '../../state/CelebrationContext';
+import { buildSaveConfirmation } from '../../lib/celebrations';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { precedingOccurrence, isPrecedingOccurrenceEligibleForPrompt } from '../../lib/calculations/recurringSchedule';
 import { resolveEligibleIncomeDestinations } from '../../lib/calculations/incomeDestinations';
@@ -116,13 +118,19 @@ export const AddIncomeModal = forwardRef<
 ) {
   const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem, addRecurringIncomeWithMidCycleOccurrence } = useAppState();
   const { requestPrompt } = useSavingsAllocationPrompt();
-  const { colors, radius, spacing, typography } = useTheme();
+  const { confirmSaveSuccess } = useCelebration();
+  const { colors, radius, spacing, typography, semantic } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('cash-outline');
   const [label, setLabel] = useState('');
   const [income, setIncome] = useState('');
   const [frequency, setFrequency] = useState<PayFrequency>('monthly');
   const [nextDueDate, setNextDueDate] = useState<string | null>(null);
   const [unknownDate, setUnknownDate] = useState(false);
+  // Pass C.4 — the PENDING "Use as my main payday" choice. Editor-local until
+  // Save; Cancel/Back/dismissal never touches the authority. It is derived
+  // from, and written back to, the ONE persisted `user.mainPaydayIncomeId`
+  // (no per-income flag exists). See the control below for the rules.
+  const [useAsMainPayday, setUseAsMainPayday] = useState(false);
   // Category-first, like the transaction flow (PRD ask: "make it
   // friendlier") — picking what kind of income this is comes before the
   // amount. Editing an existing source already has a name, so it skips
@@ -187,7 +195,7 @@ export const AddIncomeModal = forwardRef<
   // stay stable for the sheet's whole open session regardless of how many
   // times the user edits a field afterward (same pattern already
   // established in AddWealthItemModal.tsx).
-  const initialSnapshot = useRef({ label: '', income: '', frequency: 'monthly' as PayFrequency, nextDueDate: null as string | null, unknownDate: false });
+  const initialSnapshot = useRef({ label: '', income: '', frequency: 'monthly' as PayFrequency, nextDueDate: null as string | null, unknownDate: false, useAsMainPayday: false });
 
   useEffect(() => {
     if (!visible) return;
@@ -205,7 +213,11 @@ export const AddIncomeModal = forwardRef<
         frequency: editItem.frequency,
         nextDueDate: editItem.nextDueDateUnknown ? null : editItem.nextDueDate,
         unknownDate: !!editItem.nextDueDateUnknown,
+        useAsMainPayday: data.user.mainPaydayIncomeId === editItem.id,
       };
+      // Selected state is DERIVED from the existing authority, never stored on
+      // the income: ticked only when this source is the explicit Main payday.
+      setUseAsMainPayday(data.user.mainPaydayIncomeId === editItem.id);
     } else {
       setIcon('cash-outline');
       setLabel('');
@@ -215,7 +227,8 @@ export const AddIncomeModal = forwardRef<
       setUnknownDate(false);
       setFormStep('details');
       setSourceId(null);
-      initialSnapshot.current = { label: '', income: '', frequency: 'monthly', nextDueDate: null, unknownDate: false };
+      initialSnapshot.current = { label: '', income: '', frequency: 'monthly', nextDueDate: null, unknownDate: false, useAsMainPayday: false };
+      setUseAsMainPayday(false);
     }
     setMidCyclePayload(null);
     setMidCycleDate(null);
@@ -235,7 +248,8 @@ export const AddIncomeModal = forwardRef<
     income !== initialSnapshot.current.income ||
     frequency !== initialSnapshot.current.frequency ||
     nextDueDate !== initialSnapshot.current.nextDueDate ||
-    unknownDate !== initialSnapshot.current.unknownDate;
+    unknownDate !== initialSnapshot.current.unknownDate ||
+    useAsMainPayday !== initialSnapshot.current.useAsMainPayday;
 
   // Correction pass (Defect 2 fix) — while embedded, the host's global
   // parked-draft guard must see this form as dirty for as long as ANY
@@ -282,6 +296,26 @@ export const AddIncomeModal = forwardRef<
   // invented when the user says they don't know it (PRD ask, §1/§5).
   const canSave = label.trim().length > 0 && parsedIncome.valid && (isIrregular || unknownDate || !!nextDueDate);
   const monthlyPreview = parsedIncome.valid ? toMonthlyAmount(parsedIncome.amount, frequency) : null;
+
+  // Pass C.4 — Main payday control state, all DERIVED from the one authority
+  // (`user.mainPaydayIncomeId`, via the existing resolver). Nothing here
+  // infers a main source from amount, label, date or list order.
+  const mainPayday = useMemo(() => resolveMainPayday(data.recurringItems, data.user.mainPaydayIncomeId), [data.recurringItems, data.user.mainPaydayIncomeId]);
+  const otherActiveIncomeCount = data.recurringItems.filter((r) => r.type === 'income' && r.active && r.id !== editItem?.id).length;
+  /** This source is the explicit, currently selected Main payday. */
+  const isCurrentMainPayday = !!editItem && mainPayday.status === 'selected' && mainPayday.source?.id === editItem.id;
+  /** The only active income: authoritative automatically — nothing to choose
+   * and nothing to persist merely because this editor was opened or saved. */
+  const isOnlyIncome = otherActiveIncomeCount === 0;
+  /** Judged against the form AS IT WOULD BE SAVED, so switching to Irregular
+   * or clearing the date withdraws the option immediately. */
+  const draftForEligibility = { type: 'income' as const, active: editItem ? editItem.active : true, frequency, nextDueDate: unknownDate || !nextDueDate ? '' : nextDueDate, nextDueDateUnknown: unknownDate };
+  const mainPaydayEligible = isEligibleMainPaydaySource(draftForEligibility);
+  const mainPaydayIneligibleText = mainPaydayIneligibleReason(draftForEligibility);
+  /** The one intentional change Save may make: this source REPLACES whatever
+   * the Main payday was. Never true for the already-selected source (no
+   * write needed) and never true while ineligible. */
+  const willSetMainPayday = useAsMainPayday && !isCurrentMainPayday && !isOnlyIncome && mainPaydayEligible;
   // Exactly the six sources the removed page rendered as a grid — same
   // INCOME_SOURCE_IDS order, same SOURCE_LABEL copy, same categoryEmoji.
   /** Local midnight today — the forward date list starts here, preserving
@@ -306,6 +340,15 @@ export const AddIncomeModal = forwardRef<
   useEffect(() => {
     onCanSaveChange?.(canSave && formStep === 'details');
   }, [canSave, formStep, onCanSaveChange]);
+
+  /** Show the calm factual confirmation only once the write has resolved. */
+  function confirmAfterSave(saved: Promise<void> | void, displayName: 'Main payday' | 'Income' | null) {
+    if (!displayName) return;
+    Promise.resolve(saved).then(
+      () => confirmSaveSuccess(buildSaveConfirmation(displayName, 'updated')),
+      () => undefined
+    );
+  }
 
   function handleSave() {
     if (!canSave || !parsedIncome.valid || formStep !== 'details') return;
@@ -375,11 +418,17 @@ export const AddIncomeModal = forwardRef<
       }
     }
 
-    if (editItem) {
-      updateRecurringItem(editItem.id, payload);
-    } else {
-      addRecurringItem(payload);
-    }
+    // Pass C.4 — the income edit and any intentional Main-payday change are
+    // ONE authoritative write (the option rides the same persist), so no
+    // intermediate or contradictory state is ever exposed.
+    const saved = editItem
+      ? updateRecurringItem(editItem.id, payload, { setAsMainPayday: willSetMainPayday })
+      : addRecurringItem(payload, { setAsMainPayday: willSetMainPayday });
+    // Confirmation only AFTER the authoritative save has COMPLETED (the write's
+    // own promise); a failed write is surfaced by the app's persistence state
+    // and is never announced as a success. The embedded Add workspace owns its
+    // own single "… added" confirmation.
+    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : editItem ? 'Income' : null);
     // Embedded: hand control back to the host, which closes the whole Add
     // Anything journey exactly once. Standalone: unchanged direct onClose().
     if (embedded) onSaveSuccess?.();
@@ -430,7 +479,8 @@ export const AddIncomeModal = forwardRef<
   function chooseMidCycleNoOccurrence() {
     if (!midCyclePayload || midCycleSubmitting) return;
     setMidCycleSubmitting(true);
-    addRecurringItem(midCyclePayload);
+    const saved = addRecurringItem(midCyclePayload, { setAsMainPayday: willSetMainPayday });
+    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
     if (embedded) onSaveSuccess?.();
     else onClose();
   }
@@ -439,7 +489,8 @@ export const AddIncomeModal = forwardRef<
     if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
     setMidCycleSubmitting(true);
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'already_included' };
-    addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
+    const saved = addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate, { setAsMainPayday: willSetMainPayday });
+    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
     if (embedded) onSaveSuccess?.();
     else onClose();
   }
@@ -448,7 +499,8 @@ export const AddIncomeModal = forwardRef<
     if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
     setMidCycleSubmitting(true);
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'add_to_balance', targetAssetId };
-    addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate);
+    const saved = addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate, { setAsMainPayday: willSetMainPayday });
+    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
     if (embedded) onSaveSuccess?.();
     else onClose();
   }
@@ -477,9 +529,13 @@ export const AddIncomeModal = forwardRef<
         label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
         row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
         chip: { paddingHorizontal: spacing.md, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
-        chipActive: { backgroundColor: colors.accentSoft },
+        // Pass C.3 — the same Design 5.1 interactive selection pairing the
+        // savings-percent chips now use (see SavingsAllocationPickerBody); the
+        // legacy pale-mint accentSoft/accentStrong pairing read as barely
+        // selected on device.
+        chipActive: { backgroundColor: semantic.interactive },
         chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
-        chipTextActive: { color: colors.accentStrong, fontWeight: '600' },
+        chipTextActive: { color: semantic.onInteractive, fontWeight: '600' },
         footerButton: { flex: 1 },
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
         deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
@@ -498,8 +554,13 @@ export const AddIncomeModal = forwardRef<
         toggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
         toggleText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, flex: 1, lineHeight: 18 },
         irregularNote: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 15 },
+        mainPaydayRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.lg, minHeight: 44, paddingVertical: spacing.xs },
+        mainPaydayRowDisabled: { opacity: 0.55 },
+        mainPaydayTextBlock: { flex: 1 },
+        mainPaydayTitle: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
+        mainPaydaySupport: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2, lineHeight: 17 },
       }),
-    [colors, radius, spacing, typography]
+    [colors, radius, spacing, typography, semantic]
   );
 
   if (formStep === 'midCycle' && midCyclePayload && midCycleDate) {
@@ -617,7 +678,14 @@ export const AddIncomeModal = forwardRef<
       <Text style={styles.label}>Pay frequency</Text>
       <View style={styles.row}>
         {FREQUENCIES.map((f) => (
-          <TouchableOpacity key={f.value} style={[styles.chip, frequency === f.value ? styles.chipActive : null]} onPress={() => chooseFrequency(f.value)}>
+          <TouchableOpacity
+            key={f.value}
+            style={[styles.chip, frequency === f.value ? styles.chipActive : null]}
+            onPress={() => chooseFrequency(f.value)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: frequency === f.value }}
+            accessibilityLabel={f.label}
+          >
             <Text style={[styles.chipText, frequency === f.value ? styles.chipTextActive : null]}>{f.label}</Text>
           </TouchableOpacity>
         ))}
@@ -676,6 +744,57 @@ export const AddIncomeModal = forwardRef<
             {brand.name} won't guess a payday for irregular income — Available Until Payday will show a cash-runway estimate instead.
           </Text>
         </>
+      )}
+
+      {/* Pass C.4 — "Use as my main payday". ONE exclusive selection backed by
+          the existing `user.mainPaydayIncomeId` (a tick is only its visual):
+          choosing this source REPLACES the previous one on Save; the customer
+          never has to untick the old source, and cannot untick the current one
+          into a no-main state from here. Pending until Save; Cancel writes
+          nothing. Hidden when this is the only active income, which is
+          authoritative automatically and persists nothing. */}
+      {isOnlyIncome ? (
+        isEditing ? (
+          <Text style={styles.mainPaydaySupport} testID="income-main-payday-auto">
+            This is your only regular income, so it sets your pay-cycle date automatically.
+          </Text>
+        ) : null
+      ) : (
+        <TouchableOpacity
+          style={[styles.mainPaydayRow, !mainPaydayEligible && !isCurrentMainPayday ? styles.mainPaydayRowDisabled : null]}
+          onPress={() => {
+            if (isCurrentMainPayday || !mainPaydayEligible) return;
+            setUseAsMainPayday((v) => !v);
+          }}
+          disabled={!mainPaydayEligible && !isCurrentMainPayday}
+          activeOpacity={isCurrentMainPayday ? 1 : 0.7}
+          accessibilityRole="radio"
+          accessibilityLabel="Use as my main payday"
+          accessibilityHint={
+            isCurrentMainPayday
+              ? 'This income is your main payday. To change it, choose another income as your main payday.'
+              : MAIN_PAYDAY_EFFECT_COPY
+          }
+          accessibilityState={{ selected: useAsMainPayday && (mainPaydayEligible || isCurrentMainPayday), checked: useAsMainPayday && (mainPaydayEligible || isCurrentMainPayday), disabled: !mainPaydayEligible && !isCurrentMainPayday }}
+          testID="income-main-payday-toggle"
+        >
+          <Ionicons
+            name={useAsMainPayday && (mainPaydayEligible || isCurrentMainPayday) ? 'checkmark-circle' : 'ellipse-outline'}
+            size={22}
+            color={useAsMainPayday && (mainPaydayEligible || isCurrentMainPayday) ? semantic.interactive : colors.textMuted}
+            importantForAccessibility="no"
+          />
+          <View style={styles.mainPaydayTextBlock}>
+            <Text style={styles.mainPaydayTitle}>Use as my main payday</Text>
+            <Text style={styles.mainPaydaySupport} testID="income-main-payday-support">
+              {!mainPaydayEligible && mainPaydayIneligibleText
+                ? mainPaydayIneligibleText
+                : isCurrentMainPayday
+                ? 'This is your main payday. To change it, choose another income as your main payday.'
+                : MAIN_PAYDAY_EFFECT_COPY}
+            </Text>
+          </View>
+        </TouchableOpacity>
       )}
 
       {isEditing ? (

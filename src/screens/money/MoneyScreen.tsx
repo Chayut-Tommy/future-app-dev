@@ -30,9 +30,13 @@ import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet'
 import { LookAheadSheet } from '../../components/money/LookAheadSheet';
 import { TimeframeSheet } from '../../components/money/TimeframeSheet';
 import { ScenarioPositionCard } from '../../components/money/ScenarioPositionCard';
-import { buildAupRail, buildScenarioRail } from '../../lib/calculations/timelineMarkers';
+import { buildAupRail } from '../../lib/calculations/timelineMarkers';
 import { computeLookAheadProjection } from '../../lib/calculations/lookAheadProjection';
-import { selectLookAheadPresentation } from '../../lib/calculations/lookAheadPresentation';
+import { selectDailyGuidePresentation, selectLookAheadPresentation } from '../../lib/calculations/lookAheadPresentation';
+import { computeDailyGuide } from '../../lib/calculations/dailyGuide';
+import { listMainPaydayChoices, mainPaydayChooserSubtitle, resolveMainPayday } from '../../lib/calculations/incomeEngine';
+import { resolveRecordedTransactionCategoryId } from '../../lib/calculations/billCategory';
+import { TimeframeSelection } from '../../lib/calculations/timeframeFlow';
 import { computeProjectedEvents } from '../../lib/calculations/projectedEvents';
 import { LocalDate, localDateFromDate, addCalendarDays } from '../../lib/calculations/localCalendar';
 import { TimeframeStage, TimeframeEvent, timeframeFlowTransition } from '../../lib/calculations/timeframeFlow';
@@ -118,7 +122,7 @@ function fmtTimeframeLocal(d: LocalDate): string {
 }
 
 export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: boolean; pushed?: boolean }) {
-  const { data } = useAppState();
+  const { data, setMainPaydayIncome } = useAppState();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { colors, spacing, typography, radius, cardShadow, semantic, minTouchTarget } = useTheme();
@@ -214,6 +218,12 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // and never survives a restart. `timeframeTarget` null = the authoritative
   // Available-Until-Payday view; a LocalDate = a selected-date scenario.
   const [timeframeTarget, setTimeframeTarget] = useState<LocalDate | null>(null);
+  // Pass C.2 closure — HOW the target was chosen (Until payday / End of this
+  // month / Choose a date), so the chooser highlights the row actually used
+  // even when two rows resolve to the same calendar date. UI-local, ephemeral.
+  const [timeframeMode, setTimeframeMode] = useState<TimeframeSelection>('payday');
+  // Pass C.2 closure — the Main-payday chooser (fail-closed AUP state).
+  const [mainPaydayChooserVisible, setMainPaydayChooserVisible] = useState(false);
   // Pass C.1 correction — the sheet↔picker transition is an explicit state
   // machine, NOT two independently-toggled modals. iOS can only present one
   // Modal at a time: presenting the date picker while the chooser sheet is
@@ -273,22 +283,6 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     }
   }, [currentDate]);
 
-  // AUP-mode event rail — built purely from THIS result's own dated-deduction
-  // provenance, so a marker can never disagree with the amount shown.
-  const aupRail = useMemo(() => (asOfLocal ? buildAupRail(safeToSpend, asOfLocal) : null), [safeToSpend, asOfLocal]);
-
-  // Selected-date (scenario) mode — the Pass B estimate, its presentation, and
-  // the scenario rail built from the SAME canonical A3 stream Pass B consumed.
-  const scenario = useMemo(() => {
-    if (!asOfLocal || !timeframeTarget) return null;
-    const result = computeLookAheadProjection(data, asOfLocal, timeframeTarget);
-    const presentation = selectLookAheadPresentation(result);
-    const rail = result.available
-      ? buildScenarioRail(computeProjectedEvents(data, asOfLocal, timeframeTarget, { windowStart: asOfLocal }).events, result)
-      : null;
-    return { result, presentation, rail };
-  }, [data, asOfLocal, timeframeTarget]);
-
   // Timeframe row labels — one consistent, human date format per mode.
   const paydayLocal = useMemo(() => {
     try {
@@ -297,6 +291,39 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       return null;
     }
   }, [safeToSpend.hasKnownPayday, safeToSpend.cycleEnd]);
+
+  // Pass C.3 — expected income before the payday, read from the SAME canonical
+  // A3 occurrence stream "What happens next" lists (projectTimelineOccurrences
+  // is the same generator), so the rail marker and the list row are one
+  // occurrence. AUP's own arithmetic is untouched: these are marked, not added.
+  const aupExpectedIncome = useMemo(() => {
+    if (!asOfLocal || !paydayLocal || !safeToSpend.hasKnownPayday || safeToSpend.paydayExpired) return [];
+    try {
+      return computeProjectedEvents(data, asOfLocal, paydayLocal, { windowStart: asOfLocal }).events.filter((e) => e.sourceKind === 'income');
+    } catch {
+      return [];
+    }
+  }, [data, asOfLocal, paydayLocal, safeToSpend.hasKnownPayday, safeToSpend.paydayExpired]);
+
+  // AUP-mode event rail — built purely from THIS result's own dated-deduction
+  // provenance (plus the not-included expected-income markers above), so a
+  // marker can never disagree with the amount shown.
+  const aupRail = useMemo(() => (asOfLocal ? buildAupRail(safeToSpend, asOfLocal, aupExpectedIncome) : null), [safeToSpend, asOfLocal, aupExpectedIncome]);
+
+  // Selected-date (scenario) mode — the Pass B estimate, its presentation, and
+  // the SAME canonical A3 stream Pass B consumed (the card maps it into the
+  // Estimated balance path; nothing is recomputed there).
+  const scenario = useMemo(() => {
+    if (!asOfLocal || !timeframeTarget) return null;
+    const result = computeLookAheadProjection(data, asOfLocal, timeframeTarget);
+    const presentation = selectLookAheadPresentation(result);
+    const events = result.available ? computeProjectedEvents(data, asOfLocal, timeframeTarget, { windowStart: asOfLocal }).events : null;
+    // Pass C.2 — the guarded About-per-day guide for the SAME date, composed
+    // from the same Pass B result (pure, read-only; never target ÷ days).
+    const guide = result.available ? computeDailyGuide(data, asOfLocal, timeframeTarget, result) : null;
+    return { result, presentation, events, guide };
+  }, [data, asOfLocal, timeframeTarget]);
+
   const timeframeValueLabel = useMemo(() => {
     if (timeframeTarget) return `By ${fmtTimeframeLocal(timeframeTarget)}`;
     return paydayLocal ? `Until payday · ${fmtTimeframeLocal(paydayLocal)}` : 'Until payday';
@@ -310,8 +337,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const scenarioAnnouncement = useMemo(() => {
     if (!timeframeTarget || !scenario?.presentation) return null;
     const p = scenario.presentation;
-    return [p.headline, p.headlineAmount, p.cashFlowLine].filter(Boolean).join('. ');
-  }, [timeframeTarget, scenario?.presentation]);
+    const g = scenario.guide ? selectDailyGuidePresentation(scenario.guide) : null;
+    return [p.headline, p.headlineAmount, g ? `About per day ${g.value}, ${g.caption}` : null, p.cashFlowLine].filter(Boolean).join('. ');
+  }, [timeframeTarget, scenario?.presentation, scenario?.guide]);
   useAnnounceOnce(scenarioAnnouncement);
   const focusedTargetRef = useRef<string | null>(null);
   useEffect(() => {
@@ -334,8 +362,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
 
   const openTimeframeChooser = useCallback(() => dispatchTimeframe({ type: 'open_chooser' }), [dispatchTimeframe]);
   const handleTimeframeSelect = useCallback(
-    (target: LocalDate | null) => {
+    (target: LocalDate | null, mode: TimeframeSelection) => {
       setTimeframeTarget(target);
+      setTimeframeMode(target ? mode : 'payday');
       dispatchTimeframe({ type: 'close' });
     },
     [dispatchTimeframe]
@@ -359,6 +388,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     if (d) {
       try {
         setTimeframeTarget(localDateFromDate(new Date(d.getFullYear(), d.getMonth(), d.getDate())));
+        setTimeframeMode('custom');
       } catch {
         /* ignore an out-of-range programmatic value; Pass B would reject it anyway */
       }
@@ -436,21 +466,25 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   // arithmetic beyond the sign the amount already carries.
   const recentActivityRows = useMemo(
     () =>
-      recentTransactions.map((t) => ({
-        id: t.id,
-        label: categoryMap.get(t.categoryId)?.name ?? (t.type === 'income' ? 'Income' : 'Other'),
-        dateLabel: new Date(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
-        amountLabel: formatMoney(t.type === 'income' ? t.amount : -t.amount),
-        isIncome: t.type === 'income',
-        // Wave 6 final refinement — the CANONICAL category icon mapping
-        // (addIcons.ts, via categoryIconSpec) rather than one generic
-        // arrow for every row. Groceries becomes a cart, Dining out a
-        // restaurant, Bonus a gift — each with its designed domain tone.
-        // An unmapped category falls back safely inside that map.
-        icon: categoryIconSpec(t.categoryId).name as any,
-        tone: categoryIconSpec(t.categoryId).tone,
-      })),
-    [recentTransactions, categoryMap]
+      recentTransactions.map((t) => {
+        // Pass C.5 — the same shared display resolver Transactions uses.
+        const displayCategoryId = resolveRecordedTransactionCategoryId(data, t);
+        return {
+          id: t.id,
+          label: categoryMap.get(displayCategoryId)?.name ?? (t.type === 'income' ? 'Income' : 'Other'),
+          dateLabel: new Date(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }),
+          amountLabel: formatMoney(t.type === 'income' ? t.amount : -t.amount),
+          isIncome: t.type === 'income',
+          // Wave 6 final refinement — the CANONICAL category icon mapping
+          // (addIcons.ts, via categoryIconSpec) rather than one generic
+          // arrow for every row. Groceries becomes a cart, Dining out a
+          // restaurant, Bonus a gift — each with its designed domain tone.
+          // An unmapped category falls back safely inside that map.
+          icon: categoryIconSpec(displayCategoryId).name as any,
+          tone: categoryIconSpec(displayCategoryId).tone,
+        };
+      }),
+    [recentTransactions, categoryMap, data]
   );
 
   // At most two, and compact: icon + short label + value, never the
@@ -948,7 +982,11 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           <ScenarioPositionCard
             presentation={scenario.presentation}
             result={scenario.result}
-            rail={scenario.rail}
+            guide={scenario.guide}
+            events={scenario.events}
+            // Pass C.5 — the timeline's left end is AUP's OWN cycle start (the one
+            // authoritative owner); with no known payday the rail starts at today.
+            cycleStart={safeToSpend.hasKnownPayday && !safeToSpend.paydayExpired ? (() => { try { return localDateFromDate(safeToSpend.cycleStart); } catch { return null; } })() : null}
             targetDateLabel={new Date(timeframeTarget.year, timeframeTarget.month - 1, timeframeTarget.day).toLocaleDateString(undefined, {
               weekday: 'short',
               day: 'numeric',
@@ -958,6 +996,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
             onOpenTimeframe={openTimeframeChooser}
             onWhyThisAmount={() => setLookAheadVisible(true)}
             onBackToPayday={() => setTimeframeTarget(null)}
+            // Pass C.3 — the complete occurrences behind the path live in the
+            // existing "What happens next" list on this same screen; this only
+            // scrolls there (Reduce Motion → no animated scroll). No new sheet.
+            onViewUpcomingEvents={() => {
+              const y = whatHappensNextSectionY.current;
+              if (y !== null) activeScrollRef.current?.scrollTo({ y, animated: !reduceMotion });
+            }}
             headingRef={scenarioHeadingRef}
           />
         ) : (
@@ -991,6 +1036,19 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           }
           onSelectBalances={() => setSelectBalancesVisible(true)}
           onReviewInWealth={() => navigation.navigate('Wealth')}
+          // Pass C.2 correction — the expired-payday state's single action
+          // opens the EXISTING income editor for the source AUP's boundary
+          // is derived from (the same primary-income selection the persist
+          // pipeline uses), via the same edit handoff onAddPayday uses.
+          // Opening and dismissing the editor writes nothing.
+          onReviewIncome={() => {
+            // Pass C.2 closure — the source is the explicit Main payday (or the
+            // single active source); never the inferred soonest-date heuristic.
+            const main = resolveMainPayday(data.recurringItems, data.user.mainPaydayIncomeId);
+            setEditIncome(main.source ?? main.candidates[0] ?? null);
+            setIncomeModalVisible(true);
+          }}
+          onChooseMainPayday={() => setMainPaydayChooserVisible(true)}
           heroCopy={heroCopy}
           // Wave 6 correction C — exactly ONE balance affordance per state,
           // and the hero's tiny "Manage balances" link is never it.
@@ -1291,6 +1349,24 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           setIncomeModalVisible(true);
         }}
       />
+      {/* Pass C.2 closure — Main payday chooser. OptionsSheet defers onSelect to
+          its native onDismiss, so cancelling/backdrop never selects; choosing
+          performs exactly ONE persistence write via setMainPaydayIncome. */}
+      <OptionsSheet
+        visible={mainPaydayChooserVisible}
+        onClose={() => setMainPaydayChooserVisible(false)}
+        title="Choose your main payday"
+        subtitle={mainPaydayChooserSubtitle(data.recurringItems)}
+        options={listMainPaydayChoices(data.recurringItems).eligible.map((item) => ({
+            key: item.id,
+            icon: (item.icon as never) ?? 'cash-outline',
+            label: item.label,
+            description: `${formatMoney(item.amount)} · ${frequencyAdverb(item.frequency)}${data.user.mainPaydayIncomeId === item.id ? ' · Main payday' : ''}`,
+          }))}
+        onSelect={(key) => {
+          setMainPaydayIncome(key);
+        }}
+      />
       <AddIncomeModal
         visible={incomeModalVisible}
         editItem={editIncome}
@@ -1325,6 +1401,8 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         visible={timeframeStage === 'chooser'}
         asOf={currentDate}
         paydayDate={paydayLocal}
+        currentTarget={timeframeTarget}
+        currentMode={timeframeMode}
         onSelect={handleTimeframeSelect}
         onChooseDate={handleChooseDate}
         onClose={() => setTimeframeStage('idle')}

@@ -279,7 +279,7 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
 
     // No emoji, and the provenance line is present.
     expect(heroJson).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
-    expect(visibleTexts(view)).toContain('Your included balances, less the bills, savings and goals still due before payday.');
+    expect(visibleTexts(view)).toContain('Your included balances, less the bills, savings and goals still due by payday.');
 
     // Balances used stays OUTSIDE the hero, with one entry point.
     expect(heroJson).not.toContain('money-included-balances-row');
@@ -289,7 +289,7 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
 
   test('5. every Money measure carries a definition, and Money Plan reads as a forecast, never proof', () => {
     const texts = visibleTexts(view).join(' | ');
-    expect(texts).toContain('Your included balances, less the bills, savings and goals still due before payday.');
+    expect(texts).toContain('Your included balances, less the bills, savings and goals still due by payday.');
     expect(texts).toContain('Used only for this estimate — your Wealth total is unchanged.');
     expect(texts).toContain('What you have actually recorded so far this calendar month.');
     expect(texts).toContain('Bills, income and repayments scheduled from today onward.');

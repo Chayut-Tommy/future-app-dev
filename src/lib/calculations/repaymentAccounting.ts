@@ -150,6 +150,12 @@ export function resolveTransactionAggregateSpendingAmount(data: AppData, t: Tran
  * cost" either. No dedicated debt-interest category ("Interest & fees",
  * "Loan interest", or similar) exists anywhere in defaultCategories.ts.
  *
+ * Pass C.5 note: a loan repayment is now stamped with its repayment-FAMILY
+ * category (mortgage → 'cat-mortgage', car loan → 'cat-transport', personal /
+ * other loan → 'cat-debt') by the one recording authority,
+ * `resolveRecurringExpenseCategory` (billCategory.ts). Nothing below changes:
+ * no family category separates interest from principal either.
+ *
  * This function is deliberately keyed on the transaction's own repayment
  * METADATA (`isRepayment`/the BNPL-liability lookup/`isLoanRepayment`) —
  * NEVER on `categoryId === 'cat-debt'`. A manual, non-repayment expense the
