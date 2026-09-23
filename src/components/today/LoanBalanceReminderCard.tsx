@@ -101,9 +101,12 @@ export function LoanBalanceReminderCard() {
         visible={modalVisible}
         kind="liability"
         editLiability={loan}
-        onClose={() => {
-          setModalVisible(false);
-          updateLiability(loan.id, { balanceReminderDismissed: true });
+        onClose={() => setModalVisible(false)}
+        // Pass D0 — closing the editor proves nothing. The nudge is marked handled
+        // only when the editor reports a durably SAVED balance; a Cancel or a failed
+        // save leaves it in place (the explicit Dismiss control above still dismisses it).
+        onOutcome={(outcome) => {
+          if (outcome.outcome === 'saved') void updateLiability(loan.id, { balanceReminderDismissed: true });
         }}
       />
     </>

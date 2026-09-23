@@ -357,7 +357,7 @@ console.log("\n=== 15. Defect 2 fix — multi-step embedded forms latch their di
   );
   assert(
     "15d. AddIncomeModal's standalone requestCancel/local Cancel-while-active gate still reads the raw isDetailsDirty, not the latch — only the HOST-facing report changed",
-    /confirmDiscardIfDirty\(isDetailsDirty, onClose, 'Discard income\?', 'Your entered income details will be lost\.'\);/.test(ADD_INCOME_SRC)
+    /confirmDiscardIfDirty\(isDetailsDirty, handleDismiss, 'Discard income\?', 'Your entered income details will be lost\.'\);/.test(ADD_INCOME_SRC) // Pass D0 — durable completion: the confirmed close is the one `dismissed` exit, never a bare onClose
   );
 }
 

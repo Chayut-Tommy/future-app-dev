@@ -14,6 +14,7 @@ import { formatWealthAmount } from '../../lib/calculations/wealthComposition';
 import { AddIncomeModal } from '../income/AddIncomeModal';
 import { EditSavingsAllocationModal } from './EditSavingsAllocationModal';
 import { OptionsSheet } from '../shared/OptionsSheet';
+import { useMainPaydaySelection } from '../../hooks/useMainPaydaySelection';
 import { brand } from '../../lib/brand';
 
 function formatMoney(value: number): string {
@@ -49,8 +50,16 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
   const [editIncomeItem, setEditIncomeItem] = useState<RecurringItem | null>(null);
   const [savingsPlanModalVisible, setSavingsPlanModalVisible] = useState(false);
   // Pass C.2 closure — Main payday is chosen from the Income Sources experience.
-  const { setMainPaydayIncome } = useAppState();
-  const [mainPaydayChooserVisible, setMainPaydayChooserVisible] = useState(false);
+  // Pass D0.1 — ONE native sheet host for the whole Income-sources journey. "Change
+  // main payday" swaps this sheet's OWN content (an internal view) instead of
+  // dismissing it and presenting a second sheet, so the screen behind is never
+  // exposed, nothing is re-presented and no timer sequences anything.
+  const [incomeSheetView, setIncomeSheetView] = useState<'sources' | 'main-payday'>('sources');
+  const mainPaydaySelection = useMainPaydaySelection({
+    visible: incomeSourcesSheetVisible && incomeSheetView === 'main-payday',
+    // Saved, or the current source re-chosen (a clean no-op): the journey closes once.
+    onDone: () => setIncomeSourcesSheetVisible(false),
+  });
   const mainPayday = resolveMainPayday(data.recurringItems, data.user.mainPaydayIncomeId);
 
   // Multiple income sources (PRD ask, §3) — tapping "Monthly income" opens
@@ -63,13 +72,18 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
       setEditIncomeItem(null);
       setIncomeModalVisible(true);
     } else {
+      setIncomeSheetView('sources'); // every opening starts on the sources view
       setIncomeSourcesSheetVisible(true);
     }
   }
 
   function selectIncomeSource(key: string) {
+    if (incomeSheetView === 'main-payday') {
+      void mainPaydaySelection.choose(key);
+      return;
+    }
     if (key === 'main-payday') {
-      setMainPaydayChooserVisible(true);
+      setIncomeSheetView('main-payday'); // in place — the host stays presented
       return;
     }
     if (key === 'add') {
@@ -265,40 +279,49 @@ export function MoneyEngineCard({ data }: { data: AppData }) {
       <OptionsSheet
         visible={incomeSourcesSheetVisible}
         onClose={() => setIncomeSourcesSheetVisible(false)}
-        title="💼 Income sources"
-        subtitle="Tap a source to edit it, or add another."
-        options={[
-          ...incomeItems.map((item) => ({
-            key: item.id,
-            icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash-outline',
-            label: item.label,
-            description: `${formatMoney(toMonthlyAmount(item.amount, item.frequency))}/mo · ${frequencyAdverb(item.frequency)}${mainPayday.source?.id === item.id ? ' · Main payday' : ''}`,
-          })),
-          // Pass C.2 closure — with several sources the customer chooses (or
-          // changes) which one anchors Available until payday; with one source
-          // it is authoritative automatically and no choice is offered.
-          ...(incomeItems.length > 1
-            ? [{ key: 'main-payday', icon: 'calendar-outline' as const, label: mainPayday.source ? 'Change main payday' : 'Choose your main payday', description: mainPayday.source ? `Currently ${mainPayday.source.label}` : 'Needed for Available until payday' }]
-            : []),
-          { key: 'add', icon: 'add-circle-outline' as const, label: 'Add income source', description: 'Salary, rental, dividends, and more' },
-        ]}
-        onSelect={selectIncomeSource}
-      />
-      <OptionsSheet
-        visible={mainPaydayChooserVisible}
-        onClose={() => setMainPaydayChooserVisible(false)}
-        title="Choose your main payday"
+        viewKey={incomeSheetView}
+        title={incomeSheetView === 'sources' ? '💼 Income sources' : 'Choose your main payday'}
         // Pass C.5 — the same shared eligibility list and wording as Money's chooser.
-        subtitle={mainPaydayChooserSubtitle(data.recurringItems)}
-        options={listMainPaydayChoices(data.recurringItems).eligible.map((item) => ({
-          key: item.id,
-          icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash-outline',
-          label: item.label,
-          description: `${formatMoney(item.amount)} · ${frequencyAdverb(item.frequency)}${mainPayday.source?.id === item.id ? ' · Main payday' : ''}`,
-        }))}
-        onSelect={(key) => {
-          setMainPaydayIncome(key);
-        }}
+        subtitle={incomeSheetView === 'sources' ? 'Tap a source to edit it, or add another.' : mainPaydayChooserSubtitle(data.recurringItems)}
+        busy={mainPaydaySelection.pending}
+        pendingKind={mainPaydaySelection.pending ? 'saving' : null}
+        errorText={incomeSheetView === 'main-payday' ? mainPaydaySelection.errorText : null}
+        // In the chooser the footer is an internal Back to Income sources (no write).
+        cancelLabel={incomeSheetView === 'main-payday' ? 'Back' : 'Cancel'}
+        onCancel={
+          incomeSheetView === 'main-payday'
+            ? () => {
+                mainPaydaySelection.clearError();
+                setIncomeSheetView('sources');
+              }
+            : undefined
+        }
+        options={
+          incomeSheetView === 'sources'
+            ? [
+                ...incomeItems.map((item) => ({
+                  key: item.id,
+                  icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash-outline',
+                  label: item.label,
+                  description: `${formatMoney(toMonthlyAmount(item.amount, item.frequency))}/mo · ${frequencyAdverb(item.frequency)}${mainPayday.source?.id === item.id ? ' · Main payday' : ''}`,
+                })),
+                // Pass C.2 closure — with several sources the customer chooses (or
+                // changes) which one anchors Available until payday; with one source
+                // it is authoritative automatically and no choice is offered.
+                ...(incomeItems.length > 1
+                  ? [{ key: 'main-payday', icon: 'calendar-outline' as const, label: mainPayday.source ? 'Change main payday' : 'Choose your main payday', description: mainPayday.source ? `Currently ${mainPayday.source.label}` : 'Needed for Available until payday', inPlace: true }]
+                  : []),
+                { key: 'add', icon: 'add-circle-outline' as const, label: 'Add income source', description: 'Salary, rental, dividends, and more' },
+              ]
+            : listMainPaydayChoices(data.recurringItems).eligible.map((item) => ({
+                key: item.id,
+                icon: (item.icon as keyof typeof Ionicons.glyphMap) ?? 'cash-outline',
+                label: item.label,
+                description: `${formatMoney(item.amount)} · ${frequencyAdverb(item.frequency)}${mainPayday.source?.id === item.id ? ' · Main payday' : ''}`,
+                inPlace: true, // a durable selection: the sheet closes only after the choice is stored
+              }))
+        }
+        onSelect={selectIncomeSource}
       />
       <AddIncomeModal
         visible={incomeModalVisible}

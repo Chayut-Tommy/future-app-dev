@@ -152,7 +152,7 @@ describe('C.4B — inspecting markers', () => {
     // The hero figures never moved, and nothing was written.
     expect(screen.getByTestId('money-scenario-amount')).toHaveTextContent(/^\$14,400$/);
     expect(screen.getByTestId('money-scenario-daily')).toHaveTextContent(/^\$954$/);
-    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/Lowest scheduled end-of-day balance \$8,650 on 20 Sep$/);
+    expect(screen.getByTestId('money-scenario-cashflow-detail')).toHaveTextContent(/^Lowest scheduled end-of-day balance: \$8,650 on 20 Sep$/); // Pass D.2 — the status's supporting line
     expect(writes()).toBe(before);
     expect(await AsyncStorage.getItem(STORAGE_KEY)).toBeNull();
   }, 60000);

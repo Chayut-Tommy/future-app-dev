@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
@@ -13,7 +14,8 @@ import { AddRecurringItemModal } from '../../components/money/AddRecurringItemMo
 import { AddWealthItemModal } from '../../components/wealth/AddWealthItemModal';
 import { AddAnythingSheet } from '../../components/navigation/AddAnythingSheet';
 import { SafeToSpendHero } from '../../components/money/SafeToSpendHero';
-import { IncludedBalancesRow } from '../../components/money/IncludedBalancesRow';
+import { InlineBalancesSelector } from '../../components/money/InlineBalancesSelector';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { MoneySectionHeader } from '../../components/money/MoneySectionHeader';
 import {
   MONEY_MEASURE_DEFINITIONS,
@@ -30,6 +32,11 @@ import { SelectBalancesSheet } from '../../components/money/SelectBalancesSheet'
 import { LookAheadSheet } from '../../components/money/LookAheadSheet';
 import { TimeframeSheet } from '../../components/money/TimeframeSheet';
 import { ScenarioPositionCard } from '../../components/money/ScenarioPositionCard';
+import type { RailReviewRow, RailSourceReview } from '../../components/money/FutureTimelineRail';
+import { ESTIMATE_UPDATED_COPY, SOURCE_REVIEW_HINT, SOURCE_REVIEW_UNAVAILABLE_COPY, resolveSourceReview, sourceReviewAccessibilityLabel } from '../../lib/calculations/sourceReview';
+import type { EditorOutcome } from '../../lib/editorCompletion';
+import { resolveDetailMaxHeight, resolveDetailReveal } from '../../lib/calculations/balancePathInteraction';
+import { screenBottomClearance } from '../../navigation/floatingNavGeometry';
 import { buildAupRail } from '../../lib/calculations/timelineMarkers';
 import { computeLookAheadProjection } from '../../lib/calculations/lookAheadProjection';
 import { selectDailyGuidePresentation, selectLookAheadPresentation } from '../../lib/calculations/lookAheadPresentation';
@@ -73,6 +80,7 @@ import { parseMoneySectionFocusRequest, computeMoneySectionFocusFulfillment, Mon
 import { TimelineFocusTarget } from '../../lib/calculations/timelineFocus';
 import { RecurringItem, LiabilityType } from '../../types/models';
 import { brand } from '../../lib/brand';
+import { useMainPaydaySelection } from '../../hooks/useMainPaydaySelection';
 
 /** Wave 6 final refinement — the remainder's supporting line names the
  * SELECTED cycle, so the result is unambiguously "per week" or "per month".
@@ -122,7 +130,7 @@ function fmtTimeframeLocal(d: LocalDate): string {
 }
 
 export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: boolean; pushed?: boolean }) {
-  const { data, setMainPaydayIncome } = useAppState();
+  const { data } = useAppState();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { colors, spacing, typography, radius, cardShadow, semantic, minTouchTarget } = useTheme();
@@ -224,6 +232,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const [timeframeMode, setTimeframeMode] = useState<TimeframeSelection>('payday');
   // Pass C.2 closure — the Main-payday chooser (fail-closed AUP state).
   const [mainPaydayChooserVisible, setMainPaydayChooserVisible] = useState(false);
+  const mainPaydaySelection = useMainPaydaySelection({ visible: mainPaydayChooserVisible, onDone: () => setMainPaydayChooserVisible(false) });
   // Pass C.1 correction — the sheet↔picker transition is an explicit state
   // machine, NOT two independently-toggled modals. iOS can only present one
   // Modal at a time: presenting the date picker while the chooser sheet is
@@ -340,7 +349,159 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     const g = scenario.guide ? selectDailyGuidePresentation(scenario.guide) : null;
     return [p.headline, p.headlineAmount, g ? `About per day ${g.value}, ${g.caption}` : null, p.cashFlowLine].filter(Boolean).join('. ');
   }, [timeframeTarget, scenario?.presentation, scenario?.guide]);
-  useAnnounceOnce(scenarioAnnouncement);
+  // Pass D — while a source review is settling, the refreshed position is recorded
+  // as announced WITHOUT being spoken: the one sentence the customer hears is
+  // "Estimate updated", never two competing announcements for one change.
+  const reviewQuietRef = useRef(false);
+  useAnnounceOnce(scenarioAnnouncement, { silent: reviewQuietRef.current });
+
+  // Pass D — the TRANSIENT source-review coordinator. Everything here is component
+  // state or a ref: nothing is written to AppData or AsyncStorage, so a cold restart
+  // discards the scenario and the review with it. It owns no editor, no write path
+  // and no calculation — it opens the EXISTING authoritative editor for a stable
+  // source identity and listens for that editor's durable outcome.
+  const activeReviewRef = useRef<RailReviewRow | null>(null);
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<{ occurrenceId: string | null; nonce: number } | null>(null);
+  const [reviewSettled, setReviewSettled] = useState(0);
+  useEffect(() => {
+    // Declared AFTER useAnnounceOnce so the settling render itself is still quiet.
+    if (reviewSettled > 0 && !activeReviewRef.current) reviewQuietRef.current = false;
+  }, [reviewSettled]);
+  // The notice belongs to ONE target: a new date or Back to payday clears it.
+  useEffect(() => {
+    setReviewNotice(null);
+    setReviewFocus(null); // a rail mounted for the next target must not inherit an old focus request
+    activeReviewRef.current = null;
+    reviewQuietRef.current = false;
+  }, [timeframeTarget]);
+
+  // Safety net: every editor exit reports an outcome BEFORE it closes, so by the time
+  // no editor is showing the review is already settled. If one ever closed silently,
+  // the review must not stay locked.
+  useEffect(() => {
+    if (incomeModalVisible || billModalVisible || viewCreditCardId || viewBnplLiabilityId) return;
+    if (!activeReviewRef.current) return;
+    activeReviewRef.current = null;
+    reviewQuietRef.current = false;
+  }, [incomeModalVisible, billModalVisible, viewCreditCardId, viewBnplLiabilityId]);
+
+  // Pass D.1 — the timeline's event detail must rest clear of the floating dock/FAB.
+  // ONE authority for that space: the same `screenBottomClearance` the shared Screen
+  // pads its content with, plus the real safe-area insets and window height. The
+  // detail is bounded to what fits, and when it opens below that line the page moves
+  // just far enough to clear it. Presentation only: no state, no write.
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const pageScrollY = useRef(0);
+  const trackPageScroll = useCallback((y: number) => {
+    pageScrollY.current = y;
+  }, []);
+  const detailViewport = useMemo(() => ({ windowHeight, topInset: insets.top, bottomClearance: screenBottomClearance(insets.bottom) }), [windowHeight, insets.top, insets.bottom]);
+  const detailMaxHeight = useMemo(() => resolveDetailMaxHeight(detailViewport), [detailViewport]);
+  const revealDetail = useCallback(
+    (frame: { y: number; height: number; anchorY?: number }) => {
+      // Pass D.3 (F5) — `anchorY` is the marker band's own window top: the page never
+      // moves so far that the band leaves the screen.
+      const y = resolveDetailReveal({ ...detailViewport, frameY: frame.y, frameHeight: frame.height, scrollY: pageScrollY.current, anchorY: frame.anchorY });
+      if (y === null) return;
+      // Reduce Motion: the same position, reached without animation.
+      activeScrollRef.current?.scrollTo({ y, animated: !reduceMotion });
+    },
+    [detailViewport, activeScrollRef, reduceMotion]
+  );
+
+  // The timeline's left end: AUP's OWN cycle start (the one authoritative owner); with
+  // no known payday the rail starts at today. Read for display only.
+  const scenarioCycleStart = useMemo(() => {
+    if (!safeToSpend.hasKnownPayday || safeToSpend.paydayExpired) return null;
+    try {
+      return localDateFromDate(safeToSpend.cycleStart);
+    } catch {
+      return null;
+    }
+  }, [safeToSpend.hasKnownPayday, safeToSpend.paydayExpired, safeToSpend.cycleStart]);
+
+  // ONE handler for "View upcoming events" in both card modes: scroll to the existing
+  // "What happens next" list (Reduce Motion → not animated). No new sheet, no new list.
+  const scrollToUpcomingEvents = useCallback(() => {
+    const y = whatHappensNextSectionY.current;
+    if (y !== null) activeScrollRef.current?.scrollTo({ y, animated: !reduceMotion });
+  }, [activeScrollRef, reduceMotion]);
+
+  const resolveRailReview = useCallback(
+    (row: RailReviewRow): RailSourceReview | null => {
+      const destination = resolveSourceReview(data, { sourceKind: row.sourceKind, sourceId: row.sourceId, occurrenceId: row.occurrenceId || undefined });
+      if (destination.status !== 'available') return null;
+      return { label: destination.actionLabel, accessibilityLabel: sourceReviewAccessibilityLabel(destination, row.dateLabel), hint: SOURCE_REVIEW_HINT };
+    },
+    [data]
+  );
+
+  const returnReviewFocus = useCallback((occurrenceId: string | null) => {
+    setReviewFocus((cur) => ({ occurrenceId, nonce: (cur?.nonce ?? 0) + 1 }));
+  }, []);
+
+  const beginSourceReview = useCallback(
+    (row: RailReviewRow) => {
+      // One review at a time: a second tap while an editor is opening does nothing.
+      if (activeReviewRef.current) return;
+      const destination = resolveSourceReview(data, { sourceKind: row.sourceKind, sourceId: row.sourceId, occurrenceId: row.occurrenceId || undefined });
+      if (destination.status !== 'available') {
+        // Fail closed: never guess another source. The estimate is derived from the
+        // current data on every render, so it is already up to date.
+        setReviewNotice(SOURCE_REVIEW_UNAVAILABLE_COPY);
+        AccessibilityInfo.announceForAccessibility(SOURCE_REVIEW_UNAVAILABLE_COPY);
+        returnReviewFocus(null);
+        return;
+      }
+      activeReviewRef.current = row;
+      reviewQuietRef.current = true;
+      setReviewNotice(null);
+      switch (destination.editor) {
+        case 'income': {
+          const item = data.recurringItems.find((r) => r.id === destination.recurringItemId) ?? null;
+          setEditIncome(item);
+          setIncomeModalVisible(true);
+          break;
+        }
+        case 'bill': {
+          const item = data.recurringItems.find((r) => r.id === destination.recurringItemId) ?? null;
+          setEditBill(item);
+          setBillModalVisible(true);
+          break;
+        }
+        case 'card':
+          setViewCreditCardId(destination.creditCardId);
+          break;
+        case 'liability':
+          setViewBnplLiabilityId(destination.liabilityId);
+          break;
+      }
+    },
+    [data, returnReviewFocus]
+  );
+
+  // The existing editors report ONE structured outcome, after the durable write.
+  // An editor opened from anywhere else on this screen has no active review, so
+  // this does nothing for it.
+  const handleReviewOutcome = useCallback(
+    (outcome: EditorOutcome) => {
+      const row = activeReviewRef.current;
+      if (!row) return;
+      activeReviewRef.current = null;
+      if (outcome.outcome === 'saved' || outcome.outcome === 'deleted') {
+        setReviewNotice(ESTIMATE_UPDATED_COPY);
+        AccessibilityInfo.announceForAccessibility(ESTIMATE_UPDATED_COPY);
+      }
+      // Saved/Cancelled → the source's own action when it still exists; Deleted (or a
+      // source that moved out of the horizon) → the timeline heading. The rail decides
+      // from what is actually mounted.
+      returnReviewFocus(outcome.outcome === 'deleted' ? null : row.occurrenceId || null);
+      setReviewSettled((n) => n + 1);
+    },
+    [returnReviewFocus]
+  );
   const focusedTargetRef = useRef<string | null>(null);
   useEffect(() => {
     if (!timeframeTarget || !scenario?.presentation) {
@@ -963,10 +1124,23 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
     [safeToSpend.includedMoneyBalanceAccounts, safeToSpend.includedMoneyBalance]
   );
 
+  // Pass D.5 — ONE balances entry for the whole card area, in both modes. It opens the
+  // EXISTING selection journey; nothing about eligibility, drafting or saving moves here.
+  const balancesFocus = useReturnFocus();
+  const whyFocus = useReturnFocus();
+  const openSelectBalances = useCallback(() => {
+    balancesFocus.arm();
+    setSelectBalancesVisible(true);
+  }, [balancesFocus]);
+  const balancesSelector = (
+    <InlineBalancesSelector summary={includedBalances} onPress={openSelectBalances} controlRef={balancesFocus.ref} />
+  );
+
   return (
     <Screen
       title="Money"
       scrollRef={activeScrollRef}
+      onScrollY={trackPageScroll}
       onBack={pushed ? () => { if (navigation.canGoBack()) navigation.goBack(); } : undefined}
     >
       <View
@@ -986,7 +1160,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
             events={scenario.events}
             // Pass C.5 — the timeline's left end is AUP's OWN cycle start (the one
             // authoritative owner); with no known payday the rail starts at today.
-            cycleStart={safeToSpend.hasKnownPayday && !safeToSpend.paydayExpired ? (() => { try { return localDateFromDate(safeToSpend.cycleStart); } catch { return null; } })() : null}
+            cycleStart={scenarioCycleStart}
             targetDateLabel={new Date(timeframeTarget.year, timeframeTarget.month - 1, timeframeTarget.day).toLocaleDateString(undefined, {
               weekday: 'short',
               day: 'numeric',
@@ -994,20 +1168,30 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
               year: 'numeric',
             })}
             onOpenTimeframe={openTimeframeChooser}
-            onWhyThisAmount={() => setLookAheadVisible(true)}
+            onWhyThisAmount={() => {
+              whyFocus.arm();
+              setLookAheadVisible(true);
+            }}
+            whyActionRef={whyFocus.ref}
             onBackToPayday={() => setTimeframeTarget(null)}
             // Pass C.3 — the complete occurrences behind the path live in the
             // existing "What happens next" list on this same screen; this only
             // scrolls there (Reduce Motion → no animated scroll). No new sheet.
-            onViewUpcomingEvents={() => {
-              const y = whatHappensNextSectionY.current;
-              if (y !== null) activeScrollRef.current?.scrollTo({ y, animated: !reduceMotion });
-            }}
+            onViewUpcomingEvents={scrollToUpcomingEvents}
             headingRef={scenarioHeadingRef}
+            resolveReview={resolveRailReview}
+            onReviewSource={beginSourceReview}
+            focusRequest={reviewFocus}
+            reviewNotice={reviewNotice}
+            detailMaxHeight={detailMaxHeight}
+            onDetailFrame={revealDetail}
+            balancesSelector={balancesSelector}
           />
         ) : (
         <SafeToSpendHero
           safeToSpend={safeToSpend}
+          // Pass D.2 — the SAME destination the selected-date card uses.
+          onViewUpcomingEvents={scrollToUpcomingEvents}
           hasActiveGoals={hasActiveGoals}
           onCreateGoal={() => setGoalModalVisible(true)}
           // Correction B — completion before creation. One unscheduled
@@ -1071,17 +1255,16 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           aupRail={aupRail}
           onOpenTimeframe={canLookAhead ? openTimeframeChooser : undefined}
           timeframeValueLabel={timeframeValueLabel}
+          // Pass D.3 — the pay-cycle markers open the same bounded, dock-aware detail.
+          detailMaxHeight={detailMaxHeight}
+          onDetailFrame={revealDetail}
+          balancesSelector={balancesSelector}
         />
         )}
       </View>
 
-      {/* Which balances feed that estimate — and, said in words, that
-          changing them does not change net worth. Rendered only once there
-          is something to manage; the empty state's single obvious action
-          is the hero's own "Select balances" CTA. */}
-      {hasIncludedBalances ? (
-        <IncludedBalancesRow summary={includedBalances} onManage={() => setSelectBalancesVisible(true)} />
-      ) : null}
+      {/* Pass D.5 — the separate "Balances used" card is retired: the balances entry
+          now lives beneath the left-hand amount, inside the ONE Money card. */}
 
       {/* Pass C.1 — the Look Ahead scenario is no longer a detached entry; it
           is integrated into the ONE Money card via the in-card Timeframe row.
@@ -1349,22 +1532,28 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           setIncomeModalVisible(true);
         }}
       />
-      {/* Pass C.2 closure — Main payday chooser. OptionsSheet defers onSelect to
-          its native onDismiss, so cancelling/backdrop never selects; choosing
-          performs exactly ONE persistence write via setMainPaydayIncome. */}
+      {/* Pass C.2 closure / D0.1 — Main payday chooser. Cancelling or the backdrop
+          never selects; choosing performs exactly ONE durable write through the
+          shared selection lifecycle, and the sheet closes only after it is stored. */}
       <OptionsSheet
         visible={mainPaydayChooserVisible}
         onClose={() => setMainPaydayChooserVisible(false)}
         title="Choose your main payday"
         subtitle={mainPaydayChooserSubtitle(data.recurringItems)}
+        // Pass D0.1 — the SAME durable selection lifecycle as the Wealth chooser: the
+        // sheet stays presented and pending until the choice is stored, then closes once.
+        busy={mainPaydaySelection.pending}
+        pendingKind={mainPaydaySelection.pending ? 'saving' : null}
+        errorText={mainPaydaySelection.errorText}
         options={listMainPaydayChoices(data.recurringItems).eligible.map((item) => ({
             key: item.id,
             icon: (item.icon as never) ?? 'cash-outline',
             label: item.label,
             description: `${formatMoney(item.amount)} · ${frequencyAdverb(item.frequency)}${data.user.mainPaydayIncomeId === item.id ? ' · Main payday' : ''}`,
+            inPlace: true,
           }))}
         onSelect={(key) => {
-          setMainPaydayIncome(key);
+          void mainPaydaySelection.choose(key);
         }}
       />
       <AddIncomeModal
@@ -1374,11 +1563,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           setIncomeModalVisible(false);
           setEditIncome(null);
         }}
+        onOutcome={handleReviewOutcome}
       />
       <AddRecurringItemModal
         visible={billModalVisible}
         editItem={editBill}
         onClose={closeBillModal}
+        onOutcome={handleReviewOutcome}
         onSelectLoan={(type) => setLoanHandoff(type)}
       />
       <AddWealthItemModal
@@ -1392,6 +1583,8 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         visible={selectBalancesVisible}
         onClose={() => setSelectBalancesVisible(false)}
         onAddBalance={() => setAddBalanceChooserVisible(true)}
+        // Focus returns to the inline selector once the sheet has finished dismissing.
+        onDismissed={balancesFocus.fire}
       />
       {/* Pass C.1 — the Timeframe chooser and the native date picker are
           sequenced by `timeframeStage` so only ONE is presented at a time
@@ -1424,7 +1617,9 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
         data={data}
         asOf={asOfLocal}
         target={timeframeTarget}
+        timelineCycleStart={scenarioCycleStart}
         onClose={() => setLookAheadVisible(false)}
+        onDismissed={whyFocus.fire}
       />
       {/* Correction round, 2026-08-10 — scoped to cash/savings/everyday
           only (requirement 5), and returns to Select Balances on EITHER
@@ -1451,12 +1646,13 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       />
       <EditSavingsAllocationModal visible={editSavingsAllocationVisible} onClose={() => setEditSavingsAllocationVisible(false)} />
       <GoalDetailSheet goal={viewGoal} onClose={() => setViewGoalId(null)} />
-      <AddCreditCardModal visible={!!viewCreditCard} editCard={viewCreditCard} onClose={() => setViewCreditCardId(null)} />
+      <AddCreditCardModal visible={!!viewCreditCard} editCard={viewCreditCard} onClose={() => setViewCreditCardId(null)} onOutcome={handleReviewOutcome} />
       <AddWealthItemModal
         visible={!!viewBnplLiability}
         kind="liability"
         editLiability={viewBnplLiability}
         onClose={() => setViewBnplLiabilityId(null)}
+        onOutcome={handleReviewOutcome}
       />
       <QuickAddModal visible={transactionModalVisible} onClose={() => setTransactionModalVisible(false)} />
       <AddGoalModal visible={goalModalVisible} onClose={() => setGoalModalVisible(false)} />

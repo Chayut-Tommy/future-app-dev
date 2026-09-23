@@ -344,7 +344,7 @@ describe('§5 — "How this was calculated" typography resolves through the Desi
     expect(await screen.findByText('For tomorrow')).toBeOnTheScreen();
     expect(screen.queryByText(/For the next 1 day/)).toBeNull();
     await user.press(screen.getByTestId('money-aup-hero-info'));
-    const title = await screen.findByText('How this was calculated');
+    const title = await screen.findByText('Why this amount?'); // Pass D.4 — both sheets share one title
     const flat = (st: any) => Object.assign({}, ...(Array.isArray(st) ? st.flat(Infinity).filter(Boolean) : [st]));
     const titleStyle = flat(title.props.style);
     expect(titleStyle.fontFamily).toBe(FIGTREE_FAMILY[600]);
@@ -353,8 +353,8 @@ describe('§5 — "How this was calculated" typography resolves through the Desi
     // $386.30 savings allocation), formatted by the shared cents-aware formatter.
     const exact = formatDollarsCentsAware(Math.max(0, sts.cycleRemainingPool));
     expect(exact).toMatch(/\.\d{2}$/);
-    expect(screen.getByLabelText(`Estimated remainder: ${exact}`)).toBeTruthy();
-    expect(screen.queryByLabelText(`Estimated remainder: ${formatSafeToSpendAmount(sts.cycleRemainingPool)}`)).toBeNull(); // no rounded remainder row
+    expect(screen.getByLabelText(`Available until payday: ${exact}`)).toBeTruthy();
+    expect(screen.queryByLabelText(`Available until payday: ${formatSafeToSpendAmount(sts.cycleRemainingPool)}`)).toBeNull(); // no rounded remainder row
     expect(screen.getByLabelText('Bills due by that date: $0')).toBeTruthy(); // C.3: inclusive boundary wording
     expect(screen.queryByText('-$0')).toBeNull();
     const closeText = screen.getByText('Close');

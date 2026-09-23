@@ -152,9 +152,13 @@ describe('1. Payday mode keeps Pay cycle progress; expected income is shown, not
     expect(screen.getByText('Expected income (not included)')).toBeOnTheScreen();
     expect(screen.getByText('Payday (not included)')).toBeOnTheScreen();
     // The composed rail summary discloses it in words.
-    expect(screen.getByTestId('money-payday-bar').props.accessibilityLabel).toMatch(/1 expected income payment before then is shown but not included in this amount\./);
-    // Boundary wording.
-    expect(screen.getByText('Your included balances, less the bills, savings and goals still due by payday.')).toBeOnTheScreen();
+    // Pass D.3 — the composed sentence lives on the bar's ONE summary element (its title row), so the markers below stay reachable.
+    expect(screen.getByTestId('money-payday-bar-summary').props.accessibilityLabel).toMatch(/1 expected income payment before then is shown but not included in this amount\./);
+    // Boundary wording — Pass D.2 moved it off the card and into the explanation it belongs to.
+    expect(screen.queryByText('Your included balances, less the bills, savings and goals still due by payday.')).toBeNull();
+    await fireEvent.press(screen.getByTestId('money-aup-hero-info'));
+    expect(await screen.findByText('Your included balances, less the bills, savings and goals still due by payday.')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: /^(Done|Close)$/ }));
   }, 30000);
   test('a rail without expected income shows no such legend entry', async () => {
     const data = deviceData();
@@ -173,12 +177,12 @@ describe('2. "How this was calculated" reconciles to exact cents', () => {
     const sts = computeSafeToSpend(data, DEVICE_TODAY);
     await render(<Wrap><SafeToSpendHero safeToSpend={sts} hasActiveGoals onCreateGoal={() => {}} heroCopy={computeMoneyHeroCopy(data)} onOpenTimeframe={() => {}} showManageBalancesLink={false} /></Wrap>);
     await user.press(await screen.findByTestId('money-aup-hero-info'));
-    await screen.findByText('How this was calculated');
+    await screen.findByTestId('aup-why-breakdown'); // Pass D.4 — the sheet is now titled "Why this amount?"
     expect(screen.getByLabelText('Balances included: $10,700')).toBeTruthy();
     expect(screen.getByLabelText('Bills due by that date: minus $4,000')).toBeTruthy();
     expect(screen.getByLabelText("Goal allocations (this cycle's share): minus $64.81")).toBeTruthy();
     expect(screen.getByLabelText("Savings allocation (this cycle's share): minus $746.67")).toBeTruthy();
-    expect(screen.getByLabelText('Estimated remainder: $5,888.52')).toBeTruthy();
+    expect(screen.getByLabelText('Available until payday: $5,888.52')).toBeTruthy(); // Pass D.4 — the total names the measure
     expect(screen.queryByText('-$65')).toBeNull();
     expect(screen.queryByText('-$747')).toBeNull();
     expect(screen.queryByText(/Bills due before that date/)).toBeNull();
@@ -203,7 +207,8 @@ describe('3. Future mode renders "Timeline to [date]" (C.5 — replaces the C.3 
     expect(screen.queryByTestId(/^money-scenario-path/, { includeHiddenElements: true })).toBeNull();
     expect(screen.queryByTestId(/^balance-path-/, { includeHiddenElements: true })).toBeNull();
     // Status BELOW the rail, cautious wording, precise minimum.
-    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · Lowest scheduled end-of-day balance \$8,700 on 20 Sep$/);
+    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected$/);
+    expect(screen.getByTestId('money-scenario-cashflow-detail')).toHaveTextContent(/^Lowest scheduled end-of-day balance: \$8,700 on 20 Sep$/); // Pass D.2 — title + supporting line
     expect(screen.queryByText(/stays above \$0/)).toBeNull();
     // The rail's one accessible summary agrees with the status and the headline.
     const rail = screen.getByTestId('money-scenario-timeline');
@@ -263,7 +268,8 @@ describe('4. No-event, dense, negative and earlier-shortfall states', () => {
     expect(screen.queryByTestId('timeline-legend')).toBeNull();
     expect(screen.queryByTestId(/^timeline-cluster-/, { includeHiddenElements: true })).toBeNull();
     expect(screen.queryByTestId(/^timeline-target-/)).toBeNull();
-    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · No dip below your estimated balance before 25 Sep$/);
+    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected$/);
+    expect(screen.getByTestId('money-scenario-cashflow-detail')).toHaveTextContent(/^No dip below your estimated balance before 25 Sep$/);
   }, 30000);
   test('68 days (dense): weekly groups, disclosure, at most one glyph per kind per week', async () => {
     await render(<Wrap><Card data={deviceData()} target={[2026, 11, 25]} label="Wed, 25 Nov 2026" /></Wrap>);
@@ -313,15 +319,17 @@ describe('5. Why this amount? explains the actual limiting factor', () => {
     expect(await screen.findByTestId('look-ahead-amount')).toHaveTextContent(/^\$14,500\.00$/);
     expect(screen.getByTestId('look-ahead-daily-amount')).toHaveTextContent(/^\$962$/);
     expect(screen.getByTestId('look-ahead-daily-protected')).toHaveTextContent(/^Keeps \$1,150 for commitments due after 30 Sep through your 5 Oct payday\.$/);
-    expect(screen.getByTestId('look-ahead-daily-limiting')).toHaveTextContent(/^Tightest day: 29 Sep\. About \$11,550 is scheduled to be left by then before everyday spending, and 12 days of spending are counted by then, so \$11,550 ÷ 12 = \$962 a day, rounded down\.$/);
+    // Pass D.4 — the same authoritative limiting inputs, now shown as the arithmetic itself.
+    expect(screen.getByTestId('look-ahead-daily-limiting-date')).toHaveTextContent(/^Tightest spending point · 29 Sep$/);
+    expect(screen.getByTestId('look-ahead-daily-limiting')).toHaveTextContent(/^\$11,550 ÷ 12 days ≈ \$962\/day$/);
     expect(screen.getByTestId('look-ahead-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · Lowest scheduled end-of-day balance \$8,700 on 20 Sep$/);
-    await user.press(screen.getByTestId('look-ahead-assumptions-toggle'));
     const body = await screen.findByTestId('look-ahead-assumptions-body');
     const text = body.props.children ? JSON.stringify(screen.getByTestId('look-ahead-assumptions-body').children) : '';
-    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/for savings and goals\. That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./);
-    expect(text.match(/not subtracted/g)?.length).toBe(1);
+    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./);
+    // D.5 — stated once, beside the amount; never repeated in the assumptions.
+    expect(text.match(/not subtracted/g)).toBeNull();
     expect(body).toHaveTextContent(/counted together at the end of that day, so the lowest balance shown is an end-of-day balance/);
-    expect(body).toHaveTextContent(/The Estimated balance path and its markers show dated events only/);
+    expect(body).toHaveTextContent(/The timeline and its markers show dated events only; planned savings and goals aren’t shown on it\./); // Pass D.3 (F7): the graph is retired
   }, 30000);
 });
 

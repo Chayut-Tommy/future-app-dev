@@ -1,15 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, LayoutChangeEvent, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { LayoutChangeEvent, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { TimelineMarkerTrack, TimelineTrackCluster } from './TimelineMarkerTrack';
-import { BalancePath } from '../../lib/calculations/balancePath';
+import { TimelineHitTargets } from './TimelineHitTargets';
+import { ANCHORED_DETAIL_WIDTH, RailReviewRow, RailSourceReview, TimelineEventDetail } from './TimelineEventDetail';
+import { useTimelineSelection } from '../../hooks/useTimelineSelection';
+import { BalancePath, BalancePathMarkerGroup } from '../../lib/calculations/balancePath';
 import { BALANCE_PATH_MIN_TARGET, BalancePathHitTarget, describeHitTarget, plotX, resolveCalloutMode, resolveHitTargets } from '../../lib/calculations/balancePathInteraction';
-import { formatMoneyDate } from '../../lib/calculations/moneyComposition';
+import { ESTIMATED_CYCLE_START_LABEL, formatMoneyDate } from '../../lib/calculations/moneyComposition';
 import { LocalDate, localDatesEqual, toISODate } from '../../lib/calculations/localCalendar';
 import { RailMarkerKind } from '../../lib/calculations/timelineMarkers';
 import { sendFocusEvent } from '../../lib/a11yFocus';
-import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { designSpacing } from '../../theme/semanticTokens';
 import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
@@ -49,25 +51,54 @@ import i18n from '../../i18n';
  * full-width card; otherwise it is anchored under the marker.
  */
 
-const ANCHORED_WIDTH = 248;
-const HALO = 22;
-
 const KIND: Record<'income' | 'outgoing' | 'shortfall', RailMarkerKind> = { income: 'income', outgoing: 'bill', shortfall: 'shortfall' };
 const asJsDate = (d: LocalDate) => new Date(d.year, d.month - 1, d.day);
 
-export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID?: string }) {
+export type { RailReviewRow, RailSourceReview } from './TimelineEventDetail';
+
+/** Pass D.1 / D.3 — what the rail reports so the page can bring an opened detail
+ * clear of the dock without losing the marker band: the detail's window frame and
+ * the band's window top (`anchorY`). */
+export interface RailDetailFrame {
+  y: number;
+  height: number;
+  anchorY?: number;
+}
+
+export function FutureTimelineRail({
+  path,
+  testID,
+  resolveReview,
+  onReviewSource,
+  focusRequest,
+  detailMaxHeight,
+  onDetailFrame,
+}: {
+  path: BalancePath;
+  testID?: string;
+  /** Pass D — returns the review affordance for a row, or null when its source cannot be reviewed. */
+  resolveReview?: (row: RailReviewRow) => RailSourceReview | null;
+  onReviewSource?: (row: RailReviewRow) => void;
+  /** Pass D — after an editor closes, return focus to that row's action (or the heading if it is gone). */
+  focusRequest?: { occurrenceId: string | null; nonce: number } | null;
+  /** Pass D.1 — the tallest the detail may be (host-derived from the dock/safe-area geometry). */
+  detailMaxHeight?: number;
+  /** Pass D.1 — the detail's measured window frame, so the host can bring it clear of the dock. */
+  onDetailFrame?: (frame: RailDetailFrame) => void;
+}) {
   const { semantic } = useTheme();
   const { fontScale } = useWindowDimensions();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [width, setWidth] = useState(0);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const targetRefs = useRef(new Map<string, View | null>());
-
-  // The selection belongs to ONE horizon: a new target (or as-of) date clears it.
-  const identity = `${toISODate(path.asOf)}>${toISODate(path.target)}`;
-  useEffect(() => {
-    setSelectedKey(null);
-  }, [identity]);
+  const reviewRefs = useRef(new Map<string, View | null>());
+  const headingRef = useRef<View | null>(null);
+  const bandRef = useRef<View | null>(null);
+  const detailRef = useRef<View | null>(null);
+  const [detailHeaderHeight, setDetailHeaderHeight] = useState(BALANCE_PATH_MIN_TARGET);
+  // Pass D.3 (F5) — where the band and the detail sit inside this block, so the
+  // host's bound can subtract everything BETWEEN them (endpoint and Today rows).
+  const bandTop = useRef(0);
+  const [detailTop, setDetailTop] = useState<number | null>(null);
 
   const styles = useMemo(
     () =>
@@ -78,9 +109,6 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
         away: { ...typeStyle('support', locale), color: semantic.textSecondary, flexShrink: 0 },
         band: { height: BALANCE_PATH_MIN_TARGET, justifyContent: 'center' },
         decor: { ...StyleSheet.absoluteFillObject, justifyContent: 'center' },
-        halo: { position: 'absolute', top: (BALANCE_PATH_MIN_TARGET - HALO) / 2, width: HALO, height: HALO, borderRadius: HALO / 2, borderWidth: 1.5, borderColor: semantic.interactive, backgroundColor: semantic.interactiveTint },
-        backdrop: { ...StyleSheet.absoluteFillObject },
-        target: { position: 'absolute', top: 0, height: BALANCE_PATH_MIN_TARGET },
         labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: designSpacing.sm },
         endBlock: { flexShrink: 1 },
         endBlockRight: { flexShrink: 1, alignItems: 'flex-end' },
@@ -88,22 +116,6 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
         sublabel: { ...typeStyle('meta', locale), color: semantic.textTertiary },
         todayRow: { height: 20, marginTop: 2 },
         todayLabel: { ...typeStyle('meta', locale), color: semantic.interactive, fontWeight: '700', position: 'absolute', top: 0, width: 72, textAlign: 'center' },
-        caption: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.xs },
-        detailWrap: { marginTop: designSpacing.sm },
-        caret: { width: 0, height: 0, borderLeftWidth: 7, borderRightWidth: 7, borderBottomWidth: 7, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: semantic.interactive },
-        detailCard: { borderRadius: designRadius.card, borderWidth: 1, borderColor: semantic.interactive, backgroundColor: semantic.bgSurface, padding: designSpacing.md },
-        detailHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: designSpacing.sm },
-        detailTitle: { ...typeStyle('titleCard', locale), color: semantic.textPrimary, flexShrink: 1 },
-        closeButton: { minWidth: designLayout.touchTargetMin, minHeight: designLayout.touchTargetMin, alignItems: 'flex-end', justifyContent: 'flex-start' },
-        sectionHeading: { ...typeStyle('support', locale), color: semantic.textPrimary, fontWeight: '600', marginTop: designSpacing.sm },
-        row: { marginTop: designSpacing.xs },
-        rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: designSpacing.sm, flexWrap: 'wrap' },
-        rowLabel: { ...typeStyle('support', locale), color: semantic.textPrimary, flexShrink: 1 },
-        rowAmount: { ...typeStyle('figureRow', locale), color: semantic.textPrimary, flexShrink: 0 },
-        rowType: { ...typeStyle('meta', locale), color: semantic.textSecondary },
-        summaryLine: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
-        balanceLine: { ...typeStyle('support', locale), color: semantic.textPrimary, fontWeight: '600', marginTop: designSpacing.xs },
-        cautionLine: { ...typeStyle('support', locale), color: semantic.warning, marginTop: designSpacing.xs },
       }),
     [semantic, locale]
   );
@@ -112,34 +124,56 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
 
   const clusters: TimelineTrackCluster[] = useMemo(() => path.markers.map((m) => ({ key: m.key, position: m.x, kinds: m.kinds.map((k) => KIND[k]) })), [path]);
   const targets = useMemo(() => resolveHitTargets(path, width), [path, width]);
-  const selected = useMemo(() => targets.find((t) => t.key === selectedKey) ?? null, [targets, selectedKey]);
-  const inspection = useMemo(() => (selected ? describeHitTarget(selected, path) : null), [selected, path]);
-  const labels = useMemo(() => new Map(targets.map((t) => [t.key, describeHitTarget(t, path).targetLabel])), [targets, path]);
+  const describe = useCallback((t: BalancePathHitTarget<BalancePathMarkerGroup>) => describeHitTarget(t, path), [path]);
+  // The selection belongs to ONE horizon: a new target (or as-of) date clears it.
+  const identity = `${toISODate(path.asOf)}>${toISODate(path.target)}`;
+  const { selectedKey, selected, inspection, labels, toggle, close, clear, targetRefs } = useTimelineSelection(targets, describe, identity);
 
-  const close = useCallback(() => {
-    const key = selectedKey;
-    setSelectedKey(null);
-    // Return assistive focus to the marker that opened the card.
-    if (key) sendFocusEvent({ current: targetRefs.current.get(key) ?? null });
-  }, [selectedKey]);
-  const clear = useCallback(() => setSelectedKey(null), []);
-  const toggle = useCallback(
-    (t: BalancePathHitTarget) => {
-      setSelectedKey((cur) => {
-        if (cur === t.key) return null;
-        AccessibilityInfo.announceForAccessibility(describeHitTarget(t, path).announcement);
-        return t.key;
-      });
-    },
-    [path]
-  );
+  // Pass D — deterministic focus return: the row's own action if it survived the
+  // edit, otherwise the timeline heading. Runs once per request.
+  const handledFocusNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusRequest || handledFocusNonce.current === focusRequest.nonce) return;
+    handledFocusNonce.current = focusRequest.nonce;
+    const node = focusRequest.occurrenceId ? reviewRefs.current.get(focusRequest.occurrenceId) : null;
+    sendFocusEvent({ current: node ?? headingRef.current });
+  }, [focusRequest]);
 
   const rowCount = inspection ? inspection.sections.reduce((n, s) => n + s.rows.length, 0) + inspection.sections.length : 0;
   const calloutMode = resolveCalloutMode({ plotWidth: width, fontScale, rowCount });
   const selectedCentre = selected ? selected.left + selected.width / 2 : 0;
-  const anchoredWidth = Math.min(ANCHORED_WIDTH, width);
+  const anchoredWidth = Math.min(ANCHORED_DETAIL_WIDTH, width);
   const anchoredLeft = Math.min(Math.max(0, selectedCentre - anchoredWidth / 2), Math.max(0, width - anchoredWidth));
   const caretLeft = Math.min(Math.max(8, selectedCentre - anchoredLeft - 7), Math.max(8, anchoredWidth - 22));
+  // Pass D.1 — what is left for the rows once the pinned heading, the card's own
+  // padding/border and the caret are taken out of the host's bound. Pass D.3 (F5):
+  // the rows between the band and the detail (endpoints, Today) are taken out too,
+  // so band + detail fit the clear viewport together. Never below two full 44pt rows.
+  const detailChrome = detailHeaderHeight + designSpacing.md * 2 + 2 + designSpacing.sm + (calloutMode === 'anchored' ? 7 : 0);
+  const betweenBandAndDetail = detailTop === null ? 0 : Math.max(0, detailTop - bandTop.current - BALANCE_PATH_MIN_TARGET);
+  const detailBodyMaxHeight = detailMaxHeight === undefined ? undefined : Math.max(detailMaxHeight - betweenBandAndDetail - detailChrome, BALANCE_PATH_MIN_TARGET * 2);
+
+  // Pass D.3 (F5) — report the frame ONCE per opened selection (never on later
+  // re-layouts), so the page moves at most once and never fights a user scroll.
+  const revealedKey = useRef<string | null>(null);
+  const onDetailLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      setDetailTop(e.nativeEvent.layout.y);
+      if (!onDetailFrame || !selectedKey || revealedKey.current === selectedKey) return;
+      revealedKey.current = selectedKey;
+      const detail = detailRef.current;
+      if (!detail) return;
+      detail.measureInWindow((_x, y, _w, height) => {
+        const band = bandRef.current;
+        if (band) band.measureInWindow((_bx, by) => onDetailFrame({ y, height, anchorY: by }));
+        else onDetailFrame({ y, height });
+      });
+    },
+    [onDetailFrame, selectedKey]
+  );
+  useEffect(() => {
+    if (!selectedKey) revealedKey.current = null;
+  }, [selectedKey]);
 
   const { rail } = path;
   const startIsToday = localDatesEqual(rail.startDate, path.asOf);
@@ -149,7 +183,7 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
   return (
     <View style={styles.block} testID={testID ? `${testID}-container` : undefined}>
       {/* The ONE summary element (also the visible heading). */}
-      <View style={styles.titleRow} accessible accessibilityRole="header" accessibilityLabel={path.summary} accessibilityValue={path.disclosure ? { text: path.disclosure } : undefined} testID={testID}>
+      <View ref={headingRef} style={styles.titleRow} accessible accessibilityRole="header" accessibilityLabel={path.summary} accessibilityValue={path.disclosure ? { text: path.disclosure } : undefined} testID={testID}>
         <Text style={styles.title} maxFontSizeMultiplier={2} importantForAccessibility="no" testID={testID ? `${testID}-title` : undefined}>
           {path.title}
         </Text>
@@ -158,46 +192,27 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
         </Text>
       </View>
 
-      <View style={styles.band} onLayout={onLayout} testID={testID ? `${testID}-band` : undefined}>
+      <View
+        ref={bandRef}
+        style={styles.band}
+        onLayout={(e) => {
+          bandTop.current = e.nativeEvent.layout.y;
+          onLayout(e);
+        }}
+        testID={testID ? `${testID}-band` : undefined}
+      >
         {/* Decorative rail — the shared payday-bar primitive, hidden from AT. */}
         <View style={styles.decor} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID={testID ? `${testID}-decor` : undefined}>
-          {selected && width > 0
-            ? selected.groups.map((g) => (
-                <View key={`halo-${g.key}`} style={[styles.halo, { left: Math.min(Math.max(0, plotX(g.x, width) - HALO / 2), Math.max(0, width - HALO)) }]} testID={`timeline-halo-${g.key}`} />
-              ))
-            : null}
           <TimelineMarkerTrack rail={null} clusters={clusters} elapsedFraction={rail.todayX} remainderColor={semantic.interactiveTint} showTodayTick suppressA11y testID={testID ? `${testID}-track` : undefined} />
         </View>
-
-        {/* A tap elsewhere on the rail clears the selection. Close is the accessible dismissal. */}
-        {selected ? <Pressable style={styles.backdrop} onPress={clear} accessible={false} importantForAccessibility="no" testID={testID ? `${testID}-backdrop` : undefined} /> : null}
-
-        {/* Real, accessible press targets — one per slot, chronological, never overlapping. */}
-        {targets.map((t) => {
-          const isSelected = t.key === selectedKey;
-          return (
-            <Pressable
-              key={t.key}
-              ref={(node) => {
-                targetRefs.current.set(t.key, node as unknown as View | null);
-              }}
-              style={[styles.target, { left: t.left, width: t.width }]}
-              onPress={() => toggle(t)}
-              accessibilityRole="button"
-              accessibilityLabel={labels.get(t.key)}
-              accessibilityHint={isSelected ? 'Hides the details for these scheduled events' : 'Shows the details for these scheduled events'}
-              accessibilityState={{ selected: isSelected }}
-              testID={`timeline-target-${t.key}`}
-            />
-          );
-        })}
+        <TimelineHitTargets targets={targets} selected={selected} selectedKey={selectedKey} labels={labels} width={width} targetRefs={targetRefs} onToggle={toggle} onClear={clear} testID={testID} />
       </View>
 
       {/* Endpoint labels — the same two-ended row the payday bar uses. */}
       <View style={styles.labelRow} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
         <View style={styles.endBlock} testID={testID ? `${testID}-start` : undefined}>
           <Text style={styles.endpoint} maxFontSizeMultiplier={2}>{formatMoneyDate(asJsDate(rail.startDate))}</Text>
-          <Text style={styles.sublabel} maxFontSizeMultiplier={2}>{startIsToday ? 'Today' : 'Cycle start'}</Text>
+          <Text style={styles.sublabel} maxFontSizeMultiplier={2}>{startIsToday ? 'Today' : ESTIMATED_CYCLE_START_LABEL}</Text>
         </View>
         <View style={styles.endBlockRight} testID={testID ? `${testID}-end` : undefined}>
           <Text style={styles.endpoint} maxFontSizeMultiplier={2}>{formatMoneyDate(asJsDate(rail.endDate))}</Text>
@@ -211,54 +226,24 @@ export function FutureTimelineRail({ path, testID }: { path: BalancePath; testID
           </Text>
         </View>
       ) : null}
-      {rail.startIsCycleStart ? (
-        <Text style={styles.caption} importantForAccessibility="no" maxFontSizeMultiplier={2}>
-          Cycle start estimated
-        </Text>
-      ) : null}
 
       {inspection ? (
-        <View style={[styles.detailWrap, calloutMode === 'anchored' ? { width: anchoredWidth, marginLeft: anchoredLeft } : null]} testID={testID ? `${testID}-detail` : undefined} accessibilityLiveRegion="polite">
-          {calloutMode === 'anchored' ? <View style={[styles.caret, { marginLeft: caretLeft }]} importantForAccessibility="no" testID={testID ? `${testID}-detail-caret` : undefined} /> : null}
-          <View style={styles.detailCard} testID={testID ? `${testID}-detail-${calloutMode}` : undefined}>
-            <View style={styles.detailHeader}>
-              <Text style={styles.detailTitle} accessibilityRole="header" maxFontSizeMultiplier={2} testID={testID ? `${testID}-detail-title` : undefined}>
-                {inspection.title}
-              </Text>
-              <TouchableOpacity style={styles.closeButton} onPress={close} accessibilityRole="button" accessibilityLabel="Close event details" testID={testID ? `${testID}-detail-close` : undefined}>
-                <Ionicons name="close" size={18} color={semantic.interactive} importantForAccessibility="no" />
-              </TouchableOpacity>
-            </View>
-            {inspection.sections.map((s) => (
-              <View key={s.key} testID={`timeline-section-${s.key}`}>
-                {inspection.sections.length > 1 ? (
-                  <Text style={styles.sectionHeading} maxFontSizeMultiplier={2}>
-                    {s.heading}
-                  </Text>
-                ) : null}
-                {s.incomeTotal ? <Text style={styles.summaryLine} maxFontSizeMultiplier={2}>{s.incomeTotal}</Text> : null}
-                {s.outgoingTotal ? <Text style={styles.summaryLine} maxFontSizeMultiplier={2}>{s.outgoingTotal}</Text> : null}
-                {s.rows.map((r) => (
-                  <View key={r.key} style={styles.row} accessible accessibilityLabel={`${r.label}: ${r.amount.replace('+', 'plus ').replace('-', 'minus ')}. ${r.typeLabel}`} testID={`timeline-row-${r.occurrenceId}`}>
-                    <View style={styles.rowTop} importantForAccessibility="no-hide-descendants">
-                      <Text style={styles.rowLabel} maxFontSizeMultiplier={2}>{r.label}</Text>
-                      <Text style={styles.rowAmount} maxFontSizeMultiplier={2}>{r.amount}</Text>
-                    </View>
-                    <Text style={styles.rowType} maxFontSizeMultiplier={2} importantForAccessibility="no">{r.typeLabel}</Text>
-                  </View>
-                ))}
-                {s.netLine ? <Text style={styles.summaryLine} maxFontSizeMultiplier={2}>{s.netLine}</Text> : null}
-                <Text style={styles.balanceLine} maxFontSizeMultiplier={2}>{s.balanceLine}</Text>
-                {s.shortfallLine ? <Text style={styles.cautionLine} maxFontSizeMultiplier={2}>{s.shortfallLine}</Text> : null}
-              </View>
-            ))}
-            {inspection.moreLine ? (
-              <Text style={styles.summaryLine} maxFontSizeMultiplier={2} testID={testID ? `${testID}-detail-more` : undefined}>
-                {inspection.moreLine}
-              </Text>
-            ) : null}
-          </View>
-        </View>
+        <TimelineEventDetail
+          inspection={inspection}
+          calloutMode={calloutMode}
+          anchoredWidth={anchoredWidth}
+          anchoredLeft={anchoredLeft}
+          caretLeft={caretLeft}
+          bodyMaxHeight={detailBodyMaxHeight}
+          onClose={close}
+          onHeaderHeight={setDetailHeaderHeight}
+          wrapperRef={detailRef}
+          onWrapperLayout={onDetailLayout}
+          resolveReview={resolveReview}
+          onReviewSource={onReviewSource}
+          reviewRefs={reviewRefs}
+          testID={testID}
+        />
       ) : null}
     </View>
   );

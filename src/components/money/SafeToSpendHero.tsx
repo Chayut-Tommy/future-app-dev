@@ -5,7 +5,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { spokenSignedDisplay } from '../../lib/a11yStrings';
 import { SafeToSpendResult } from '../../lib/calculations/safeToSpend';
-import { selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
+import { buildAupDailyGuideExplanation, selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney } from '../../lib/calculations/safeToSpendPresentation';
+import { fmtShortDate } from '../../lib/calculations/lookAheadPresentation';
+import { useReturnFocus } from '../../hooks/useReturnFocus';
+import { localDateFromDate } from '../../lib/calculations/localCalendar';
 import { buildAupExplanation, formatSafeToSpendDeduction } from '../../lib/calculations/safeToSpendPresentation';
 import { formatDollarsCentsAware } from '../../lib/calculations/money';
 import { forTheNextDaysLabel } from '../../lib/calculations/moneyComposition';
@@ -15,9 +18,11 @@ import { ON_FEATURED, onFeaturedAlpha, designLayout, designRadius, designSpacing
 import { MoneyPaydayBar } from './MoneyPaydayBar';
 import { CardResultRegions } from './CardResultRegions';
 import { TimelineLegend } from './TimelineLegend';
+import { CardAction, CardActionGroup } from './MoneyCardLowerRegion';
+import { EXPLANATION_PROVENANCE, ExplanationNote, ExplanationNotice, ExplanationProvenance, ExplanationRow, ExplanationSection, ExplanationStatement, ExplanationSummary } from './ExplanationSheetSections';
 
 import { TimelineRail } from '../../lib/calculations/timelineMarkers';
-import { PaydayProgress, MONEY_MEASURE_DEFINITIONS } from '../../lib/calculations/moneyComposition';
+import { AUP_METHOD_NOTES, ESTIMATED_CYCLE_START_LABEL, PaydayProgress, MONEY_MEASURE_DEFINITIONS, VIEW_UPCOMING_EVENTS_SUBTITLE, VIEW_UPCOMING_EVENTS_TITLE, WHY_THIS_AMOUNT_SUBTITLE, WHY_THIS_AMOUNT_TITLE } from '../../lib/calculations/moneyComposition';
 import { formatCentsCentsAware } from '../../lib/calculations/money';
 import { textStyle, typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
@@ -99,8 +104,12 @@ export function SafeToSpendHero({
   paydayProgress = null,
   aupRail = null,
   onOpenTimeframe,
+  onViewUpcomingEvents,
   timeframeValueLabel,
   showManageBalancesLink = true,
+  balancesSelector,
+  detailMaxHeight,
+  onDetailFrame,
 }: {
   safeToSpend: SafeToSpendResult;
   hasActiveGoals: boolean;
@@ -157,6 +166,9 @@ export function SafeToSpendHero({
    * be shown), a clearly-tappable minimum-size row is rendered inside the
    * card so the user can switch between "until payday" and a selected date. */
   onOpenTimeframe?: () => void;
+  /** Pass D.2 — scrolls to the existing "What happens next" list (the same
+   * destination the selected-date card uses). Omitted → the row is not shown. */
+  onViewUpcomingEvents?: () => void;
   /** The current timeframe row value, e.g. "Until payday · 10 Sep". */
   timeframeValueLabel?: string;
   /** Wave 6 correction C — suppressed once Money renders its dedicated
@@ -166,11 +178,21 @@ export function SafeToSpendHero({
    * primary "Select balances" CTA either way — that is the single obvious
    * action there, and it is not this link. */
   showManageBalancesLink?: boolean;
+  /** Pass D.5 — the compact inline balances control, rendered beneath the left-hand
+   * amount (and, in states with no amount, directly in the shell) so there is exactly
+   * ONE balances entry in the card area. Omitted by any other consumer. */
+  balancesSelector?: React.ReactNode;
+  /** Pass D.3 — forwarded to the pay-cycle bar so its event detail honours the D.1
+   * dock-clearance contract (same values the selected-date card receives). */
+  detailMaxHeight?: number;
+  onDetailFrame?: (frame: { y: number; height: number; anchorY?: number }) => void;
 }) {
   const { colors, radius, spacing, typography, glow, semantic } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const heroFigureType = textStyle('figureHero', locale);
   const [breakdownVisible, setBreakdownVisible] = useState(false);
+  // Pass D.5 — assistive focus returns to the "Why this amount?" row after dismissal.
+  const whyFocus = useReturnFocus();
 
   // Available Until Payday's card states are genuinely different situations
   // that must not share one message (PRD ask, §Financial state review — a
@@ -313,24 +335,12 @@ export function SafeToSpendHero({
           alignSelf: 'stretch',
         },
         reactionText: { ...typeStyle('meta', locale), fontSize: 12, color: ON_FEATURED, textAlign: 'center', lineHeight: 17 },
-        breakdownFooter: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: spacing.md },
         // Stacked, single-column presentation for the daily-estimate row
         // specifically (Stream A follow-up §2) — replaces the generic
         // two-column BreakdownRow only here, since that row's dynamic label
         // ("...(N days left)") plus a wide value ("$99,999/day") can exceed
         // the sheet's fixed width with no shrink/wrap allowed by default.
         // Every other BreakdownRow usage in this file is untouched.
-        dailyEstimateBlock: {
-          paddingVertical: spacing.sm,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: semantic.border,
-          marginTop: spacing.xs,
-        },
-        // Design 5.1 roles only (Pass C.2 closure): heading = titleCard,
-        // amount = tabular figureLarge, context = support.
-        dailyEstimateLabel: { ...typeStyle('titleCard', locale), color: semantic.textPrimary },
-        dailyEstimateValue: { ...typeStyle('figureLarge', locale), color: semantic.textPrimary, marginTop: 2 },
-        dailyEstimateContext: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: 2 },
       }),
     [colors, radius, spacing, typography, locale, glow]
   );
@@ -359,49 +369,92 @@ export function SafeToSpendHero({
     );
   }
 
+  // Pass D.4 — ONE "Why this amount?" sheet shape, shared with the selected-date
+  // sheet: subtitle, summary panel, ledger breakdown, the daily-guide arithmetic,
+  // the dates used and the assumptions, in one continuous scroll with nothing
+  // collapsed. Every figure is the authoritative one this hero already shows.
+  // The app-wide short form ("5 Oct"), so the sheet, the legend and the card agree.
+  const shortDate = (d: Date) => {
+    try {
+      return fmtShortDate(localDateFromDate(d));
+    } catch {
+      return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    }
+  };
+  const paydayShortDate = safeToSpend.hasKnownPayday ? shortDate(safeToSpend.cycleEnd) : null;
+  const dailyGuideExplanation = buildAupDailyGuideExplanation(safeToSpend);
+  const summaryAmount = presentation.amountCents !== null ? formatCentsCentsAware(presentation.amountCents) : null;
   const breakdown = (
     <InfoSheet
       visible={breakdownVisible}
       onClose={() => setBreakdownVisible(false)}
-      title="How this was calculated"
-      subtitle="Every line below is based on the information entered — an estimate, not a guarantee."
+      onDismissed={whyFocus.fire}
+      title={WHY_THIS_AMOUNT_TITLE}
+      subtitle={paydayShortDate ? `Until payday · ${paydayShortDate}` : 'Until payday'}
     >
-      <BreakdownRow label="Current cycle start" value={safeToSpend.cycleStart.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} />
-      <BreakdownRow
-        label="Next expected payday"
-        value={safeToSpend.hasKnownPayday ? safeToSpend.cycleEnd.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : 'Not set'}
-      />
-      {/* Pass C.2 closure / C.3 — every money line is the authoritative
-          exact-cent figure (cents shown only when they exist), so the rows a
-          customer can see add up EXACTLY to the remainder the hero shows: the
-          device recording's -$4,000 / -$65 / -$747 visibly summed to
-          $5,888.00 against a $5,888.52 remainder. `buildAupExplanation`
-          reconciles the cent-rounded rows to the exact remainder and surfaces
-          any cent of difference as an explicit "Rounding" row, so no hidden
-          residual remains; a zero deduction is "$0", never "-$0". Only the
-          explicitly approximate daily amount below keeps whole-dollar rounding.
-          "Bills due BY that date": the cycle window includes the payday date. */}
-      {aupExplanation.rows.map((row) => (
-        <BreakdownRow
-          key={row.key}
-          label={row.label}
-          value={row.placeholder ?? (row.kind === 'deduction' ? formatSafeToSpendDeduction(row.cents / 100) : formatDollarsCentsAware(row.cents / 100))}
+      {/* The result first. A state with no authoritative amount shows no figure —
+          never a $0 or an absolute value standing in for one. */}
+      {summaryAmount ? (
+        <ExplanationSummary
+          left={{ label: 'Available', value: summaryAmount, testID: 'aup-why-amount' }}
+          right={
+            dailyGuideExplanation
+              ? { label: 'About per day', value: dailyGuideExplanation.daily, caption: forTheNextDaysLabel(dailyGuideExplanation.days), testID: 'aup-why-daily' }
+              : null
+          }
+          caption="After bills, planned savings and goals."
+          testID="aup-why-summary"
         />
-      ))}
-      <BreakdownRow label="Estimated remainder" value={formatDollarsCentsAware(aupExplanation.remainderCents / 100)} isTotal />
-      {safeToSpend.hasKnownPayday && safeToSpend.daysRemaining > 0 ? (
-        <View style={styles.dailyEstimateBlock}>
-          <Text style={styles.dailyEstimateLabel} maxFontSizeMultiplier={2}>Estimated daily amount</Text>
-          <Text style={styles.dailyEstimateValue} maxFontSizeMultiplier={1.6}>{formatMoney(Math.max(0, safeToSpend.dailyAllowance))}/day</Text>
-          <Text style={styles.dailyEstimateContext} maxFontSizeMultiplier={2}>
-            {safeToSpend.daysRemaining} day{safeToSpend.daysRemaining === 1 ? '' : 's'} remaining
-          </Text>
-        </View>
       ) : null}
-      <Text style={styles.breakdownFooter} maxFontSizeMultiplier={2}>
-        This estimate updates automatically whenever your income, bills, or spending change. Educational only — not personal financial
-        advice.
-      </Text>
+      {presentation.tone === 'warning' ? <ExplanationNotice text={presentation.primaryCopy} detail={presentation.supportingCopy} testID="aup-why-notice" /> : null}
+
+      {/* Pass C.2 closure / C.3 — every money line is the authoritative exact-cent
+          figure (cents shown only when they exist), so the rows a customer can see
+          add up EXACTLY to the remainder the hero shows. `buildAupExplanation`
+          reconciles the cent-rounded rows to the exact remainder and surfaces any
+          cent of difference as an explicit "Rounding" row, so no hidden residual
+          remains; a zero deduction is "$0", never "-$0". */}
+      <ExplanationSection title="Balance breakdown" testID="aup-why-breakdown">
+        {aupExplanation.rows.map((row) => (
+          <ExplanationRow
+            key={row.key}
+            label={row.label}
+            indent={row.kind === 'account'}
+            value={row.placeholder ?? (row.kind === 'deduction' ? formatSafeToSpendDeduction(row.cents / 100) : formatDollarsCentsAware(row.cents / 100))}
+          />
+        ))}
+        <ExplanationRow
+          total
+          label={summaryAmount ? 'Available until payday' : 'Estimated remainder'}
+          value={formatDollarsCentsAware(aupExplanation.remainderCents / 100)}
+          testID="aup-why-total"
+        />
+      </ExplanationSection>
+
+      {dailyGuideExplanation ? (
+        <ExplanationSection title="Your daily guide" testID="aup-why-guide">
+          <ExplanationStatement text={dailyGuideExplanation.equation} testID="aup-why-guide-equation" />
+          {dailyGuideExplanation.roundingNote ? <ExplanationNote text={dailyGuideExplanation.roundingNote} testID="aup-why-guide-rounding" /> : null}
+        </ExplanationSection>
+      ) : null}
+
+      <ExplanationSection title="Dates used" testID="aup-why-dates">
+        <ExplanationRow label={ESTIMATED_CYCLE_START_LABEL} value={shortDate(safeToSpend.cycleStart)} testID="aup-why-cycle-start" />
+        <ExplanationRow label="Expected payday" value={paydayShortDate ?? 'Not set'} testID="aup-why-payday" />
+      </ExplanationSection>
+
+      {/* Pass D.2 — the methodology that used to sit permanently under the pay-cycle
+          bar: what the measure is, the estimated cycle start, what the markers show. */}
+      <ExplanationSection title="What this means" testID="money-aup-method-notes">
+        <ExplanationNote text={MONEY_MEASURE_DEFINITIONS.availableUntilPayday} />
+        {AUP_METHOD_NOTES.map((n) => (
+          <ExplanationNote key={n.key} text={n.text} testID={`money-aup-method-${n.key}`} />
+        ))}
+        {/* Pass D.5 — the estimate disclaimer lives in the closing provenance; this
+            keeps only the compliance statement, which nothing else carries. */}
+        <ExplanationNote text="Educational only — not personal financial advice." />
+      </ExplanationSection>
+      <ExplanationProvenance text={EXPLANATION_PROVENANCE} testID="aup-why-provenance" />
     </InfoSheet>
   );
 
@@ -438,6 +491,40 @@ export function SafeToSpendHero({
 
   /** One shell for every state. `tone` selects ink only — the SURFACE is
    * always the Design 5.1 heroSurface, never a warning-coloured card. */
+  // Pass D.2 — the grouped information actions under the pay-cycle bar. Shown only
+  // where the bar itself is shown (a known payday and a state that can honestly draw
+  // it). Pass D.3 (F6): the events row opens the unfiltered "What happens next" list,
+  // so its subtitle names that destination rather than promising a date bound.
+  const groupedActions: CardAction[] = [
+    ...(onViewUpcomingEvents
+      ? [{
+          key: 'events',
+          icon: 'calendar-number-outline' as const,
+          title: VIEW_UPCOMING_EVENTS_TITLE,
+          subtitle: VIEW_UPCOMING_EVENTS_SUBTITLE,
+          hint: 'Scrolls to the full list of scheduled bills, income and repayments',
+          onPress: onViewUpcomingEvents,
+          testID: 'money-aup-view-upcoming-events',
+        }]
+      : []),
+    {
+      key: 'why',
+      icon: 'calculator-outline' as const,
+      title: WHY_THIS_AMOUNT_TITLE,
+      subtitle: WHY_THIS_AMOUNT_SUBTITLE,
+      hint: 'Opens every line behind this estimate',
+      onPress: () => {
+        whyFocus.arm();
+        setBreakdownVisible(true);
+      },
+      controlRef: whyFocus.ref,
+      // The SAME explanation entry the header icon used to be — same id, new place.
+      testID: 'money-aup-hero-info',
+    },
+  ];
+  const showsGroupedActions = (opts: { showRail?: boolean; showInfo?: boolean }) =>
+    !!opts.showRail && opts.showInfo !== false && !!paydayProgress && !paydayProgress.unknown;
+
   function renderShell(opts: {
     testID: string;
     tone?: 'neutral' | 'warning';
@@ -482,7 +569,10 @@ export function SafeToSpendHero({
                 "Balances used" row below is the single entry point there —
                 so this renders null on Money in every state. */}
             {renderManageBalancesButton()}
-            {opts.showInfo !== false ? (
+            {/* Pass D.2 — where the grouped "Why this amount?" row is shown it opens this
+                SAME sheet, so the header icon would be a duplicate entry and is not
+                rendered. States without the grouped row keep the icon exactly as before. */}
+            {opts.showInfo !== false && !showsGroupedActions(opts) ? (
               <TouchableOpacity
                 style={styles.heroInfoButton}
                 onPress={() => setBreakdownVisible(true)}
@@ -499,6 +589,10 @@ export function SafeToSpendHero({
           {opts.dateControl}
 
           {opts.children}
+
+          {/* Pass D.5 — a state that shows no result regions still needs the balances
+              entry, EXCEPT where its own primary CTA already opens that same journey. */}
+          {balancesSelector && !opts.children && opts.cta?.testID !== 'money-aup-cta-balances' ? balancesSelector : null}
 
           {opts.stateText ? (
             warning ? (
@@ -532,12 +626,18 @@ export function SafeToSpendHero({
 
           {opts.showRail && paydayProgress && !paydayProgress.unknown ? (
             <View style={styles.heroFooter} testID="money-aup-hero-payday">
-              <MoneyPaydayBar progress={paydayProgress} rail={aupRail} />
-              <TimelineLegend mode="aup" hasExpectedIncome={hasExpectedIncome} />
+              <MoneyPaydayBar progress={paydayProgress} rail={aupRail} detailMaxHeight={detailMaxHeight} onDetailFrame={onDetailFrame} />
+              {/* Pass D.2 — the marker note moved into the explanation sheet. */}
+              <TimelineLegend mode="aup" hasExpectedIncome={hasExpectedIncome} showNote={!showsGroupedActions(opts)} />
+              {/* No cash-path status here: Available until payday has no accepted
+                  lowest-point / shortfall path output, and none is invented for symmetry. */}
+              {showsGroupedActions(opts) ? <CardActionGroup actions={groupedActions} testID="money-aup-actions" /> : null}
             </View>
           ) : null}
 
-          <Text style={styles.heroProvenance}>{MONEY_MEASURE_DEFINITIONS.availableUntilPayday}</Text>
+          {/* The measure's definition stays on the card only where there is no
+              "Why this amount?" row to carry it; otherwise it lives in that sheet. */}
+          {showsGroupedActions(opts) ? null : <Text style={styles.heroProvenance}>{MONEY_MEASURE_DEFINITIONS.availableUntilPayday}</Text>}
         </LinearGradient>
         {breakdown}
       </>
@@ -654,30 +754,22 @@ export function SafeToSpendHero({
     });
   }
 
-  // A genuine recorded-spending overrun this cycle.
-  if (heroState === 'recorded_overspend') {
-    return renderShell({ testID: 'money-aup-hero-overspend', tone: 'warning', stateText: presentation.primaryCopy, showRail: true });
-  }
-
-  // Planned commitments exceed the included balance. Not overspending and
-  // not a missing input — an ordinary cycle whose income has not arrived.
-  if (heroState === 'commitments_exceed_cash') {
-    return renderShell({ testID: 'money-aup-hero-commitments', tone: 'warning', stateText: presentation.primaryCopy, showRail: true });
-  }
-
   // The populated state — Correction B's accepted hierarchy, now rendered
   // through the SAME shell every other state uses, so there is exactly one
   // hero architecture rather than a "new hero" beside an "old setup card".
   const amountVisible = presentation.amountVisible && !!presentation.displayAmount;
 
   // Pass C.1 — the TOP horizon control: the payday date and a single "Change
-  // date" button. Rendered only when an estimate is shown and the owning
-  // screen wired up timeframe selection (onOpenTimeframe).
+  // date" button, rendered when the owning screen wired up timeframe selection
+  // (onOpenTimeframe) and the planning inputs are valid: a known payday. Pass D.3
+  // (F2): a NEGATIVE result is not a reason to prevent looking ahead — the
+  // shortfall states below keep this control; only the setup/invalid-data states
+  // (which return before this point without it) hide it.
   const paydayDateLabel = safeToSpend.hasKnownPayday
     ? safeToSpend.cycleEnd.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
     : null;
   const dateControl =
-    amountVisible && onOpenTimeframe ? (
+    safeToSpend.hasKnownPayday && onOpenTimeframe ? (
       <View style={styles.dateControlRow}>
         {paydayDateLabel ? (
           <Text style={styles.dateText} testID="money-aup-hero-date" maxFontSizeMultiplier={1.8}>
@@ -700,6 +792,18 @@ export function SafeToSpendHero({
       </View>
     ) : null;
 
+  // A genuine recorded-spending overrun this cycle. The warning stays; the date
+  // control stays too (Pass D.3, F2).
+  if (heroState === 'recorded_overspend') {
+    return renderShell({ testID: 'money-aup-hero-overspend', tone: 'warning', stateText: presentation.primaryCopy, showRail: true, dateControl });
+  }
+
+  // Planned commitments exceed the included balance. Not overspending and
+  // not a missing input — an ordinary cycle whose income has not arrived.
+  if (heroState === 'commitments_exceed_cash') {
+    return renderShell({ testID: 'money-aup-hero-commitments', tone: 'warning', stateText: presentation.primaryCopy, showRail: true, dateControl });
+  }
+
   // The two result regions: the authoritative AUP amount (cents-aware,
   // preserving material cents) on the left, and the ACCEPTED daily amount and
   // day count on the right — the daily figure is reused verbatim from the
@@ -720,6 +824,7 @@ export function SafeToSpendHero({
           value: presentation.amountCents !== null ? formatCentsCentsAware(presentation.amountCents) : (presentation.displayAmount ?? ''),
           caption: 'Total remaining',
           testID: 'money-aup-hero-figure',
+          footer: balancesSelector,
         }}
         right={
           showDaily

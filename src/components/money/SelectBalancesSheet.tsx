@@ -1,10 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { useAppState } from '../../state/AppStateContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
+import { Ionicons } from '@expo/vector-icons';
 import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
+import { formatCentsCentsAware } from '../../lib/calculations/money';
+import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
+import { typeStyle } from '../../theme/textStyle';
+import { fontFamilyForWeight } from '../../theme/typography';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 function formatMoney(value: number): string {
   return `$${Math.round(value).toLocaleString()}`;
@@ -36,9 +43,13 @@ export function SelectBalancesSheet({
   visible,
   onClose,
   onAddBalance,
+  onDismissed,
 }: {
   visible: boolean;
   onClose: () => void;
+  /** Pass D.5 — fired ONCE after the sheet's dismissal has actually completed, so the
+   * opener can return assistive focus to the control that invoked it. */
+  onDismissed?: () => void;
   /** Hand off to the scoped, balance-only Add Anything chooser (requirement
    * 5) — reuses the same chooser the global + button opens, just filtered,
    * never a separate implementation. Called after this sheet's own draft
@@ -46,7 +57,8 @@ export function SelectBalancesSheet({
   onAddBalance: () => void;
 }) {
   const { data, updateAssetsIncludeInMoney } = useAppState();
-  const { colors, radius, spacing, typography, semantic } = useTheme();
+  const { colors, radius, spacing, semantic } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
 
   const balances = data.assets.filter((a) => a.type === 'cash' || a.type === 'savings' || a.type === 'everyday');
 
@@ -75,12 +87,37 @@ export function SelectBalancesSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+
+  // RN calls the native Modal's onDismiss on iOS only; on every other platform the
+  // hide IS the completion. The opener's focus-return callback is idempotent, so this
+  // can never move focus twice. No timer is involved.
+  const wasVisible = useRef(false);
+  useEffect(() => {
+    if (visible) {
+      wasVisible.current = true;
+      return;
+    }
+    if (!wasVisible.current) return;
+    wasVisible.current = false;
+    if (Platform.OS !== 'ios') onDismissed?.();
+  }, [visible, onDismissed]);
+
   const isDirty = useMemo(() => {
     for (const [id, included] of draftIncluded) {
       if (savedIncluded.get(id) !== included) return true;
     }
     return false;
   }, [draftIncluded, savedIncluded]);
+
+  // The DRAFT's own total — the same balances listed above, summed in cents so the
+  // preview cannot drift from the figures on screen. It is a preview only: the
+  // authoritative included total still comes from the engine once this is saved.
+  const selectedTotalLabel = useMemo(() => {
+    const cents = balances
+      .filter((a) => draftIncluded.get(a.id) ?? resolveIncludeInMoneyCalculations(a))
+      .reduce((sum, a) => sum + (Number.isFinite(a.currentValue) ? Math.round(a.currentValue * 100) : 0), 0);
+    return formatCentsCentsAware(cents);
+  }, [balances, draftIncluded]);
 
   function toggleIncluded(assetId: string) {
     setDraftIncluded((prev) => {
@@ -137,19 +174,32 @@ export function SelectBalancesSheet({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        intro: { ...typography.caption, fontSize: 12, color: colors.textSecondary, lineHeight: 17, marginBottom: spacing.md },
+        // Pass D0.1 — Design 5.1 roles (Figtree via the shared resolver). The legacy
+        // `typography.*` tokens declare no font family, so this sheet's body text
+        // rendered in the platform font beside a Figtree title and buttons.
+        intro: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.md },
         row: {
           flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          gap: spacing.md,
           padding: spacing.md,
           borderRadius: radius.control,
           backgroundColor: colors.surfaceMuted,
           marginBottom: spacing.sm,
+          minHeight: designLayout.touchTargetMin,
+        },
+        rowSelected: { backgroundColor: semantic.interactiveTint },
+        iconTile: {
+          width: 36,
+          height: 36,
+          borderRadius: designRadius.tile,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.surface,
         },
         rowTextBlock: { flex: 1, marginRight: spacing.sm },
-        rowLabel: { ...typography.body, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-        rowValue: { ...typography.caption, fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+        rowLabel: { ...typeStyle('support', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600', color: colors.textPrimary },
+        rowValue: { ...typeStyle('meta', locale), fontVariant: ['tabular-nums'], color: colors.textSecondary, marginTop: 2 },
         toggle: {
           paddingHorizontal: spacing.md,
           paddingVertical: 7,
@@ -162,27 +212,44 @@ export function SelectBalancesSheet({
           alignItems: 'center',
           justifyContent: 'center',
         },
+        // The running total of the DRAFT selection, so the effect of a toggle is
+        // visible before it is saved. Composed from the same balances listed above.
+        totalRow: {
+          flexDirection: 'row',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: spacing.md,
+          marginTop: spacing.xs,
+          paddingTop: spacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        totalLabel: { ...typeStyle('support', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600', color: colors.textPrimary, flex: 1 },
+        totalValue: { ...typeStyle('figureRow', locale), fontVariant: ['tabular-nums'], color: colors.textPrimary, flexShrink: 0 },
+        scopeNote: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: designSpacing.xs },
         // Wave 6 Correction C — selection is an interactive state, not a
         // positive financial outcome, so it takes the Ocean Blue
         // interactive role. Green stays reserved for money genuinely
         // received. The checkmark below is the non-colour cue.
         toggleActive: { backgroundColor: semantic.interactiveTint, borderColor: semantic.interactive },
-        toggleText: { ...typography.caption, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
+        toggleText: { ...typeStyle('meta', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600', color: colors.textSecondary },
         toggleTextActive: { color: semantic.interactive },
-        emptyText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, lineHeight: 18, marginBottom: spacing.md },
+        emptyText: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.md },
+        addText: { ...typeStyle('meta', locale), fontFamily: fontFamilyForWeight(600, locale), fontWeight: '600', color: semantic.interactive },
         addButton: { alignSelf: 'flex-start', paddingVertical: spacing.sm, paddingHorizontal: 2, minHeight: 44, justifyContent: 'center' },
         footerButton: { flex: 1 },
         savePrimary: { flex: 1, backgroundColor: semantic.interactive },
       }),
-    [colors, radius, spacing, typography, semantic]
+    [colors, radius, spacing, semantic, locale]
   );
 
   return (
     <KeyboardSheet
       visible={visible}
       onClose={handleCancel}
+      onDismiss={onDismissed}
       isDirty={isDirty}
-      title="Select balances"
+      title="Choose accounts"
       footer={
         <>
           <Button label="Cancel" variant="secondary" onPress={handleCancel} style={styles.footerButton} />
@@ -197,10 +264,12 @@ export function SelectBalancesSheet({
         </>
       }
     >
-      <Text style={styles.intro}>
-        Choose which Cash, Savings or Everyday Account balances Nolie includes when estimating your available money. Excluding a
-        balance here never changes or deletes it — it stays exactly as recorded in Wealth, and only stops counting toward this specific
-        estimate.
+      {/* Pass D.5 — `includeInMoneyCalculations` is a PERSISTED per-account setting:
+          it feeds Available until payday, Look Ahead and Today, and it survives a
+          restart. The copy therefore never claims this changes one estimate only. */}
+      <Text style={styles.intro} testID="select-balances-intro">
+        Choose the Cash, Savings or Everyday Account balances used in your money estimates. This applies everywhere Nolie estimates your
+        money and stays this way until you change it. Your account balances and Wealth total never change.
       </Text>
       {balances.length === 0 ? (
         <Text style={styles.emptyText}>You don't have any Cash, Savings or Everyday Account balances recorded yet.</Text>
@@ -208,26 +277,44 @@ export function SelectBalancesSheet({
         balances.map((asset) => {
           const included = draftIncluded.get(asset.id) ?? resolveIncludeInMoneyCalculations(asset);
           return (
-            <View key={asset.id} style={styles.row}>
-              <View style={styles.rowTextBlock}>
+            // The WHOLE row toggles, so the target is the row rather than a small pill.
+            <TouchableOpacity
+              key={asset.id}
+              style={[styles.row, included ? styles.rowSelected : null]}
+              onPress={() => toggleIncluded(asset.id)}
+              accessibilityRole="checkbox"
+              accessibilityLabel={`${asset.label}, ${formatMoney(asset.currentValue)}`}
+              accessibilityState={{ checked: included }}
+              testID={`select-balances-row-${asset.id}`}
+            >
+              <View style={styles.iconTile} importantForAccessibility="no-hide-descendants">
+                <Ionicons name="wallet-outline" size={17} color={semantic.interactive} />
+              </View>
+              <View style={styles.rowTextBlock} importantForAccessibility="no-hide-descendants">
                 <Text style={styles.rowLabel}>{asset.label}</Text>
                 <Text style={styles.rowValue}>{formatMoney(asset.currentValue)}</Text>
               </View>
-              <TouchableOpacity
-                style={[styles.toggle, included ? styles.toggleActive : null]}
-                onPress={() => toggleIncluded(asset.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`${asset.label}, ${formatMoney(asset.currentValue)}, ${included ? 'included' : 'excluded'}`}
-                accessibilityState={{ selected: included }}
-              >
-                <Text style={[styles.toggleText, included ? styles.toggleTextActive : null]}>{included ? 'Included' : 'Excluded'}</Text>
-              </TouchableOpacity>
-            </View>
+              {/* Selection is a shape as well as a colour: a filled check, or an
+                  empty ring. Never colour alone. */}
+              <Ionicons
+                name={included ? 'checkmark-circle' : 'ellipse-outline'}
+                size={24}
+                color={included ? semantic.interactive : colors.borderStrong}
+                importantForAccessibility="no"
+                testID={`select-balances-mark-${asset.id}`}
+              />
+            </TouchableOpacity>
           );
         })
       )}
+      {balances.length > 0 ? (
+        <View style={styles.totalRow} accessible accessibilityLabel={`Selected balance: ${selectedTotalLabel}`} testID="select-balances-total">
+          <Text style={styles.totalLabel} importantForAccessibility="no">Selected balance</Text>
+          <Text style={styles.totalValue} importantForAccessibility="no">{selectedTotalLabel}</Text>
+        </View>
+      ) : null}
       <TouchableOpacity style={styles.addButton} onPress={handleAddBalance} accessibilityRole="button" accessibilityLabel="Add a money balance">
-        <Text style={[styles.toggleText, { color: semantic.interactive, fontSize: 13 }]}>+ Add a money balance</Text>
+        <Text style={styles.addText}>+ Add a money balance</Text>
       </TouchableOpacity>
     </KeyboardSheet>
   );

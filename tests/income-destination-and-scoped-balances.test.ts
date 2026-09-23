@@ -712,7 +712,12 @@ console.log('\n=== Section 5: SelectBalancesSheet draft/save/cancel (mirrored �
   );
   assert(
     'Structural: the sheet is wired to KeyboardSheet\'s own isDirty-driven discard confirmation (the same shared mechanism every other form in this app already uses), never a bespoke one',
-    /<KeyboardSheet\s*\n\s*visible=\{visible\}\s*\n\s*onClose=\{handleCancel\}\s*\n\s*isDirty=\{isDirty\}/.test(SELECT_BALANCES_SRC)
+    // D.5 added `onDismiss={onDismissed}` to the same element (focus return). The shared
+    // mechanism is unchanged, so the pin allows additional props without allowing a
+    // bespoke confirmation: visible/onClose/isDirty must all still be KeyboardSheet's.
+    /<KeyboardSheet\s(?:[^>]*\s)?visible=\{visible\}/.test(SELECT_BALANCES_SRC) &&
+      /<KeyboardSheet\s(?:[^>]*\s)?onClose=\{handleCancel\}/.test(SELECT_BALANCES_SRC) &&
+      /<KeyboardSheet\s(?:[^>]*\s)?isDirty=\{isDirty\}/.test(SELECT_BALANCES_SRC)
   );
   assert(
     'Structural: Save and Cancel are two distinct footer buttons (never a single ambiguous "Done")',
@@ -967,13 +972,15 @@ console.log('\n=== Section 12: setup-reconciliation dataRef fix — counter-proo
     'Structural: addRecurringIncomeWithMidCycleOccurrence now reads dataRef.current, not the closed-over `data` — the exact fix for the pre-correction double-tap gap',
     // C.4 — the read is captured once as `current` (so a duplicate no-op can be
     // detected by identity); it is still dataRef.current, never the closed-over `data`.
-    /const current = dataRef\.current;\s*\n\s*const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);/.test(
+    /return persistWriteFirst\(\(current\) => \{\s*\n\s*if \(current\.recurringItems\.some\(\(r\) => r\.id === recurringItemId\)\) return current;[^\n]*\n\s*const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);/.test( // Pass D0 — `current` is now the write-first owner's latest accepted AppData, never a closed-over snapshot
+
       APP_STATE_SRC
     )
   );
   assert(
     'Structural: its useCallback dependency array is now [persist] only — data is no longer a dependency, confirming it no longer closes over a per-render data snapshot',
-    /const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);[\s\S]{0,700}return persist\(makeMain \? \{ \.\.\.next, user: \{ \.\.\.next\.user, mainPaydayIncomeId: recurringItemId \} \} : next\);\s*\n\s*\},\s*\n\s*\[persist\]/.test(
+    /const next = createRecurringIncomeWithMidCycleOccurrence\(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId\);[\s\S]{0,700}return makeMain \? \{ \.\.\.next, user: \{ \.\.\.next\.user, mainPaydayIncomeId: recurringItemId \} \} : next;\s*\n\s*\}\);\s*\n\s*\},\s*\n\s*\[persistWriteFirst\]/.test( // Pass D0 — dependency is the write-first owner only; still no `data` closure
+
       APP_STATE_SRC
     )
   );
@@ -1206,7 +1213,7 @@ console.log('\n=== Section 14: reconciliation branches A-E — 10 Aug / 4 Sept s
     const ADD_INCOME_SRC_LOCAL = readFileSync(srcPath('src/components/income/AddIncomeModal.tsx'), 'utf-8');
     assert(
       'Branch C/D wiring: chooseMidCycleNoOccurrence calls the REAL addRecurringItem action, never a bespoke mutation',
-      /function chooseMidCycleNoOccurrence\(\) \{[\s\S]{0,200}addRecurringItem\(midCyclePayload, \{ setAsMainPayday: willSetMainPayday \}\);/.test(ADD_INCOME_SRC_LOCAL)
+      /function chooseMidCycleNoOccurrence\(\) \{[\s\S]{0,400}finishSave\(\(\) => addRecurringItem\(payload, \{ setAsMainPayday: willSetMainPayday, id \}\)/.test(ADD_INCOME_SRC_LOCAL) // Pass D0 — still the REAL action, through the durable Save tail
     );
     const data = startingData();
     const newItem: RecurringItem = { ...scenarioItemInput(), id: 'income1' };

@@ -30,16 +30,39 @@ export type LookAheadPresentationState =
 
 export type CashFlowTone = 'neutral' | 'caution';
 
+/** Pass D.2 — the SAME authoritative status, split into a title and one supporting
+ * line for the card's contained status surface. Nothing here is a new claim: the
+ * title and detail are the two halves of `cashFlowLine` (or the existing
+ * `deficitLine`). `healthy` exists ONLY for a proven `positive_no_shortfall` path;
+ * any shortfall — temporary or at the target — is `caution`. An unavailable or
+ * incomplete estimate has NO status at all, so it can never be shown as success. */
+export interface CashFlowStatus {
+  tone: 'healthy' | 'caution';
+  title: string;
+  detail?: string;
+  /** True when `detail` is the final-deficit explanation. */
+  detailIsDeficit?: boolean;
+}
+
 export interface LookAheadPresentation {
   state: LookAheadPresentationState;
   headline: string;
-  /** The dominant amount, already framed non-negative (a deficit is a gap). */
+  /** The dominant amount — SIGNED, exactly as the card shows it (Pass D.3, F1: a
+   * final deficit is "-$1,910.00", never a bare positive figure under "Estimated
+   * balance"). The positive GAP wording lives in `deficitLine` / the status detail. */
   headlineAmount?: string;
+  /** Pass D.3 — the headline amount for assistive technology ("minus $1,910.00"). */
+  headlineAmountSpoken?: string;
+  /** Pass D.4 — the selected date on its own ("30 Sep 2026"), for the sheet's subtitle.
+   * The same string the headline already embeds; never re-derived by a component. */
+  targetDateLabel?: string;
   /** The subordinate cash-flow status line (healthy or possible shortfall). */
   cashFlowLine?: string;
   /** Neutral (Ocean Blue / no colour emphasis) when healthy; caution (yellow)
    * for a shortfall. Never green merely for being healthy; never red here. */
   cashFlowTone?: CashFlowTone;
+  /** Pass D.2 — see CashFlowStatus. Absent whenever `cashFlowLine` is absent. */
+  cashFlowStatus?: CashFlowStatus;
   /** Final-deficit explanation (only when the target itself is below zero). */
   deficitLine?: string;
   lowestLine?: string;
@@ -89,6 +112,7 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
 
   const dateStr = fmtDate(result.target);
   const headline = `Estimated balance by ${dateStr}`;
+  const targetDateLabel = dateStr;
   const assumedLine = result.assumptions.count > 0
     ? (result.assumptions.targetIsPayday ? `Includes scheduled income on ${dateStr}` : `Includes ${result.assumptions.count} assumed income ${result.assumptions.count === 1 ? 'payment' : 'payments'}`)
     : undefined;
@@ -106,15 +130,24 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
   const lowestLine = `Lowest estimated end-of-day cash position: ${fmtCents(result.lowest.cents)} on ${fmtDate(result.lowest.date)}`;
 
   if (result.targetCents < 0) {
-    // Final deficit — never a negative dominant headline; express as a positive gap.
-    // The path is below zero at the target, so a first shortfall always exists.
+    // Final deficit — the dominant amount keeps its sign (Pass D.3, F1); the gap is
+    // explained in words below it. The path is below zero at the target, so a first
+    // shortfall always exists.
     const first = result.firstShortfall ?? { date: result.target, shortfallCents: -result.targetCents };
     return {
       state: 'below_zero',
       headline,
-      headlineAmount: fmtGap(result.targetCents),
+      headlineAmount: fmtCents(result.targetCents),
+      headlineAmountSpoken: `minus ${fmtGap(result.targetCents)}`,
+      targetDateLabel,
       cashFlowLine: `Possible shortfall of ${formatCentsCentsAware(first.shortfallCents)} on ${fmtShortDate(first.date)}`,
       cashFlowTone: 'caution',
+      cashFlowStatus: {
+        tone: 'caution',
+        title: `Possible shortfall of ${formatCentsCentsAware(first.shortfallCents)} on ${fmtShortDate(first.date)}`,
+        detail: `Your scheduled commitments may be about ${fmtGap(result.targetCents)} more than your cash by ${dateStr}`,
+        detailIsDeficit: true,
+      },
       deficitLine: `Your scheduled commitments may be about ${fmtGap(result.targetCents)} more than your cash by ${dateStr}`,
       lowestLine,
       assumedLine,
@@ -129,8 +162,14 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
       state: 'positive_after_shortfall',
       headline,
       headlineAmount: fmtCents(result.targetCents),
+      headlineAmountSpoken: fmtCents(result.targetCents),
+      targetDateLabel,
       cashFlowLine: `Possible shortfall of ${formatCentsCentsAware(result.firstShortfall.shortfallCents)} on ${fmtShortDate(result.firstShortfall.date)}`,
       cashFlowTone: 'caution',
+      cashFlowStatus: {
+        tone: 'caution',
+        title: `Possible shortfall of ${formatCentsCentsAware(result.firstShortfall.shortfallCents)} on ${fmtShortDate(result.firstShortfall.date)}`,
+      },
       lowestLine,
       assumedLine,
       savingsLine,
@@ -154,12 +193,20 @@ export function selectLookAheadPresentation(result: LookAheadResult): LookAheadP
     result.lowest.cents === result.targetCents
       ? `No dip below your estimated balance before ${fmtShortDate(result.target)}`
       : `Lowest scheduled end-of-day balance ${formatCentsCentsAware(result.lowest.cents)} on ${fmtShortDate(result.lowest.date)}`;
+  // Pass D.2 — the same fact as its own line (a colon instead of the run-on).
+  const lowestDetail =
+    result.lowest.cents === result.targetCents
+      ? lowestPart
+      : `Lowest scheduled end-of-day balance: ${formatCentsCentsAware(result.lowest.cents)} on ${fmtShortDate(result.lowest.date)}`;
   return {
     state: 'positive_no_shortfall',
     headline,
     headlineAmount: fmtCents(result.targetCents),
+    headlineAmountSpoken: fmtCents(result.targetCents),
+    targetDateLabel,
     cashFlowLine: `${NO_SHORTFALL_DETECTED} · ${lowestPart}`,
     cashFlowTone: 'neutral',
+    cashFlowStatus: { tone: 'healthy', title: NO_SHORTFALL_DETECTED, detail: lowestDetail },
     lowestLine,
     assumedLine,
     savingsLine,
@@ -235,6 +282,47 @@ function protectedLineFor(guide: DailyGuideResult): string | null {
     return `Keeps ${formatCentsCentsAware(guide.obligationsAfterTargetCents)} for commitments due after ${fmtShortDate(guide.target)} through your ${g} payday.`;
   }
   return `Nothing else is scheduled between ${fmtShortDate(guide.target)} and your ${g} payday.`;
+}
+
+/**
+ * Pass D.4 — the selected-date guide as the STRUCTURED parts of the binding division,
+ * so the sheet can show the arithmetic instead of a sentence. Every value is read from
+ * the engine's own limiting metadata (`limitingLineFor` composes the same fields into
+ * prose); nothing is recomputed and the target balance is never substituted for the
+ * limiting position.
+ */
+export interface DailyGuideCalculation {
+  /** The binding day — NOT necessarily the lowest-balance day or the selected date. */
+  limitingDateLabel: string;
+  /** Scheduled position on that day before everyday spending. */
+  position: string;
+  /** Daily allocations counted by that day (k). */
+  days: number;
+  daily: string;
+  /** "$7,730 ÷ 8 days ≈ $966/day". */
+  equation: string;
+  /** The ACTUAL rule — `displayCents` floors to whole dollars. Null when exact. */
+  roundingNote: string | null;
+  spoken: string;
+}
+
+export function selectDailyGuideCalculation(guide: DailyGuideResult): DailyGuideCalculation | null {
+  if (guide.status !== 'available') return null;
+  const { limitingDate, limitingPositionCents, limitingAllocationDays, displayCents, exactCents } = guide;
+  if (limitingDate === null || limitingPositionCents === null || limitingAllocationDays === null || displayCents === null || exactCents === null) return null;
+  const position = formatCentsCentsAware(limitingPositionCents);
+  const daily = formatCentsCentsAware(displayCents);
+  const days = limitingAllocationDays;
+  const exact = exactCents % 100 === 0 && limitingPositionCents % days === 0;
+  return {
+    limitingDateLabel: fmtShortDate(limitingDate),
+    position,
+    days,
+    daily,
+    equation: `${position} ÷ ${days} ${days === 1 ? 'day' : 'days'} ${exact ? '=' : '≈'} ${daily}/day`,
+    roundingNote: exact ? null : 'Rounded down to whole dollars.',
+    spoken: `${position} divided by ${days} ${days === 1 ? 'day' : 'days'} is about ${daily} a day.`,
+  };
 }
 
 export function selectDailyGuidePresentation(guide: DailyGuideResult): DailyGuidePresentation {

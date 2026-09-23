@@ -92,28 +92,25 @@ console.log('\n=== Section 3: root cause and fix of the silent Save failure (Str
 {
   const SRC = readFileSync('src/components/credit/AddCreditCardModal.tsx', 'utf8');
 
-  assert('submittingRef is reset to false inside the visible/editCard reset effect — a fresh form session always starts unlocked', /setSaving\(false\);\s*\/\/ A genuinely new form session[\s\S]{0,120}submittingRef\.current = false;/.test(SRC));
-  assert('the same reset effect also clears saveErrorMessage on a fresh session, so a stale error from a previous card never bleeds into the next one', /submittingRef\.current = false;\s*setSaveErrorMessage\(null\);\s*\}, \[visible, editCard\]\);/.test(SRC));
-  assert('handleSave clears saveErrorMessage again at the very start of a new attempt, before the persistence call', /setSaving\(true\);\s*setSaveErrorMessage\(null\);/.test(SRC));
-
-  assert('the actual persistence call (updateCreditCard/addCreditCard) is now wrapped in a try block — a thrown failure can no longer leave submittingRef permanently latched with zero feedback', /try \{\s*if \(editCard\) \{\s*updateCreditCard\(editCard\.id, payload\);/.test(SRC));
-  assert('the catch block releases submittingRef back to false, so a genuine failure can be retried by the next tap instead of soft-locking Save forever', /catch \(err\) \{[\s\S]{0,600}submittingRef\.current = false;/.test(SRC));
-  assert('the catch block surfaces a plain-language error via setSaveErrorMessage — Save can never fail with zero visible feedback again', /catch \(err\) \{[\s\S]{0,600}setSaveErrorMessage\('Something went wrong saving this card/.test(SRC));
+  // RECONCILED (Pass D0): the guard, the pending state and the failure handling this
+  // section protects moved out of the card editor into the ONE shared lifecycle
+  // (src/hooks/useDurableEditorCompletion.ts) that all four editors use. Every
+  // property below is unchanged and is now asserted where it lives.
+  const HOOK = readFileSync('src/hooks/useDurableEditorCompletion.ts', 'utf8');
+  assert('the card editor delegates to the shared durable lifecycle, and keeps no guard of its own to forget to reset', /const completion = useDurableEditorCompletion\(\{ visible, onOutcome \}\);/.test(SRC) && !/submittingRef/.test(SRC) && !/setSaving\(/.test(SRC));
+  assert('the guard is reset on every new presentation — a fresh form session always starts unlocked', /useEffect\(\(\) => \{\s*if \(!visible\) return;\s*emittedRef\.current = false;\s*pendingRef\.current = false;\s*setPending\(null\);\s*setErrorText\(null\);\s*\}, \[visible\]\);/.test(HOOK));
+  assert('…and that same reset clears a stale error, so it never bleeds into the next card', /pendingRef\.current = false;\s*setPending\(null\);\s*setErrorText\(null\);/.test(HOOK));
+  assert('a new attempt clears the previous error before the persistence call', /pendingRef\.current = true;\s*setErrorText\(null\);\s*setPending\(kind\);[\s\S]{0,160}try \{\s*await mutate\(\);/.test(HOOK));
+  assert('the persistence call is awaited inside a try block — a rejected write can never leave the guard latched with zero feedback', /try \{\s*await mutate\(\);\s*\} catch \(error\) \{/.test(HOOK));
+  assert('the catch block releases the guard, so a genuine failure can be retried by the next tap', /catch \(error\) \{\s*pendingRef\.current = false;/.test(HOOK));
+  assert('the catch block surfaces the calm plain-language error — Save can never fail with zero visible feedback', /catch \(error\) \{[\s\S]{0,400}setErrorText\(text\);\s*AccessibilityInfo\.announceForAccessibility\(text\);/.test(HOOK) && /EDITOR_SAVE_FAILED_COPY = 'We couldn’t save this change\. Nothing was changed\. Your details are still here — try again\.'/.test(readFileSync('src/lib/editorCompletion.ts', 'utf8')));
   assert(
-    'the catch block does NOT call onClose or onSaveSuccess — a failed save keeps the sheet open and the user\'s entered values on screen, never silently discarding the draft',
+    'the catch block emits NO outcome and runs NO success work — a failed save keeps the sheet open and the entered values on screen',
     (() => {
-      const catchStart = SRC.indexOf('} catch (err) {');
-      const catchEnd = SRC.indexOf('\n  }\n', catchStart);
-      // Strip comment-only lines first — the catch block's own doc comment
-      // deliberately mentions "onClose()" in prose ("never call onClose()
-      // — the user's entered values stay on screen..."), which would
-      // otherwise produce a false failure here despite the executable code
-      // genuinely never calling it.
-      const catchCodeOnly = SRC.slice(catchStart, catchEnd)
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('//'))
-        .join('\n');
-      return catchStart !== -1 && catchEnd !== -1 && !/onClose\(\)/.test(catchCodeOnly) && !/onSaveSuccess\?\.\(\)/.test(catchCodeOnly);
+      const catchStart = HOOK.indexOf('} catch (error) {');
+      const catchEnd = HOOK.indexOf('\n      }\n', catchStart);
+      const catchCodeOnly = HOOK.slice(catchStart, catchEnd).split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+      return catchStart !== -1 && catchEnd !== -1 && !/emit\(/.test(catchCodeOnly) && !/onSuccess\(\)/.test(catchCodeOnly) && /return;/.test(catchCodeOnly);
     })()
   );
   assert('the success path is unchanged — embedded hands off via onSaveSuccess, standalone calls onClose, exactly as before this correction', /if \(embedded\) onSaveSuccess\?\.\(\);\s*else onClose\(\);/.test(SRC));
@@ -122,12 +119,12 @@ console.log('\n=== Section 3: root cause and fix of the silent Save failure (Str
 console.log('\n=== Section 4: existing card identity preserved — editing never creates a duplicate (Structural) ===');
 {
   const SRC = readFileSync('src/components/credit/AddCreditCardModal.tsx', 'utf8');
-  assert('the editCard branch calls updateCreditCard(editCard.id, payload) — the existing card\'s own id, never a freshly generated one', /if \(editCard\) \{\s*updateCreditCard\(editCard\.id, payload\);/.test(SRC));
+  assert('the editCard branch calls updateCreditCard(editCard.id, payload) — the existing card\'s own id, never a freshly generated one', /\(\) => \(editCard \? updateCreditCard\(editCard\.id, payload\) : addCreditCard\(\{ \.\.\.payload, id \}\)\),/.test(SRC)); // Pass D0 — same identity rule, one durable call
   // RECONCILED (post-Wave-10 B9 closure): the successful-Save path now
   // also routes through the canonical confirmSaveSuccess boundary (and the
   // wealth form reports its ACTUAL saved type), so the pinned shape gained
   // that call — the close/branch contract itself is unchanged.
-  assert('addCreditCard is only reachable in the else branch (no editCard) — an edit session can never fall through to creating a new card', /\} else \{\s*addCreditCard\(payload\);\s*if \(!embedded\) confirmSaveSuccess\(buildSaveConfirmation\('Credit card', 'added'\)\);\s*\}/.test(SRC));
+  assert('addCreditCard is only reachable in the else branch (no editCard) — an edit session can never fall through to creating a new card', /editCard \? updateCreditCard\(editCard\.id, payload\) : addCreditCard\(\{ \.\.\.payload, id \}\)/.test(SRC) && /const id = editCard \? editCard\.id : draftIdRef\.current;/.test(SRC) && (SRC.match(/addCreditCard\(/g) ?? []).length === 1); // Pass D0 — reachable only when there is no editCard, and with the draft's one stable id
   assert('canSave requires a non-empty issuer, a valid credit limit, and a due day in 1-31 — the exact same gate as before this correction, untouched', /const canSave = issuer\.trim\(\)\.length > 0 && !isNaN\(creditLimit\) && !isNaN\(due\) && due >= 1 && due <= 31;/.test(SRC));
 }
 
@@ -136,7 +133,8 @@ console.log('\n=== Section 5: dependent liability/upcoming-payment views refresh
   const APP_STATE_SRC = readFileSync('src/state/AppStateContext.tsx', 'utf8');
   assert(
     'updateCreditCard still funnels every edit through persist(upsertCreditCardLiability(...)) — the single shared write path every dependent screen (Debt Overview, Available Until Payday, What Happens Next, Navilo Score) already re-derives from, untouched by this correction',
-    /const updateCreditCard = useCallback\(\s*\(id: string, patch: Partial<Omit<CreditCard, 'id'>>\) => \{\s*const updatedCard = \{ \.\.\.data\.creditCards\.find\(\(c\) => c\.id === id\), \.\.\.patch \} as CreditCard;\s*const withCard = \{ \.\.\.data, creditCards: data\.creditCards\.map\(\(c\) => \(c\.id === id \? updatedCard : c\)\) \};\s*persist\(upsertCreditCardLiability\(withCard, updatedCard\)\);/.test(
+    /export function updateCreditCardTransition\(current: AppData, id: string, patch: Partial<Omit<CreditCard, 'id'>>\): AppData \{[\s\S]{0,260}return upsertCreditCardLiability\(\{ \.\.\.current, creditCards: current\.creditCards\.map\(\(c\) => \(c\.id === id \? updatedCard : c\)\) \}, updatedCard\);\s*\}/.test( // Pass D0 — still ONE write path through upsertCreditCardLiability, now a pure transition run by the write-first owner
+
       APP_STATE_SRC
     )
   );

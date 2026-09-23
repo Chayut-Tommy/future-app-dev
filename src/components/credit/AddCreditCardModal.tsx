@@ -16,6 +16,11 @@ import { ASSUMED_CREDIT_CARD_APR } from '../../lib/calculations/creditHealth';
 import { resolveExpectedMonthlyRepayment } from '../../lib/calculations/creditHealth';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
+import { EditorCompletionStatus } from '../shared/EditorCompletionStatus';
+import { useDurableEditorCompletion } from '../../hooks/useDurableEditorCompletion';
+import { EDITOR_DELETING_LABEL, EDITOR_SAVING_LABEL, EditorOutcome } from '../../lib/editorCompletion';
+import { generateId } from '../../lib/id';
+import { useLatchedWhileHidden } from '../../hooks/useLatchedWhileHidden';
 
 // Strips $, commas, spaces and other non-numeric characters before parsing
 // (PRD ask: handle pasted formatted currency) — scoped to the repayment
@@ -54,9 +59,15 @@ export const AddCreditCardModal = forwardRef<
     onTitleChange?: (title: string) => void;
     onSaveSuccess?: () => void;
     onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
+    /** Pass D0 — the structured, durable completion (see lib/editorCompletion). */
+    onOutcome?: (outcome: EditorOutcome) => void;
   }
->(function AddCreditCardModal({ visible, onClose, editCard, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose }, ref) {
+>(function AddCreditCardModal({ visible, onClose, editCard: editCardProp, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose, onOutcome }, ref) {
+  // Pass D0.1 — keep showing what was presented until native dismissal finishes (never the Add form mid-close).
+  const editCard = useLatchedWhileHidden(visible, editCardProp);
   const { addCreditCard, updateCreditCard, deleteCreditCard } = useAppState();
+  const completion = useDurableEditorCompletion({ visible, onOutcome });
+  const draftIdRef = useRef<string>(generateId());
   const { celebrate, confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography, semantic } = useTheme();
   const [issuer, setIssuer] = useState('');
@@ -66,11 +77,10 @@ export const AddCreditCardModal = forwardRef<
   const [expectedRepayment, setExpectedRepayment] = useState('');
   const [minRequiredPayment, setMinRequiredPayment] = useState('');
   const [apr, setApr] = useState('');
-  const [saving, setSaving] = useState(false);
-  // Pass 2B correction — surfaces a genuine persistence failure instead of
-  // leaving Save silently inert (see submittingRef's own correction comment
-  // below for the actual root cause this pairs with).
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  // Pass D0 — pending, double-submission and failure state now live in the ONE
+  // shared lifecycle (useDurableEditorCompletion), which also resets its guard on
+  // every new presentation — the Pass 2B lesson (a guard that is never reset
+  // leaves Save silently inert) is preserved there for all four editors.
 
   const isEditing = !!editCard;
 
@@ -81,23 +91,6 @@ export const AddCreditCardModal = forwardRef<
   // behaviour (no snapshot taken, isDirty always false) is byte-identical
   // to before this correction.
   const initialSnapshot = useRef({ issuer: '', limit: '', balance: '', dueDay: '', expectedRepayment: '', minRequiredPayment: '', apr: '' });
-  // Synchronous double-submission guard, alongside the existing `saving`
-  // state guard below (kept as-is — it already correctly blocks a second
-  // Save while the first is in flight; this ref additionally protects the
-  // imperative requestSave() entry point the embedded host calls, the same
-  // belt-and-braces pattern AddWealthItemModal's submittingRef uses).
-  //
-  // Pass 2B correction — physical-device retest found Save silently doing
-  // nothing on a legitimate edit. Root cause: this component is mounted
-  // once and kept alive for the lifetime of its host screen (WealthScreen/
-  // CardsScreen/MoneyScreen all render it unconditionally, toggling only
-  // `visible`), so the ref was never being reset back to false anywhere —
-  // AddWealthItemModal's own copy of this exact pattern resets it in two
-  // places (a fresh form session opening, and a failed save's catch block);
-  // this file was missing BOTH, so after the very first successful (or even
-  // attempted) Save in a session, every subsequent Save on any card silently
-  // no-opped forever. Fixed below by mirroring both of those reset points.
-  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -144,11 +137,7 @@ export const AddCreditCardModal = forwardRef<
       setApr('');
       initialSnapshot.current = { issuer: '', limit: '', balance: '', dueDay: '', expectedRepayment: '', minRequiredPayment: '', apr: '' };
     }
-    setSaving(false);
-    // A genuinely new form session — see submittingRef's own correction
-    // comment for why this is one of the two places it must be cleared.
-    submittingRef.current = false;
-    setSaveErrorMessage(null);
+    draftIdRef.current = generateId(); // a new presentation is a new draft
   }, [visible, editCard]);
 
   useEffect(() => {
@@ -161,8 +150,8 @@ export const AddCreditCardModal = forwardRef<
   const canSave = issuer.trim().length > 0 && !isNaN(creditLimit) && !isNaN(due) && due >= 1 && due <= 31;
 
   useEffect(() => {
-    onCanSaveChange?.(canSave);
-  }, [canSave, onCanSaveChange]);
+    onCanSaveChange?.(canSave && !completion.isPending);
+  }, [canSave, onCanSaveChange, completion.isPending]);
 
   // Embedded-only genuine-change detection — see initialSnapshot's own
   // declaration comment. Standalone (embedded=false) always reports false,
@@ -185,74 +174,45 @@ export const AddCreditCardModal = forwardRef<
     // Guards against a fast double-tap creating two identical cards before
     // the sheet has a chance to close (PRD bug report, §10: "duplicate
     // credit cards").
-    if (!canSave || saving || submittingRef.current) return;
-    submittingRef.current = true;
-    setSaving(true);
-    setSaveErrorMessage(null);
+    if (!canSave || completion.isPendingRef.current) return;
     const payload = {
       issuer: issuer.trim(),
       label: issuer.trim(),
       creditLimit,
       currentBalance: parseFloat(balance) || 0,
       dueDay: due,
-      // Two separate, independently-entered figures (PRD ask, §2) — neither
-      // is derived from or overwrites the other. minimumPayment is the true
-      // contractual minimum (feeds reminders.ts's minimum-payment warning
-      // and computeCardPayoffInsight); expectedMonthlyRepayment is the
-      // user's own planned amount (feeds What Happens Next, Available
-      // Until Payday's in-cycle commitment, Typical Money Flow/Allocation).
-      // A $0/blank expectedMonthlyRepayment alongside a positive
-      // minimumPayment is a valid, deliberately-supported state — not
-      // contradictory data — because resolveExpectedMonthlyRepayment
-      // (creditHealth.ts) falls back to minimumPayment for every consumer
-      // that reads "the" repayment whenever expectedMonthlyRepayment isn't
-      // itself a genuine positive figure yet. Neither field is coerced into
-      // the other here.
       minimumPayment: parseRepaymentAmount(minRequiredPayment),
       expectedMonthlyRepayment: parseRepaymentAmount(expectedRepayment),
       apr: !isNaN(aprValue) && aprValue > 0 ? aprValue / 100 : undefined,
     };
-    // Pass 2B correction — Save must never fail silently. Wrapping the
-    // actual persistence call means a genuine thrown failure lands in the
-    // catch below (error surfaced, submittingRef released, draft
-    // preserved, sheet stays open) instead of leaving the guard latched
-    // true forever with no feedback — the exact silent-failure symptom the
-    // physical-device retest reported.
-    try {
-      if (editCard) {
-        updateCreditCard(editCard.id, payload);
-        // B9 closure — a standalone edit save is the customer's action: one
-        // softSuccess + one factual confirmation, fired BEFORE the
-        // debt-reduced celebration so that richer celebration claims (and
-        // replaces) the plain toast when it fires. Embedded saves keep the
-        // host boundary instead.
-        if (!embedded) confirmSaveSuccess(buildSaveConfirmation('Credit card', 'updated'));
-        if (payload.currentBalance < editCard.currentBalance) celebrate(buildDebtReducedCelebration());
-      } else {
-        addCreditCard(payload);
-        if (!embedded) confirmSaveSuccess(buildSaveConfirmation('Credit card', 'added'));
+    // Pass D0 — durable. The confirmation, the celebration, the structured
+    // `saved` outcome and the close ALL wait for the stored write; a rejected
+    // write shows none of them and leaves the draft on screen for a retry. One
+    // identity per draft means a retried Add can only ever create one card.
+    // Successful Save never goes through requestClose/confirmDiscardIfDirty.
+    const id = editCard ? editCard.id : draftIdRef.current;
+    void completion.run(
+      'saving',
+      () => (editCard ? updateCreditCard(editCard.id, payload) : addCreditCard({ ...payload, id })),
+      { outcome: 'saved', operation: editCard ? 'update' : 'add', entity: 'credit_card', id },
+      () => {
+        if (!embedded) confirmSaveSuccess(buildSaveConfirmation('Credit card', editCard ? 'updated' : 'added'));
+        if (editCard && payload.currentBalance < editCard.currentBalance) celebrate(buildDebtReducedCelebration());
+        if (embedded) onSaveSuccess?.();
+        else onClose();
       }
-      // Successful Save never goes through requestClose/confirmDiscardIfDirty
-      // — it must never produce a discard prompt. Embedded: hand control back
-      // to the host (which closes the whole Add Anything journey exactly
-      // once). Standalone: unchanged direct onClose().
-      if (embedded) onSaveSuccess?.();
-      else onClose();
-    } catch (err) {
-      // Smallest safe recovery, mirroring AddWealthItemModal's own catch
-      // block: release the guard so a deliberate next tap can retry,
-      // surface a plain-language reason, and never call onClose() — the
-      // user's entered values stay on screen instead of being silently
-      // discarded behind a sheet they'd have to reopen and re-enter.
-      submittingRef.current = false;
-      setSaving(false);
-      setSaveErrorMessage('Something went wrong saving this card — nothing was lost. Your details are still here; tap Save to try again.');
-    }
+    );
   }
 
   function handleDelete() {
-    if (editCard) deleteCreditCard(editCard.id);
-    onClose();
+    if (!editCard) return;
+    void completion.run('deleting', () => deleteCreditCard(editCard.id), { outcome: 'deleted', operation: 'delete', entity: 'credit_card', id: editCard.id }, onClose);
+  }
+
+  // Cancel / Back / swipe / backdrop: zero writes, one `dismissed` outcome — and
+  // refused while a durable write is unresolved.
+  function handleDismiss() {
+    completion.dismiss(onClose);
   }
 
   // Cancel/backdrop/swipe/Android Back (embedded, via the host's own
@@ -263,6 +223,7 @@ export const AddCreditCardModal = forwardRef<
   // stays mounted, exactly like the existing Add Asset pattern) whenever
   // the user returns to the chooser, so there is nothing to confirm losing.
   function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (completion.isPendingRef.current) return; // never an ambiguous dismissal mid-write
     if (reason === 'back') {
       onConfirmedClose?.(reason);
       return;
@@ -315,11 +276,7 @@ export const AddCreditCardModal = forwardRef<
 
   const content = (
     <>
-      {saveErrorMessage ? (
-        <View style={styles.helperBox}>
-          <Text style={styles.helperText}>{saveErrorMessage}</Text>
-        </View>
-      ) : null}
+      <EditorCompletionStatus pending={completion.pending} errorText={completion.errorText} testID="card-editor-status" />
 
       {/* Wave 9a closure, Correction A — the checkmarked benefit panel
           ("Reduce interest / Improve credit utilisation / Create a payoff
@@ -402,8 +359,15 @@ export const AddCreditCardModal = forwardRef<
       </Text>
 
       {isEditing ? (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-          <Text style={styles.deleteText}>Delete card</Text>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={handleDelete}
+          disabled={completion.isPending}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: completion.isPending, busy: completion.pending === 'deleting' }}
+          testID="card-editor-delete"
+        >
+          <Text style={styles.deleteText}>{completion.pending === 'deleting' ? EDITOR_DELETING_LABEL : 'Delete card'}</Text>
         </TouchableOpacity>
       ) : null}
     </>
@@ -420,13 +384,20 @@ export const AddCreditCardModal = forwardRef<
   return (
     <KeyboardSheet
       visible={visible}
-      onClose={onClose}
+      onClose={handleDismiss}
       isDirty={isDirty}
       title={isEditing ? 'Edit credit card' : 'Add credit card'}
       footer={
         <>
-          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave || saving} style={{ ...styles.footerButton, ...styles.saveAction }} />
+          <Button label="Cancel" variant="secondary" onPress={handleDismiss} disabled={completion.isPending} style={styles.footerButton} />
+          <Button
+            label={completion.pending === 'saving' ? EDITOR_SAVING_LABEL : 'Save'}
+            onPress={handleSave}
+            disabled={!canSave || completion.isPending}
+            loading={completion.pending === 'saving'}
+            style={{ ...styles.footerButton, ...styles.saveAction }}
+            testID="card-editor-save"
+          />
         </>
       }
     >

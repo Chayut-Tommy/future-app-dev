@@ -4,11 +4,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
 import { CardResultRegions } from './CardResultRegions';
-import { FutureTimelineRail } from './FutureTimelineRail';
+import { FutureTimelineRail, RailReviewRow, RailSourceReview } from './FutureTimelineRail';
 import { TimelineLegend } from './TimelineLegend';
+import { CardAction, CardActionGroup, CashPathStatus } from './MoneyCardLowerRegion';
 import { buildBalancePath } from '../../lib/calculations/balancePath';
 import { ProjectedEvent } from '../../lib/calculations/projectedEvents';
 import { LookAheadPresentation, selectDailyGuidePresentation } from '../../lib/calculations/lookAheadPresentation';
+import { VIEW_UPCOMING_EVENTS_SUBTITLE, VIEW_UPCOMING_EVENTS_TITLE, WHY_THIS_AMOUNT_SUBTITLE, WHY_THIS_AMOUNT_TITLE } from '../../lib/calculations/moneyComposition';
 import { LookAheadResult } from '../../lib/calculations/lookAheadProjection';
 import { DailyGuideResult } from '../../lib/calculations/dailyGuide';
 import { formatCentsCentsAware } from '../../lib/calculations/money';
@@ -57,6 +59,14 @@ export function ScenarioPositionCard({
   onBackToPayday,
   onViewUpcomingEvents,
   headingRef,
+  resolveReview,
+  onReviewSource,
+  focusRequest,
+  reviewNotice,
+  detailMaxHeight,
+  onDetailFrame,
+  balancesSelector,
+  whyActionRef,
 }: {
   presentation: LookAheadPresentation;
   /** The Pass B projection for the selected date (or the unavailable result). */
@@ -81,6 +91,19 @@ export function ScenarioPositionCard({
    * occurrence behind the chart is listed in full. */
   onViewUpcomingEvents?: () => void;
   headingRef?: React.Ref<View>;
+  /** Pass D — source review. All optional: without them the card is exactly as before. */
+  resolveReview?: (row: RailReviewRow) => RailSourceReview | null;
+  onReviewSource?: (row: RailReviewRow) => void;
+  focusRequest?: { occurrenceId: string | null; nonce: number } | null;
+  /** "Estimate updated" (after a durable Save/Delete) or the calm stale-source message. */
+  reviewNotice?: string | null;
+  /** Pass D.1 — forwarded to the timeline so its event detail stays clear of the dock. */
+  detailMaxHeight?: number;
+  onDetailFrame?: (frame: { y: number; height: number }) => void;
+  /** Pass D.5 — the same compact inline balances control the payday card shows. */
+  balancesSelector?: React.ReactNode;
+  /** Pass D.5 — the explanation sheet returns assistive focus to this action. */
+  whyActionRef?: React.Ref<View>;
 }) {
   const { colors, semantic } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
@@ -110,28 +133,17 @@ export function ScenarioPositionCard({
         dateText: { ...typeStyle('titleSection', locale), color: semantic.textPrimary, flexShrink: 1 },
         changeDateButton: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, minHeight: designLayout.touchTargetMin, paddingHorizontal: designSpacing.sm },
         changeDateText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
-        // The subordinate cash-flow status: text + icon, never colour alone.
-        // Healthy is neutral (secondary text, Ocean Blue icon) — never green;
-        // a possible shortfall uses the caution (yellow) tone.
-        statusRow: { flexDirection: 'row', alignItems: 'flex-start', gap: designSpacing.xs, marginTop: designSpacing.md },
-        statusText: { ...typeStyle('support', locale), color: semantic.textSecondary, flexShrink: 1 },
-        statusCaution: { color: semantic.warning },
-        deficit: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: designSpacing.xs },
         provenance: { ...typeStyle('meta', locale), color: semantic.textTertiary, marginTop: designSpacing.sm },
-        upcomingLink: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, minHeight: designLayout.touchTargetMin, alignSelf: 'flex-start', marginTop: designSpacing.xs },
-        footerRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: designSpacing.md,
-          marginTop: designSpacing.md,
-          paddingTop: designSpacing.md,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: semantic.border,
-          flexWrap: 'wrap',
-        },
+        // Pass D.2 — the quiet tertiary foot of the card: the one-tap route back to
+        // Available until payday, then the single provenance line. It never competes
+        // with the two grouped information actions above it.
+        tertiary: { marginTop: designSpacing.sm },
+        backLink: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, alignSelf: 'flex-start', minHeight: designLayout.touchTargetMin, minWidth: designLayout.touchTargetMin },
+        backLinkText: { ...typeStyle('support', locale), color: semantic.interactive },
+        footProvenance: { ...typeStyle('meta', locale), color: semantic.textTertiary },
         action: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, minHeight: designLayout.touchTargetMin },
         actionText: { ...typeStyle('labelButton', locale), color: semantic.interactive },
+        reviewNotice: { ...typeStyle('meta', locale), color: semantic.textSecondary, marginTop: designSpacing.sm },
         unavailableBody: { ...typeStyle('support', locale), color: semantic.textSecondary, marginTop: designSpacing.md },
       }),
     [colors, semantic, locale]
@@ -139,6 +151,21 @@ export function ScenarioPositionCard({
 
   const guidePresentation = useMemo(() => (guide ? selectDailyGuidePresentation(guide) : null), [guide]);
   // Pass C.3 — the drawable forecast, mapped (never computed) from the Pass B
+  // Pass D — the sources the engine itself named as the cause of an unavailable estimate.
+  const correctionRows: RailReviewRow[] = useMemo(() => {
+    if (result.available) return [];
+    const seen = new Set<string>();
+    const rows: RailReviewRow[] = [];
+    for (const issue of result.issues) {
+      if (!issue.sourceKind || !issue.sourceId) continue;
+      const key = `${issue.sourceKind}:${issue.sourceId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ occurrenceId: '', sourceId: issue.sourceId, sourceKind: issue.sourceKind, dateLabel: '' });
+    }
+    return rows;
+  }, [result]);
+
   // result and the canonical events. Null when the estimate is unavailable.
   const balancePath = useMemo(() => (result.available && events ? buildBalancePath(result, events, { cycleStart }) : null), [result, events, cycleStart]);
 
@@ -154,6 +181,7 @@ export function ScenarioPositionCard({
       caption: 'Before everyday spending',
       tone: (result.targetCents < 0 ? 'warning' : 'default') as 'warning' | 'default',
       testID: 'money-scenario-amount',
+      footer: balancesSelector,
     };
     const right = guidePresentation
       ? {
@@ -166,9 +194,36 @@ export function ScenarioPositionCard({
         }
       : null;
     return { left, right };
-  }, [result, guidePresentation]);
+  }, [result, guidePresentation, balancesSelector]);
 
-  const caution = presentation.cashFlowTone === 'caution';
+  // Pass D.2 — the two grouped information actions. Same handlers, same destinations
+  // as before (Pass D.3: the events row names its unfiltered destination truthfully).
+  const actions: CardAction[] = useMemo(() => {
+    if (!result.available) return [];
+    const list: CardAction[] = [];
+    if (onViewUpcomingEvents) {
+      list.push({
+        key: 'events',
+        icon: 'calendar-number-outline',
+        title: VIEW_UPCOMING_EVENTS_TITLE,
+        subtitle: VIEW_UPCOMING_EVENTS_SUBTITLE,
+        hint: 'Scrolls to the full list of scheduled bills, income and repayments',
+        onPress: onViewUpcomingEvents,
+        testID: 'money-view-upcoming-events',
+      });
+    }
+    list.push({
+      key: 'why',
+      icon: 'calculator-outline',
+      title: WHY_THIS_AMOUNT_TITLE,
+      subtitle: WHY_THIS_AMOUNT_SUBTITLE,
+      hint: 'Opens the breakdown, assumptions and limits behind this estimate',
+      onPress: onWhyThisAmount,
+      testID: 'money-why-this-amount',
+      controlRef: whyActionRef,
+    });
+    return list;
+  }, [result, onViewUpcomingEvents, onWhyThisAmount, whyActionRef]);
   const hasEvents = balancePath ? balancePath.eventCounts.income + balancePath.eventCounts.outgoing > 0 : false;
 
   return (
@@ -216,7 +271,7 @@ export function ScenarioPositionCard({
             <>
               {/* Pass C.5 — ONE extended time rail in the Pay cycle progress
                   language ("Timeline to 30 Oct"); the monetary graph is retired. */}
-              <FutureTimelineRail path={balancePath} testID="money-scenario-timeline" />
+              <FutureTimelineRail path={balancePath} testID="money-scenario-timeline" resolveReview={resolveReview} onReviewSource={onReviewSource} focusRequest={focusRequest} detailMaxHeight={detailMaxHeight} onDetailFrame={onDetailFrame} />
               {hasEvents ? (
                 <TimelineLegend mode="scenario" hasShortfall={result.available && result.firstShortfall !== null} showNote={false} />
               ) : (
@@ -235,70 +290,65 @@ export function ScenarioPositionCard({
             </>
           ) : null}
 
-          {/* Pass C.3 — the existing shortfall / lowest-position status, BELOW the chart. */}
-          {presentation.cashFlowLine ? (
-            <View style={styles.statusRow} testID="money-scenario-cashflow-row">
-              <Ionicons
-                name={caution ? 'alert-circle' : 'checkmark-circle-outline'}
-                size={16}
-                color={caution ? semantic.warning : semantic.interactive}
-                importantForAccessibility="no"
-                accessibilityElementsHidden
-                testID={caution ? 'money-scenario-cashflow-icon-caution' : 'money-scenario-cashflow-icon-neutral'}
-              />
-              <Text
-                style={[styles.statusText, caution ? styles.statusCaution : null]}
-                accessibilityLabel={`Cash-flow status: ${presentation.cashFlowLine}`}
-                maxFontSizeMultiplier={2}
-                testID="money-scenario-cashflow"
-              >
-                {presentation.cashFlowLine}
-              </Text>
-            </View>
-          ) : null}
-          {presentation.deficitLine ? (
-            <Text style={styles.deficit} maxFontSizeMultiplier={2} testID="money-scenario-deficit">
-              {presentation.deficitLine}
-            </Text>
-          ) : null}
-
-          {onViewUpcomingEvents ? (
-            <TouchableOpacity
-              style={styles.upcomingLink}
-              onPress={onViewUpcomingEvents}
-              accessibilityRole="button"
-              accessibilityLabel="View upcoming events"
-              accessibilityHint="Scrolls to the full list of scheduled bills, income and repayments"
-              testID="money-view-upcoming-events"
-            >
-              <Ionicons name="calendar-number-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
-              <Text style={styles.actionText}>View upcoming events</Text>
-              <Ionicons name="chevron-forward" size={16} color={semantic.interactive} importantForAccessibility="no" />
-            </TouchableOpacity>
-          ) : null}
-
-          {presentation.subtext ? (
-            <Text style={styles.provenance} maxFontSizeMultiplier={2} testID="money-scenario-provenance">
-              {presentation.subtext}
-            </Text>
-          ) : null}
+          {/* Pass D.2 — ONE contained status surface (the existing Pass B status; the
+              final-deficit explanation is its supporting line), then ONE grouped
+              action surface. Order for assistive technology: result, timeline,
+              legend, status, actions, tertiary. */}
+          {presentation.cashFlowStatus ? <CashPathStatus status={presentation.cashFlowStatus} /> : null}
+          <CardActionGroup actions={actions} testID="money-scenario-actions" />
         </>
       ) : (
-        <Text style={styles.unavailableBody} testID="money-scenario-unavailable">
-          {presentation.subtext ?? "This estimate isn't available right now."}
-        </Text>
+        <>
+          <Text style={styles.unavailableBody} testID="money-scenario-unavailable">
+            {presentation.subtext ?? "This estimate isn't available right now."}
+          </Text>
+          {/* Pass D.5 — reachable even when no estimate can be shown. */}
+          {balancesSelector}
+          {/* Pass D — data-gap correction. ONLY sources the authoritative engine itself
+              identified (a stable id on the issue) are offered; nothing is inferred, and
+              the estimate returns only if the engine then considers the inputs valid. */}
+          {correctionRows.map((row) => {
+            const review = resolveReview ? resolveReview(row) : null;
+            if (!review || !onReviewSource) return null;
+            return (
+              <TouchableOpacity
+                key={`${row.sourceKind}:${row.sourceId}`}
+                style={styles.action}
+                onPress={() => onReviewSource(row)}
+                accessibilityRole="button"
+                accessibilityLabel={review.accessibilityLabel}
+                accessibilityHint={review.hint}
+                testID={`money-scenario-correct-${row.sourceId}`}
+              >
+                <Ionicons name="create-outline" size={16} color={semantic.interactive} importantForAccessibility="no" />
+                <Text style={styles.actionText}>{review.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </>
       )}
+      {reviewNotice ? (
+        <Text style={styles.reviewNotice} testID="money-scenario-review-notice">
+          {reviewNotice}
+        </Text>
+      ) : null}
 
-      <View style={styles.footerRow}>
-        <TouchableOpacity style={styles.action} onPress={onBackToPayday} accessibilityRole="button" accessibilityLabel="Back to payday" testID="money-back-to-payday">
-          <Ionicons name="arrow-back" size={16} color={semantic.interactive} importantForAccessibility="no" />
-          <Text style={styles.actionText}>Back to payday</Text>
+      <View style={styles.tertiary} testID="money-scenario-tertiary">
+        <TouchableOpacity
+          style={styles.backLink}
+          onPress={onBackToPayday}
+          accessibilityRole="button"
+          accessibilityLabel="Back to payday"
+          accessibilityHint="Returns to Available until payday. Nothing is saved."
+          testID="money-back-to-payday"
+        >
+          <Ionicons name="arrow-back" size={14} color={semantic.interactive} importantForAccessibility="no" />
+          <Text style={styles.backLinkText} maxFontSizeMultiplier={2}>Back to payday</Text>
         </TouchableOpacity>
-        {available ? (
-          <TouchableOpacity style={styles.action} onPress={onWhyThisAmount} accessibilityRole="button" accessibilityLabel="Why this amount?" testID="money-why-this-amount">
-            <Text style={styles.actionText}>Why this amount?</Text>
-            <Ionicons name="chevron-forward" size={16} color={semantic.interactive} importantForAccessibility="no" />
-          </TouchableOpacity>
+        {available && presentation.subtext ? (
+          <Text style={styles.footProvenance} maxFontSizeMultiplier={2} testID="money-scenario-provenance">
+            {presentation.subtext}
+          </Text>
         ) : null}
       </View>
     </LinearGradient>

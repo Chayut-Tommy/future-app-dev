@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
@@ -11,11 +10,24 @@ import { computeDailyGuide } from '../../lib/calculations/dailyGuide';
 import {
   DAILY_GUIDE_ACCESSIBLE_EXPLANATION,
   fmtShortDate,
+  selectDailyGuideCalculation,
   selectDailyGuidePresentation,
   selectLookAheadPresentation,
 } from '../../lib/calculations/lookAheadPresentation';
+import { WHY_THIS_AMOUNT_TITLE } from '../../lib/calculations/moneyComposition';
+import {
+  EXPLANATION_PROVENANCE,
+  ExplanationNote,
+  ExplanationNotice,
+  ExplanationProvenance,
+  ExplanationRow,
+  ExplanationSection,
+  ExplanationStatement,
+  ExplanationSubtitle,
+  ExplanationSummary,
+} from './ExplanationSheetSections';
 import { formatCentsCentsAware } from '../../lib/calculations/money';
-import { typeStyle, textStyle } from '../../theme/textStyle';
+import { typeStyle } from '../../theme/textStyle';
 import type { AppLocale } from '../../theme/typography';
 import i18n from '../../i18n';
 
@@ -55,7 +67,9 @@ export function LookAheadSheet({
   data,
   asOf,
   target,
+  timelineCycleStart = null,
   onClose,
+  onDismissed,
 }: {
   visible: boolean;
   data: AppData;
@@ -63,12 +77,16 @@ export function LookAheadSheet({
   asOf: LocalDate | null;
   /** The selected target date the card is currently showing. */
   target: LocalDate | null;
+  /** Pass D.2 — the timeline's left end when it is the (estimated) pay-cycle start.
+   * Display only: it explains the endpoint; it never enters any calculation. */
+  timelineCycleStart?: LocalDate | null;
   onClose: () => void;
+  /** Pass D.5 — fired ONCE after dismissal completes, so the opener can return
+   * assistive focus to the "Why this amount?" action that invoked it. */
+  onDismissed?: () => void;
 }) {
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing } = useTheme();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
-  const [breakdownOpen, setBreakdownOpen] = useState(false);
-  const [assumptionsOpen, setAssumptionsOpen] = useState(false);
 
   const result: LookAheadResult | null = useMemo(
     () => (asOf && target ? computeLookAheadProjection(data, asOf, target) : null),
@@ -77,194 +95,194 @@ export function LookAheadSheet({
   const presentation = useMemo(() => (result ? selectLookAheadPresentation(result) : null), [result]);
   const guide = useMemo(() => (asOf && target && result && result.available ? computeDailyGuide(data, asOf, target, result) : null), [data, asOf, target, result]);
   const guidePresentation = useMemo(() => (guide ? selectDailyGuidePresentation(guide) : null), [guide]);
+  // Pass D.4 — the guide's own limiting arithmetic, structured by the accepted owner.
+  const guideCalculation = useMemo(() => (guide ? selectDailyGuideCalculation(guide) : null), [guide]);
+  const subtitle = presentation?.targetDateLabel ? `By ${presentation.targetDateLabel}` : 'Selected date';
+
+  // Pass D.4 — the sheet's own remaining styles: the shared explanation primitives
+  // (ExplanationSheetSections) now own every other role in this sheet.
+
+  // RN calls the native Modal's onDismiss on iOS only; on every other platform the
+  // hide IS the completion. The opener's focus-return callback is idempotent, so this
+  // can never move focus twice. No timer is involved.
+  const wasVisible = useRef(false);
+  useEffect(() => {
+    if (visible) {
+      wasVisible.current = true;
+      return;
+    }
+    if (!wasVisible.current) return;
+    wasVisible.current = false;
+    if (Platform.OS !== 'ios') onDismissed?.();
+  }, [visible, onDismissed]);
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        // §6 — every role resolves through the Design 5.1 typography authority
-        // (typeStyle/textStyle → fontFamilyForWeight), so bold weights come
-        // from the real bundled faces, never a synthetic fontWeight.
-        resultLabel: { ...typeStyle('support', locale), color: colors.textSecondary },
-        resultAmount: { ...textStyle('figureLarge', locale).style, color: colors.textPrimary, marginTop: 2, marginBottom: spacing.xs },
-        cashFlow: { ...typeStyle('support', locale), color: colors.textPrimary, marginBottom: spacing.xs },
-        deficit: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.md },
-        sectionCard: { backgroundColor: colors.surfaceMuted, borderRadius: radius.control, padding: spacing.md, marginBottom: spacing.sm },
-        disclosureHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 },
-        disclosureTitle: { ...typeStyle('titleCard', locale), color: colors.textPrimary, flexShrink: 1 },
-        breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: spacing.sm, gap: spacing.md },
-        breakdownLabel: { ...typeStyle('support', locale), color: colors.textSecondary, flex: 1 },
-        breakdownValue: { ...typeStyle('figureRow', locale), color: colors.textPrimary, flexShrink: 0 },
-        breakdownTotalLabel: { ...typeStyle('titleCard', locale), color: colors.textPrimary, flex: 1 },
-        breakdownTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: spacing.md, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderStrong },
-        info: { ...typeStyle('meta', locale), color: colors.textSecondary, marginBottom: spacing.xs },
-        assumed: { ...typeStyle('meta', locale), color: colors.textMuted, marginTop: spacing.sm },
-        guideRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: spacing.md, marginTop: spacing.sm },
-        guideValue: { ...typeStyle('figureRow', locale), color: colors.textPrimary, flexShrink: 0 },
-        guideCaption: { ...typeStyle('support', locale), color: colors.textSecondary, flex: 1 },
-        guideLine: { ...typeStyle('support', locale), color: colors.textPrimary, marginTop: spacing.sm },
-        guideReason: { ...typeStyle('support', locale), color: colors.textSecondary, marginTop: spacing.sm },
-        disclosure: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: spacing.xs },
         unavailableTitle: { ...typeStyle('titleCard', locale), color: colors.textPrimary, marginBottom: spacing.xs },
         unavailableBody: { ...typeStyle('support', locale), color: colors.textSecondary, marginBottom: spacing.sm },
         issueRow: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: 2 },
       }),
-    [colors, radius, spacing, locale]
+    [colors, spacing, locale]
   );
 
   const footer = <Button label="Close" variant="secondary" onPress={onClose} />;
 
-  /** Shared accordion header — 44pt, expanded state exposed, same pattern for both sections. */
-  const renderHeader = (title: string, open: boolean, onToggle: () => void, label: string, testID: string) => (
-    <TouchableOpacity style={styles.disclosureHeader} onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={label} testID={testID}>
-      <Text style={styles.disclosureTitle} maxFontSizeMultiplier={2}>
-        {title}
-      </Text>
-      <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} importantForAccessibility="no" />
-    </TouchableOpacity>
-  );
-
+  /** Pass D.4 — the balance ledger, visible by default (no accordion). */
   const renderBreakdown = (r: Extract<LookAheadResult, { available: true }>) => {
     const b = r.breakdown;
+    // The frame of the calculation is always shown. A commitment CATEGORY is omitted
+    // only when the authoritative breakdown reports it as exactly zero — which an
+    // available result guarantees is a genuine zero, never missing or invalid data
+    // (an invalid input makes the whole result unavailable, with no ledger at all).
     const rows: [string, number][] = [
       ['Starting included money', b.openingCents],
       ['Assumed income through your selected date', b.assumedIncomeCents],
-      ['Bills and commitments', b.billsCents],
-      ['Credit-card repayments', b.cardCents],
-      ['BNPL repayments', b.bnplCents],
-      ['Mortgage repayments', b.mortgageCents],
-      ['Other loan repayments', b.otherLoanCents],
+      ...([
+        ['Bills and commitments', b.billsCents],
+        ['Credit-card repayments', b.cardCents],
+        ['BNPL repayments', b.bnplCents],
+        ['Mortgage repayments', b.mortgageCents],
+        ['Other loan repayments', b.otherLoanCents],
+      ] as [string, number][]).filter(([, cents]) => cents !== 0),
     ];
     return (
-      <View style={styles.sectionCard} testID="look-ahead-breakdown">
-        {renderHeader('Estimated balance', breakdownOpen, () => setBreakdownOpen((v) => !v), 'Estimated balance — how this was estimated', 'look-ahead-breakdown-toggle')}
-        {breakdownOpen ? (
-          <View>
-            {rows.map(([label, cents]) => (
-              <View key={label} style={styles.breakdownRow}>
-                <Text style={styles.breakdownLabel} maxFontSizeMultiplier={2}>
-                  {label}
-                </Text>
-                <Text style={styles.breakdownValue} maxFontSizeMultiplier={2}>
-                  {fmtCents(cents)}
-                </Text>
-              </View>
-            ))}
-            <View style={styles.breakdownTotalRow}>
-              <Text style={styles.breakdownTotalLabel} maxFontSizeMultiplier={2}>
-                Estimated balance
-              </Text>
-              <Text style={styles.breakdownValue} maxFontSizeMultiplier={2}>
-                {fmtCents(b.targetCents)}
-              </Text>
-            </View>
-            <Text style={styles.assumed} testID="look-ahead-not-yet-deducted">
-              Future everyday spending isn’t deducted yet — this is the balance before it.
-            </Text>
-            {presentation?.assumedLine ? (
-              <Text style={styles.assumed} testID="look-ahead-assumed">
-                {presentation.assumedLine}. Future income is assumed, not received.
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-      </View>
+      <ExplanationSection title="Balance breakdown" testID="look-ahead-breakdown">
+        {rows.map(([label, cents]) => (
+          <ExplanationRow key={label} label={label} value={fmtCents(cents)} />
+        ))}
+        <ExplanationRow total label="Estimated balance" value={fmtCents(b.targetCents)} testID="look-ahead-breakdown-total" />
+        <ExplanationNote text="Future everyday spending isn’t deducted yet — this is the balance before it." testID="look-ahead-not-yet-deducted" />
+        {presentation?.assumedLine ? <ExplanationNote text={`${presentation.assumedLine}. Future income is assumed, not received, and timing may vary.`} testID="look-ahead-assumed" /> : null}
+      </ExplanationSection>
     );
   };
 
+  /** The guide's ACTUAL binding arithmetic — never the target balance ÷ the horizon. */
   const renderDailyGuide = () => {
     if (!guide || !guidePresentation) return null;
     const concise = guide.status === 'available' || guide.status === 'zero';
     return (
-      <View style={styles.sectionCard} testID="look-ahead-daily-guide">
-        <Text style={styles.disclosureTitle} accessibilityRole="header" maxFontSizeMultiplier={2}>
-          About per day
-        </Text>
-        <View style={styles.guideRow}>
-          <Text style={styles.guideCaption} testID="look-ahead-daily-caption" maxFontSizeMultiplier={2}>
-            {guidePresentation.caption}
-          </Text>
-          <Text style={styles.guideValue} testID="look-ahead-daily-amount" accessibilityLabel={guidePresentation.accessibilityLabel} maxFontSizeMultiplier={2}>
-            {guidePresentation.value}
-          </Text>
-        </View>
-        {concise ? (
+      <ExplanationSection title="Your daily guide" testID="look-ahead-daily-guide">
+        {guideCalculation ? (
           <>
-            <Text style={styles.guideLine} testID="look-ahead-daily-coverage" maxFontSizeMultiplier={2}>
-              {guidePresentation.coverageLine}
-            </Text>
-            {guidePresentation.protectedLine ? (
-              <Text style={styles.guideLine} testID="look-ahead-daily-protected" maxFontSizeMultiplier={2}>
-                {guidePresentation.protectedLine}
-              </Text>
-            ) : null}
-            {/* Pass C.3 — the ACTUAL binding reason, from the engine's limiting
-                metadata (position ÷ days counted), never target ÷ days. */}
-            {guidePresentation.limitingLine ? (
-              <Text style={styles.guideLine} testID="look-ahead-daily-limiting" maxFontSizeMultiplier={2}>
-                {guidePresentation.limitingLine}
-              </Text>
-            ) : null}
+            <ExplanationNote text={`Tightest spending point · ${guideCalculation.limitingDateLabel}`} testID="look-ahead-daily-limiting-date" />
+            <ExplanationStatement text={guideCalculation.equation} testID="look-ahead-daily-limiting" />
+            {guideCalculation.roundingNote ? <ExplanationNote text={guideCalculation.roundingNote} testID="look-ahead-daily-rounding" /> : null}
           </>
         ) : (
-          <Text style={styles.guideReason} testID="look-ahead-daily-explanation" maxFontSizeMultiplier={2}>
-            {guidePresentation.explanation}
-          </Text>
+          <ExplanationStatement text={guidePresentation.caption} testID="look-ahead-daily-unavailable" />
         )}
-      </View>
+        {concise ? (
+          <>
+            {guidePresentation.protectedLine ? <ExplanationNote text={guidePresentation.protectedLine} testID="look-ahead-daily-protected" /> : null}
+            <ExplanationNote text={guidePresentation.coverageLine} testID="look-ahead-daily-coverage" />
+          </>
+        ) : (
+          <ExplanationNote text={guidePresentation.explanation} testID="look-ahead-daily-explanation" />
+        )}
+      </ExplanationSection>
     );
   };
 
+  /** Excluded savings and the informational plan — kept distinct, amounts only when authoritative. */
+  const renderOutside = (r: Extract<LookAheadResult, { available: true }>) => {
+    const accts = r.protectedSavings.accounts;
+    const summedCents = accts.reduce((sum, a) => sum + Math.round(a.value * 100), 0);
+    // §5 — the excluded amount is shown only when it reconciles EXACTLY to the
+    // current balances of identifiable excluded savings accounts. It is omitted
+    // from the opening amount exactly once, never subtracted from the projection.
+    const traceable = accts.length > 0 && summedCents === r.protectedSavings.cents;
+    const hasExcluded = r.protectedSavings.cents > 0;
+    const plannedCents = r.informationalPlan.combinedCents;
+    const hasPlanned = plannedCents !== null && plannedCents > 0;
+    // Pass D.5 — when the plan cannot be computed at all we still say that planned
+    // savings and goals sit outside this estimate (the user may have one we cannot
+    // see). When it computes to nothing, there is nothing to disclose.
+    const plannedUnknown = plannedCents === null;
+    if (!hasExcluded && !hasPlanned && !plannedUnknown) return null;
+    return (
+      <ExplanationSection title="Outside this estimate" testID="look-ahead-protected">
+        {hasExcluded ? (
+          traceable ? (
+            <>
+              <ExplanationRow label="Excluded savings" value={formatCentsCentsAware(r.protectedSavings.cents)} testID="look-ahead-excluded-amount" />
+              {accts.map((a) => (
+                <ExplanationRow key={a.id} indent label={a.label} value={formatCentsCentsAware(Math.round(a.value * 100))} testID={`look-ahead-excluded-account-${a.id}`} />
+              ))}
+              <ExplanationNote
+                testID="look-ahead-excluded-savings"
+                text={`${formatCentsCentsAware(r.protectedSavings.cents)} across ${accts.length} savings account${accts.length === 1 ? '' : 's'} isn’t counted in the ${formatCentsCentsAware(r.breakdown.openingCents)} starting amount.`}
+              />
+              <ExplanationNote text="Only balances included in your spendable money are used, and this money is never deducted again." />
+            </>
+          ) : (
+            <ExplanationNote text="Some savings balances aren’t counted in this estimate." testID="look-ahead-excluded-savings-untraceable" />
+          )
+        ) : null}
+        {plannedUnknown ? (
+          <ExplanationNote
+            testID="look-ahead-savings"
+            text="Planned savings and goals are shown for information only — they may not have moved yet, and they are not subtracted from this estimated balance."
+          />
+        ) : null}
+        {hasPlanned ? (
+          <>
+            <ExplanationRow label="Planned savings & goals" value={formatCentsCentsAware(plannedCents as number)} testID="look-ahead-planned" />
+            {/* Pass D.5 — the ONE savings/goals statement, beside the amount it describes
+                (it used to be repeated as an assumption bullet as well). */}
+            <ExplanationNote
+              testID="look-ahead-savings"
+              text={`That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance.`}
+            />
+          </>
+        ) : null}
+      </ExplanationSection>
+    );
+  };
+
+  /** Every material assumption, visible in the same scroll (no collapsed section). */
   const renderAssumptions = (r: Extract<LookAheadResult, { available: true }>) => {
+    // Pass D.5 — every line here is something NO other section of this sheet already
+    // states. The guide's own method, the assumed-income caveat, the informational
+    // plan, the excluded savings and the estimate disclaimer each now have exactly one
+    // home (the daily-guide section, the ledger note, "Outside this estimate" and the
+    // closing provenance), so they are no longer repeated as bullets.
     const lines: { key: string; text: string }[] = [];
     let n = 0;
     const push = (text: string, key?: string) => lines.push({ key: key ?? `look-ahead-daily-disclosure-${n++}`, text });
     if (guide && guidePresentation && (guide.status === 'available' || guide.status === 'zero')) {
-      push(guidePresentation.explanation);
       push(DAILY_GUIDE_ACCESSIBLE_EXPLANATION);
     }
     if (guide?.guardPayday) {
-      push(`Your next payday after ${fmtShortDate(guide.target)} is assumed to be ${fmtShortDate(guide.guardPayday)}. Income on that payday isn’t counted in the guide.`);
+      push(`Income on your ${fmtShortDate(guide.guardPayday)} payday isn’t counted in the guide.`);
     } else if (guide && guide.status === 'missing_guard_payday') {
       push(guide.reason);
     }
-    push('Scheduled income before your selected date is assumed, not received, and timing may vary.');
-    // Pass C.3 — ONE concise savings/goals statement: the plan is informational,
-    // that money has not necessarily moved, and it is not subtracted from the
-    // estimated balance. Stated once, never repeated.
-    push(
-      r.informationalPlan.combinedCents !== null && r.informationalPlan.combinedCents > 0
-        ? `You also plan to set aside about ${formatCentsCentsAware(r.informationalPlan.combinedCents)} for savings and goals. That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance.`
-        : 'Planned savings and goals are shown for information only — they may not have moved yet, and they are not subtracted from this estimated balance.',
-      'look-ahead-savings'
-    );
-    push('Savings not included in your spendable money stay outside the starting amount.');
+    if (timelineCycleStart) {
+      push(`The timeline starts at your estimated cycle start, ${fmtShortDate(timelineCycleStart)} — worked back from your main payday, not a recorded date.`, 'look-ahead-cycle-start');
+    }
     push('Following the guide changes your estimated balance — it’s spending, not extra money.');
     // Pass C.3 — the approved same-day contract (one end-of-day net batch per
     // local date; no intraday ordering is invented), stated precisely.
     push('Events on the same day are counted together at the end of that day, so the lowest balance shown is an end-of-day balance.');
-    push('The Estimated balance path and its markers show dated events only; planned savings and goals aren’t shown on it.');
-    push('This is a planning estimate, not a guarantee.');
-    if (presentation?.subtext) push(`${presentation.subtext}.`);
+    push('The timeline and its markers show dated events only; planned savings and goals aren’t shown on it.');
     return (
-      <View style={styles.sectionCard} testID="look-ahead-assumptions">
-        {renderHeader('Assumptions and limits', assumptionsOpen, () => setAssumptionsOpen((v) => !v), 'Assumptions and limits', 'look-ahead-assumptions-toggle')}
-        {assumptionsOpen ? (
-          <View testID="look-ahead-assumptions-body">
-            {r.informationalPlan.notice ? <Text style={styles.info}>{r.informationalPlan.notice}</Text> : null}
-            {lines.map((line) => (
-              <Text key={line.key} style={styles.disclosure} testID={line.key} maxFontSizeMultiplier={2}>
-                • {line.text}
-              </Text>
-            ))}
-          </View>
-        ) : null}
-      </View>
+      <ExplanationSection title="What this means" testID="look-ahead-assumptions">
+        <View testID="look-ahead-assumptions-body">
+          {r.informationalPlan.notice ? <ExplanationNote text={r.informationalPlan.notice} /> : null}
+          {lines.map((line) => (
+            <ExplanationNote key={line.key} bullet text={line.text} testID={line.key} />
+          ))}
+        </View>
+      </ExplanationSection>
     );
   };
 
   const renderBody = () => {
     if (!result || !presentation) return null;
     if (!result.available) {
+      // Fail closed: no summary figure, no $0 standing in for an unknown amount.
       return (
         <View testID="look-ahead-unavailable">
           <Text style={styles.unavailableTitle} accessibilityRole="header">
@@ -276,86 +294,68 @@ export function LookAheadSheet({
               {iss.reason}
             </Text>
           ))}
+          <ExplanationProvenance text={EXPLANATION_PROVENANCE} testID="look-ahead-provenance" />
         </View>
       );
     }
+    const caution = presentation.cashFlowStatus?.tone === 'caution';
     return (
       <View testID="look-ahead-result">
-        <View>
-          <Text style={styles.resultLabel} maxFontSizeMultiplier={2}>
-            {presentation.headline}
-          </Text>
-          <Text style={styles.resultAmount} testID="look-ahead-amount">
-            {presentation.headlineAmount}
-          </Text>
-        </View>
-        {presentation.cashFlowLine ? (
-          <Text style={styles.cashFlow} testID="look-ahead-cashflow" maxFontSizeMultiplier={2}>
-            {presentation.cashFlowLine}
-          </Text>
+        <ExplanationSummary
+          left={{
+            label: 'Estimated balance',
+            value: presentation.headlineAmount ?? '',
+            spokenValue: presentation.headlineAmountSpoken,
+            tone: presentation.state === 'below_zero' ? 'warning' : 'default',
+            testID: 'look-ahead-amount',
+            figureTestID: 'look-ahead-amount-figure',
+          }}
+          right={
+            guidePresentation
+              ? {
+                  label: 'About per day',
+                  value: guidePresentation.value,
+                  caption: guidePresentation.caption,
+                  tone: guidePresentation.tone === 'muted' ? 'muted' : 'default',
+                  testID: 'look-ahead-daily-amount',
+                  captionTestID: 'look-ahead-daily-caption',
+                }
+              : null
+          }
+          caption="Before everyday spending."
+          testID="look-ahead-summary"
+        />
+        {/* The active warning stays beside the result — never moved into a footer. */}
+        {caution && presentation.cashFlowStatus ? (
+          <ExplanationNotice text={presentation.cashFlowStatus.title} detail={presentation.cashFlowStatus.detail} testID="look-ahead-cashflow" detailTestID={presentation.cashFlowStatus.detailIsDeficit ? 'look-ahead-deficit' : undefined} />
+        ) : presentation.cashFlowLine ? (
+          <ExplanationNote text={presentation.cashFlowLine} testID="look-ahead-cashflow" />
         ) : null}
-        {presentation.deficitLine ? (
-          <Text style={styles.deficit} testID="look-ahead-deficit" maxFontSizeMultiplier={2}>
-            {presentation.deficitLine}
-          </Text>
-        ) : null}
+        {presentation.deficitLine && !presentation.cashFlowStatus?.detailIsDeficit ? <ExplanationNote text={presentation.deficitLine} testID="look-ahead-deficit" /> : null}
         {renderBreakdown(result)}
         {renderDailyGuide()}
-        {presentation.protectedLine
-          ? (() => {
-              // §5 — the excluded amount is only shown when it reconciles
-              // EXACTLY to the current balances of identifiable excluded
-              // savings accounts (savings-type, not opted into spendable
-              // money). It is omitted from the opening amount exactly once,
-              // never subtracted from the projection. If it cannot be traced
-              // to those account balances, we fail closed and show no figure.
-              const accts = result.protectedSavings.accounts;
-              const summedCents = accts.reduce((sum, a) => sum + Math.round(a.value * 100), 0);
-              const traceable = accts.length > 0 && summedCents === result.protectedSavings.cents;
-              const n = accts.length;
-              return (
-                <View style={styles.sectionCard} testID="look-ahead-protected">
-                  <Text style={styles.disclosureTitle} maxFontSizeMultiplier={2}>
-                    {presentation.protectedLine}
-                  </Text>
-                  {traceable ? (
-                    <>
-                      <Text style={styles.info} testID="look-ahead-excluded-savings" maxFontSizeMultiplier={2}>
-                        {formatCentsCentsAware(result.protectedSavings.cents)} across {n} savings account{n === 1 ? '' : 's'} isn’t counted in the{' '}
-                        {formatCentsCentsAware(result.breakdown.openingCents)} starting amount.
-                      </Text>
-                      <Text style={styles.info} maxFontSizeMultiplier={2}>
-                        Only balances included in your spendable money are used.
-                      </Text>
-                      {/* Pass C.2 closure — a meaningful, accessible account row (name
-                          and balance), not a bare "• Savings" stub. */}
-                      {accts.map((a) => (
-                        <View key={a.id} style={styles.breakdownRow} accessible accessibilityLabel={`${a.label}, ${formatCentsCentsAware(Math.round(a.value * 100))}, not included`} testID={`look-ahead-excluded-account-${a.id}`}>
-                          <Text style={styles.breakdownLabel} maxFontSizeMultiplier={2} importantForAccessibility="no">
-                            {a.label}
-                          </Text>
-                          <Text style={styles.breakdownValue} maxFontSizeMultiplier={2} importantForAccessibility="no">
-                            {formatCentsCentsAware(Math.round(a.value * 100))}
-                          </Text>
-                        </View>
-                      ))}
-                    </>
-                  ) : (
-                    <Text style={styles.info} testID="look-ahead-excluded-savings-untraceable">
-                      Some savings balances aren’t counted in this estimate.
-                    </Text>
-                  )}
-                </View>
-              );
-            })()
-          : null}
+        {/* The lowest scheduled point is a DIFFERENT fact from the guide's binding day. */}
+        <ExplanationSection title="Lowest end-of-day balance" testID="look-ahead-lowest">
+          <ExplanationRow label={`On ${fmtShortDate(result.lowest.date)}`} value={formatCentsCentsAware(result.lowest.cents)} testID="look-ahead-lowest-row" />
+        </ExplanationSection>
+        {renderOutside(result)}
         {renderAssumptions(result)}
+        <ExplanationProvenance text={EXPLANATION_PROVENANCE} testID="look-ahead-provenance" />
       </View>
     );
   };
 
   return (
-    <KeyboardSheet visible={visible} onClose={onClose} title="Why this amount?" isDirty={false} focusTitleOnShow footer={footer}>
+    <KeyboardSheet
+      visible={visible}
+      onClose={onClose}
+      onDismiss={onDismissed}
+      title={WHY_THIS_AMOUNT_TITLE}
+      breadcrumb={<ExplanationSubtitle text={subtitle} testID="look-ahead-subtitle" />}
+      isDirty={false}
+      focusTitleOnShow
+      footer={footer}
+    >
       {renderBody()}
     </KeyboardSheet>
   );

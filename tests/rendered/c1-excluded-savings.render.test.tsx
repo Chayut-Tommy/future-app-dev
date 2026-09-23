@@ -70,7 +70,15 @@ describe('Pass C.1 — excluded-savings provenance & wording', () => {
     expect(line).toHaveTextContent(/\$2,000 across 1 savings account isn.t counted in the \$5,300 starting amount\./);
     expect(screen.getByTestId('look-ahead-excluded-account-house', { includeHiddenElements: true })).toHaveTextContent(/House deposit/);
     // Forbidden claims never appear.
-    expect(screen.queryByText(/protected|kept out|locked|untouchable|moved|reserved|you chose|safe/i)).toBeNull();
+    // Pass D.4 — every disclosure is visible in the one scroll now, including the accepted
+    // C.3 sentence "the money may not have moved yet" (a NEGATION, not a claim). The guard
+    // still forbids every claim-style word anywhere in the sheet.
+    expect(
+      screen
+        .queryAllByText(/protected|kept out|locked|untouchable|moved|reserved|you chose|safe/i)
+        .map((el) => String(el.props.children))
+        .filter((t) => !/may not have moved yet/.test(t))
+    ).toEqual([]);
   }, 30000);
 
   test('plural copy: two excluded savings accounts → "across 2 savings accounts"', async () => {

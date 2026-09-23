@@ -40,6 +40,9 @@ export interface CardResultRegion {
    * is a placeholder ("—") or when the region needs a fuller explanation than
    * "LABEL: VALUE. CAPTION". */
   accessibilityLabel?: string;
+  /** Pass D.5 — a control rendered beneath this region's caption, OUTSIDE the
+   * region's accessibility group so it stays independently focusable. */
+  footer?: React.ReactNode;
 }
 
 export function CardResultRegions({ left, right }: { left: CardResultRegion; right?: CardResultRegion | null }) {
@@ -74,20 +77,19 @@ export function CardResultRegions({ left, right }: { left: CardResultRegion; rig
   );
 
   const renderRegion = (r: CardResultRegion) => (
-    <View
-      style={styles.region}
-      accessible
-      accessibilityLabel={r.accessibilityLabel ?? `${r.label}: ${spokenSignedDisplay(r.value)}. ${r.caption}`}
-    >
-      <Text style={styles.label} importantForAccessibility="no" maxFontSizeMultiplier={2}>
-        {r.label}
-      </Text>
-      <Text style={[styles.value, r.tone === 'warning' ? styles.valueWarning : r.tone === 'muted' ? styles.valueMuted : null]} importantForAccessibility="no" maxFontSizeMultiplier={2} testID={r.testID}>
-        {r.value}
-      </Text>
-      <Text style={styles.caption} importantForAccessibility="no" maxFontSizeMultiplier={2}>
-        {r.caption}
-      </Text>
+    <View style={styles.region}>
+      <View accessible accessibilityLabel={r.accessibilityLabel ?? `${r.label}: ${spokenSignedDisplay(r.value)}. ${r.caption}`}>
+        <Text style={styles.label} importantForAccessibility="no" maxFontSizeMultiplier={2}>
+          {r.label}
+        </Text>
+        <Text style={[styles.value, r.tone === 'warning' ? styles.valueWarning : r.tone === 'muted' ? styles.valueMuted : null]} importantForAccessibility="no" maxFontSizeMultiplier={2} testID={r.testID}>
+          {r.value}
+        </Text>
+        <Text style={styles.caption} importantForAccessibility="no" maxFontSizeMultiplier={2}>
+          {r.caption}
+        </Text>
+      </View>
+      {r.footer}
     </View>
   );
 

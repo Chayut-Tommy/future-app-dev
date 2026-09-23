@@ -21,7 +21,7 @@ import * as path from 'path';
 import { computeSafeToSpend } from '../src/lib/calculations/safeToSpend';
 import { selectSafeToSpendPresentation } from '../src/lib/calculations/safeToSpendPresentation';
 import { computeMoneyHeroCopy } from '../src/lib/calculations/moneyPersona';
-import { resolvePaydayProgress } from '../src/lib/calculations/moneyComposition';
+import { ESTIMATED_CYCLE_START_LABEL, resolvePaydayProgress } from '../src/lib/calculations/moneyComposition';
 import { createEmptyAppData } from '../src/lib/storage';
 import { AppData } from '../src/types/models';
 import { DESIGN_THEME_MATRIX, resolveSemanticColors } from '../src/theme/semanticTokens';
@@ -103,7 +103,10 @@ console.log('\n=== 2. One coherent assembly (Class C) ===');
   assert('2h. and it is hidden from assistive technology, both ways', /accessibilityElementsHidden\s*\n\s*importantForAccessibility="no-hide-descendants"/.test(CODE));
   assert('2i. the hero carries exactly one heading', (CODE.match(/accessibilityRole="header"/g) || []).length === 1);
   assert('2j. the provenance line uses the authoritative measure definition, not new prose', /MONEY_MEASURE_DEFINITIONS\.availableUntilPayday/.test(CODE));
-  assert('2k. Balances used was NOT moved back into the hero', !/IncludedBalancesRow/.test(CODE) && /<IncludedBalancesRow/.test(MONEY));
+  // Pass D.5 (founder-approved) — the balances entry now lives INSIDE the card, beneath
+  // the left-hand amount. It arrives as a node the owning screen supplies, so the hero
+  // still owns no selection model, no inclusion write and no total of its own.
+  assert('2k. Balances used is the ONE inline entry the screen supplies; the hero owns no selection logic', /balancesSelector/.test(CODE) && !/IncludedBalancesRow|updateAssetsIncludeInMoney|summariseIncludedBalances/.test(CODE) && /<InlineBalancesSelector/.test(MONEY));
   assert('2l. and no duplicate Manage Balances link was restored — Money still suppresses it', /showManageBalancesLink=\{false\}/.test(MONEY));
 }
 
@@ -194,7 +197,15 @@ console.log('\n=== 5. Payday context comes from the engine (Class A) ===');
   assert('5a. a known payday yields a real cycle', !p.unknown && p.fraction >= 0 && p.fraction <= 1);
   assert('5b. the remaining days are the engine\'s own', p.daysRemaining === Math.max(0, Math.round(known.sts.daysRemaining)));
   assert('5c. the endpoints are the engine\'s own cycle dates', p.startLabel !== null && p.endLabel !== null);
-  assert('5d. the estimated cycle start is attributed, visibly and exactly once', /Cycle start estimated/.test(BAR) && (BAR.match(/[Cc]ycle start estimated/g) || []).length === 1);
+  // Pass D.2 — the attribution moved from a detached caption onto the START ENDPOINT itself
+  // ("Estimated cycle start"). Still visible, still exactly once, still in words.
+  assert(
+    '5d. the estimated cycle start is attributed, visibly and exactly once — on the endpoint it qualifies',
+    ESTIMATED_CYCLE_START_LABEL === 'Estimated cycle start' &&
+      (BAR.match(/\{ESTIMATED_CYCLE_START_LABEL\}/g) || []).length === 1 &&
+      /progress\.startLabel\}<\/Text>\s*<Text[^>]*>\{ESTIMATED_CYCLE_START_LABEL\}/.test(BAR) &&
+      !/Cycle start estimated/.test(BAR)
+  );
   assert('5d-ii. and the rail names what it measures, so a nearly-full bar cannot read as money spent', /Pay cycle progress/.test(BAR));
   assert('5d-iii. with the day count stated once, not twice', (BAR.match(/days? left|days? to payday/g) || []).length <= 2);
   assert('5e. and spoken', /estimate/i.test(p.spoken) && /accessibilityLabel=\{progress\.spoken\}/.test(BAR));

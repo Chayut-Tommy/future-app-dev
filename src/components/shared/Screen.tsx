@@ -37,6 +37,7 @@ export function Screen({
   ambient,
   largeTitle = false,
   list,
+  onScrollY,
 }: {
   title?: string;
   headerRight?: React.ReactNode;
@@ -64,6 +65,10 @@ export function Screen({
    * same padding, safe-area and bottom-clearance contract and mounting the
    * header as ListHeaderComponent. Omitted by every existing consumer. */
   list?: Omit<FlatListProps<any>, 'contentContainerStyle' | 'ListHeaderComponent'>;
+  /** Pass D.1 — reports the vertical scroll offset, for a screen that must bring one
+   * of its own elements clear of the floating dock. Omitted by every other consumer,
+   * whose scroll view is then exactly as before (no scroll listener at all). */
+  onScrollY?: (y: number) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { colors, semantic, spacing, typography } = useTheme();
@@ -76,6 +81,8 @@ export function Screen({
   // nothing waits for a fade to finish (doc C construction rule).
   const [collapsed, setCollapsed] = useState(false);
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    onScrollY?.(e.nativeEvent.contentOffset.y);
+    if (!largeTitle) return;
     const next = e.nativeEvent.contentOffset.y >= LARGE_TITLE_COLLAPSE_THRESHOLD;
     if (next !== collapsed) setCollapsed(next);
   };
@@ -281,7 +288,7 @@ export function Screen({
       </View>
     ) : null;
 
-  const scrollableProps = largeTitle ? { onScroll, scrollEventThrottle: 16 } : {};
+  const scrollableProps = largeTitle || onScrollY ? { onScroll, scrollEventThrottle: 16 } : {};
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>

@@ -14,7 +14,6 @@ import { ThemeProvider } from '../../src/theme/ThemeContext';
 import { LookAheadSheet } from '../../src/components/money/LookAheadSheet';
 import { createEmptyAppData } from '../../src/lib/storage';
 import { localDate } from '../../src/lib/calculations/localCalendar';
-import { DAILY_GUIDE_EXPLANATION } from '../../src/lib/calculations/lookAheadPresentation';
 import type { AppData, Asset, RecurringItem } from '../../src/types/models';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -57,12 +56,11 @@ describe('Pass C.2 — Why this amount? sections', () => {
     const user = userEvent.setup();
     await render(<Harness data={exampleB()} target={[2026, 9, 6]} />);
     expect(await screen.findByText('Why this amount?')).toBeOnTheScreen();
-    expect(screen.getByText('Estimated balance by 6 Sep 2026')).toBeOnTheScreen();
+    // Pass D.4 — the date moved to the sheet's own subtitle; the summary names the measure.
+    expect(screen.getByTestId('look-ahead-subtitle')).toHaveTextContent('By 6 Sep 2026');
     expect(screen.getByTestId('look-ahead-amount')).toHaveTextContent(/^\$6,000\.00$/);
     expect(screen.getByTestId('look-ahead-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · No dip below your estimated balance before 6 Sep$/);
-    expect(screen.queryByTestId('look-ahead-not-yet-deducted')).toBeNull(); // inside the collapsed calculation
-    await user.press(screen.getByTestId('look-ahead-breakdown-toggle'));
-    expect(await screen.findByText('Starting included money')).toBeOnTheScreen();
+    expect(await screen.findByText('Starting included money')).toBeOnTheScreen(); // visible by default
     expect(screen.getByTestId('look-ahead-not-yet-deducted')).toHaveTextContent(/Future everyday spending isn’t deducted yet/);
     expect(screen.getAllByText('Estimated balance').length).toBeGreaterThanOrEqual(2); // section title + total row
     expect(screen.queryByText('Estimated position')).toBeNull();
@@ -76,24 +74,31 @@ describe('Pass C.2 — Why this amount? sections', () => {
     expect(screen.getByTestId('look-ahead-daily-caption')).toHaveTextContent(/^For the next 2 days$/);
     expect(screen.getByTestId('look-ahead-daily-coverage')).toHaveTextContent(/^This guide covers 4 Sep to 5 Sep, before your 6 Sep target\.$/);
     expect(screen.getByTestId('look-ahead-daily-protected')).toHaveTextContent(/^Keeps \$1,150 for commitments due after 6 Sep through your 10 Sep payday\.$/);
-    await user.press(screen.getByTestId('look-ahead-assumptions-toggle'));
     await screen.findByTestId('look-ahead-assumptions-body');
-    const disclosures = screen.getAllByTestId(/^look-ahead-(daily-disclosure-|savings)/).map((el) => el.props.children.join(''));
-    expect(disclosures.join('\n')).toMatch(DAILY_GUIDE_EXPLANATION);
-    expect(disclosures.join('\n')).toMatch(/next payday after 6 Sep is assumed to be 10 Sep/);
-    expect(disclosures.join('\n')).toMatch(/Income on that payday isn’t counted/);
-    expect(disclosures.join('\n')).toMatch(/assumed, not received/);
-    expect(disclosures.join('\n')).toMatch(/not subtracted/);
-    expect(disclosures.join('\n')).toMatch(/stay outside the starting amount/);
+    const disclosures = screen.getAllByTestId(/^look-ahead-(daily-disclosure-|savings)/).map((el) => String(el.props.children));
+    // D.5 — the guide's method is shown as arithmetic in the visible section, so it is no
+    // longer repeated as prose here: the division spreads the amount across the days before
+    // the target, and the protected line states what is kept back through the next payday.
+    expect(screen.getByTestId('look-ahead-daily-coverage')).toHaveTextContent(/before your .* target/);
+    expect(screen.getByTestId('look-ahead-daily-protected')).toHaveTextContent(/payday/);
+    expect(disclosures.join('\n')).toMatch(/Income on your 10 Sep payday isn’t counted in the guide/);
+    // D.5 — the assumed-income caveat now sits beside the ledger row it qualifies, so it
+    // appears only when there IS assumed income. This fixture has none.
+    expect(screen.queryByTestId('look-ahead-assumed')).toBeNull();
+    // …and the informational-plan statement sits beside its amount, not in the assumptions.
+    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/not subtracted/);
+    // D.5 — excluded savings is stated once, in the section that shows the amount.
+    expect(screen.getByTestId('look-ahead-excluded-savings')).toHaveTextContent(/isn’t counted in the .* starting amount/);
     expect(disclosures.join('\n')).toMatch(/Following the guide changes your estimated balance/);
     expect(disclosures.join('\n')).toMatch(/counted together at the end of that day/);
     expect(disclosures.join('\n')).toMatch(/markers show dated events only/); // C.3 wording
-    expect(disclosures.join('\n')).toMatch(/planning estimate, not a guarantee/);
+    expect(screen.getByTestId('look-ahead-provenance')).toHaveTextContent(/An estimate, not a guarantee/);
     // The assumed-income count lives inside the calculation; none in Example B.
     expect(screen.queryByTestId('look-ahead-assumed')).toBeNull();
     // Excluded-savings provenance is preserved.
     expect(screen.getByTestId('look-ahead-excluded-savings')).toHaveTextContent(/\$3,500 across 1 savings account isn’t counted in the \$6,000 starting amount\./);
-    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/set aside about \$38\.63 for savings and goals\. That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./);
+    expect(screen.getByTestId('look-ahead-planned')).toHaveTextContent('$38.63', { exact: false });
+    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./);
     // Pass C.3 — stated ONCE: no second "not subtracted" sentence anywhere in the assumptions.
     expect(disclosures.join('\n').match(/not subtracted/g)?.length).toBe(1);
     expect(screen.queryByText(FORBIDDEN)).toBeNull();
@@ -103,8 +108,7 @@ describe('Pass C.2 — Why this amount? sections', () => {
     const user = userEvent.setup();
     await render(<Harness data={exampleB()} target={[2026, 9, 12]} />);
     await screen.findByTestId('look-ahead-result');
-    await user.press(screen.getByTestId('look-ahead-breakdown-toggle'));
-    expect(await screen.findByTestId('look-ahead-assumed')).toHaveTextContent(/Includes 1 assumed income payment\. Future income is assumed, not received\./);
+    expect(await screen.findByTestId('look-ahead-assumed')).toHaveTextContent(/Includes 1 assumed income payment\. Future income is assumed, not received, and timing may vary\./);
   }, 30000);
 
   test('missing guard payday: the sheet explains it while the estimate remains', async () => {

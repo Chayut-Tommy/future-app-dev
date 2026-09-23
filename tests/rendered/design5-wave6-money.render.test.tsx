@@ -131,7 +131,7 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
   });
 
   test('1. the payday bar renders from engine dates and carries one complete spoken equivalent', () => {
-    const bar = view.getByTestId('money-payday-bar');
+    const bar = view.getByTestId('money-payday-bar-summary'); // Pass D.3 — the bar's ONE summary element
     const sts = computeSafeToSpend(data, new Date());
 
     const spoken: string = bar.props.accessibilityLabel;
@@ -156,31 +156,37 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
     expect(rail).toContain('Pay cycle progress');
     expect(rail).toContain('left');
     expect(rail).toMatch(/"day"|"days"/);
-    expect(texts).toContain('Cycle start estimated');
+    // Pass D.2 — the estimate is stated on the start endpoint, not as a detached caption.
+    expect(rail).toContain('Estimated cycle start');
+    expect(texts).not.toContain('Cycle start estimated');
   });
 
-  test('2. the included-balances row reflects the engine breakdown and says inclusion does not change net worth', () => {
-    const row = view.getByTestId('money-included-balances-row');
+  // Pass D.5 — the standalone "Balances used" card is retired: the balances entry is
+  // now the ONE inline control beneath the left-hand amount, inside the Money card.
+  test('2. the inline balances selector reflects the engine breakdown and opens the selection journey', () => {
+    const row = view.getByTestId('money-inline-balances');
     const sts = computeSafeToSpend(data, new Date());
 
     expect(row.props.accessibilityRole).toBe('button');
-    expect(row.props.accessibilityHint).toBe('Opens the balances included in your Available Until Payday estimate');
+    expect(row.props.accessibilityHint).toBe('Choose which account balances your money estimates use');
 
-    // Wave 6 correction B — the label leads with the row's own name, states
-    // the summary the way a customer would say it aloud, and names the
-    // action. The support line is rendered separately, immediately below.
+    // The label leads with the row's own name and carries the engine's own summary.
     const label: string = row.props.accessibilityLabel;
-    expect(label).toMatch(/^Balances used, /);
-    expect(label).toContain(`across ${sts.includedMoneyBalanceAccounts.length} account`);
-    expect(label).toContain('Manage balances.');
-    expect(visibleTexts(view)).toContain('Used only for this estimate — your Wealth total is unchanged.');
+    expect(label).toMatch(/^Balances used: /);
+    const count = sts.includedMoneyBalanceAccounts.length;
+    if (count === 1) expect(label).toContain(sts.includedMoneyBalanceAccounts[0].label);
+    else expect(label).toContain(`${count} accounts`);
+    expect(visibleTexts(view)).toContain('Balances used');
 
     // The excluded savings account is genuinely excluded by the engine —
     // the row reports the engine's own count, it does not filter.
     expect(sts.includedMoneyBalanceAccounts.some((a) => a.id === 'a2')).toBe(false);
 
-    const style = Array.isArray(row.props.style) ? Object.assign({}, ...row.props.style) : row.props.style;
-    expect(style.minHeight).toBeGreaterThanOrEqual(56);
+    // Pass D.5 — a compact in-card control rather than a three-line card, so it meets
+    // the 44pt activation minimum on both axes instead of the old row's 56pt height.
+    const style = Array.isArray(row.props.style) ? Object.assign({}, ...row.props.style.filter(Boolean)) : row.props.style;
+    expect(style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(style.minWidth).toBeGreaterThanOrEqual(44);
   });
 
   test('3. This Month renders the engine figures exactly, with no flip anywhere', () => {
@@ -270,27 +276,36 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
     expect(view.getByTestId('money-aup-hero-icon', { includeHiddenElements: true }).props.accessibilityElementsHidden).toBe(true);
 
     // The information control is a real 44pt target with a label and hint.
+    // Pass D.2 — ONE explanation entry: the grouped "Why this amount?" row (same sheet,
+    // same hint). The header icon that opened the same sheet is not rendered beside it.
+    expect(view.getAllByTestId('money-aup-hero-info')).toHaveLength(1);
     const info = view.getByTestId('money-aup-hero-info');
-    expect(info.props.accessibilityLabel).toBe('How this was calculated');
+    expect(info.props.accessibilityRole).toBe('button');
+    expect(info.props.accessibilityLabel).toBe('Why this amount?. A quick breakdown');
     expect(info.props.accessibilityHint).toBe('Opens every line behind this estimate');
-    const infoStyle = Array.isArray(info.props.style) ? Object.assign({}, ...info.props.style) : info.props.style;
-    expect(infoStyle.width).toBeGreaterThanOrEqual(44);
-    expect(infoStyle.height).toBeGreaterThanOrEqual(44);
+    expect(view.queryByLabelText('How this was calculated')).toBeNull();
+    const infoStyle = Array.isArray(info.props.style) ? Object.assign({}, ...info.props.style.filter(Boolean)) : info.props.style;
+    expect(infoStyle.minHeight).toBeGreaterThanOrEqual(44);
 
-    // No emoji, and the provenance line is present.
+    // No emoji; the definition moved off the card into that explanation.
     expect(heroJson).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
-    expect(visibleTexts(view)).toContain('Your included balances, less the bills, savings and goals still due by payday.');
+    expect(visibleTexts(view)).not.toContain('Your included balances, less the bills, savings and goals still due by payday.');
 
-    // Balances used stays OUTSIDE the hero, with one entry point.
-    expect(heroJson).not.toContain('money-included-balances-row');
-    expect(view.getAllByTestId('money-included-balances-row')).toHaveLength(1);
+    // Pass D.5 — the balances entry now lives INSIDE the card, beneath the amount,
+    // and there is still exactly one of it.
+    expect(heroJson).toContain('money-inline-balances');
+    expect(view.getAllByTestId('money-inline-balances')).toHaveLength(1);
+    expect(view.queryByTestId('money-included-balances-row')).toBeNull();
     expect(visibleTexts(view)).not.toContain('Manage balances');
   });
 
   test('5. every Money measure carries a definition, and Money Plan reads as a forecast, never proof', () => {
     const texts = visibleTexts(view).join(' | ');
-    expect(texts).toContain('Your included balances, less the bills, savings and goals still due by payday.');
-    expect(texts).toContain('Used only for this estimate — your Wealth total is unchanged.');
+    // Pass D.2 — Available until payday's definition is carried by its explanation sheet
+    // (proved in d2-card-hierarchy.render.test.tsx); the other measures are unchanged.
+    // Pass D.5 — the inclusion scope statement moved into the selection sheet, where it
+    // can state the truth accurately (inclusion is persisted and applies everywhere).
+    expect(texts).toContain('Balances used');
     expect(texts).toContain('What you have actually recorded so far this calendar month.');
     expect(texts).toContain('Bills, income and repayments scheduled from today onward.');
 
@@ -300,7 +315,7 @@ describe('Design 5.1 Wave 6 — Money, fully populated', () => {
 
   test('6. Money shows exactly one hero and no duplicated measure', () => {
     expect(view.getAllByTestId('money-this-month-card')).toHaveLength(1);
-    expect(view.getAllByTestId('money-included-balances-row')).toHaveLength(1);
+    expect(view.getAllByTestId('money-inline-balances')).toHaveLength(1);
     expect(view.getAllByTestId('money-payday-bar')).toHaveLength(1);
   });
 });

@@ -87,6 +87,49 @@ export function buildAupExplanation(s: SafeToSpendResult): AupExplanation {
   return { rows, remainderCents, roundingCents };
 }
 
+/**
+ * Pass D.4 — the Available-until-payday daily figure, as the STRUCTURED parts of the
+ * division the card already performs, so the sheet can show the arithmetic instead of
+ * a sentence. Nothing is recomputed: the numerator is the same reconciled remainder
+ * `buildAupExplanation` produces, the divisor is the engine's own `daysRemaining`, and
+ * the result is the engine's own `dailyAllowance` through its existing formatter.
+ */
+export interface AupDailyGuideExplanation {
+  /** The reconciled remainder, formatted exactly as the breakdown's total row. */
+  amount: string;
+  /** Whole spending days the engine counted. */
+  days: number;
+  /** The daily figure exactly as the card shows it. */
+  daily: string;
+  /** "$3,616.57 ÷ 13 days ≈ $278/day". */
+  equation: string;
+  /** The ACTUAL rule — `formatSafeToSpendAmount` rounds to the nearest dollar, so this
+   * never claims "rounded down" (which is the selected-date guide's rule, not this one).
+   * Null when the division is exact. */
+  roundingNote: string | null;
+  spoken: string;
+}
+
+export function buildAupDailyGuideExplanation(s: SafeToSpendResult): AupDailyGuideExplanation | null {
+  if (!s.hasKnownPayday) return null;
+  const days = Math.round(s.daysRemaining);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const remainderCents = buildAupExplanation(s).remainderCents;
+  // A non-positive pool has no daily room to explain; the hero already says so in words.
+  if (remainderCents <= 0 || !Number.isFinite(s.dailyAllowance)) return null;
+  const amount = formatDollarsCentsAware(remainderCents / 100);
+  const daily = formatSafeToSpendAmount(Math.max(0, s.dailyAllowance));
+  const exact = remainderCents % (days * 100) === 0;
+  return {
+    amount,
+    days,
+    daily,
+    equation: `${amount} ÷ ${days} ${days === 1 ? 'day' : 'days'} ${exact ? '=' : '≈'} ${daily}/day`,
+    roundingNote: exact ? null : 'Rounded to the nearest dollar.',
+    spoken: `${amount} divided by ${days} ${days === 1 ? 'day' : 'days'} is about ${daily} a day.`,
+  };
+}
+
 /** Dollars -> integer cents, defensively guarding against a non-finite
  * input (should never occur — SafeToSpendResult's own Pass 1 contract
  * guarantees every numeric field stays finite — but this presentation

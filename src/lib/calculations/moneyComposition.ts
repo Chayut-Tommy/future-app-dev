@@ -169,7 +169,16 @@ export interface IncludedBalancesSummary {
   totalLabel: string | null;
   empty: boolean;
   spoken: string;
+  /** Pass D.5 — the compact inline control's own text: the sole account and its
+   * balance ("Main · $8,650"), the count and included total ("2 accounts · $9,890"),
+   * or an action when nothing is selected. Composed here, never in a component. */
+  selectorLabel: string;
+  selectorSpoken: string;
 }
+
+/** Pass D.5 — what the inline selector says when nothing is included yet. A genuine
+ * $0 selected balance is NOT this state; it reports its account and "$0". */
+export const CHOOSE_BALANCES_SELECTOR_LABEL = 'Choose balances';
 
 /**
  * Describes which balances feed Available Until Payday.
@@ -190,10 +199,15 @@ export function summariseIncludedBalances(
       totalLabel: null,
       empty: true,
       spoken: 'No balances included yet. Choose which balances count toward your available amount.',
+      selectorLabel: CHOOSE_BALANCES_SELECTOR_LABEL,
+      selectorSpoken: 'Balances used: none selected yet. Choose balances.',
     };
   }
   const totalLabel = Number.isFinite(total) ? `$${Math.round(total).toLocaleString()}` : null;
   const accountWord = count === 1 ? 'balance' : 'balances';
+  // One account is named; several are counted. The total is the engine's own.
+  const selectorLabel =
+    count === 1 ? (totalLabel ? `${accounts[0].label} · ${totalLabel}` : accounts[0].label) : totalLabel ? `${count} accounts · ${totalLabel}` : `${count} accounts`;
   return {
     count,
     totalLabel,
@@ -201,6 +215,8 @@ export function summariseIncludedBalances(
     spoken: totalLabel
       ? `${count} ${accountWord} included, ${totalLabel} in total. These balances feed your available amount estimate.`
       : `${count} ${accountWord} included. These balances feed your available amount estimate.`,
+    selectorLabel,
+    selectorSpoken: `Balances used: ${selectorLabel.replace(' · ', ', ')}`,
   };
 }
 
@@ -215,6 +231,28 @@ export function summariseIncludedBalances(
  * measure already means, in the register the product uses elsewhere:
  * factual, never advice, never a promise, never shaming.
  */
+/** Pass D.2 / D.3 — the grouped card actions. "View upcoming events" opens the
+ * EXISTING, unfiltered "What happens next" list (its own horizon, not the card's),
+ * so its subtitle names the destination truthfully and promises no date bound
+ * (Pass D.3, F6). The card's own inclusion boundary — payday excluded, selected
+ * day included — is stated by the legend and the explanation, where it is exact. */
+export const VIEW_UPCOMING_EVENTS_TITLE = 'View upcoming events';
+export const VIEW_UPCOMING_EVENTS_SUBTITLE = 'See upcoming income, bills and repayments';
+export const WHY_THIS_AMOUNT_TITLE = 'Why this amount?';
+export const WHY_THIS_AMOUNT_SUBTITLE = 'A quick breakdown';
+
+/** Pass D.2 — a cycle start is worked back from the payday; it is never a recorded
+ * fact, so the endpoint says so instead of a detached caption. */
+export const ESTIMATED_CYCLE_START_LABEL = 'Estimated cycle start';
+
+/** Pass D.2 — the methodology that used to sit permanently under the pay-cycle bar.
+ * It now lives, once, inside the existing "How this was calculated" sheet. */
+export const AUP_METHOD_NOTES: readonly { key: string; text: string }[] = [
+  { key: 'cycle-start', text: 'Your cycle start is estimated from your next payday and how often you’re paid — it isn’t a recorded date.' },
+  { key: 'not-included', text: 'Expected income and your next payday appear on the timeline, but they aren’t included in this amount.' },
+  { key: 'markers', text: 'Markers show dated events only. Planned savings and goals aren’t shown here.' },
+];
+
 export const MONEY_MEASURE_DEFINITIONS = {
   // Pass C.3 — "due by payday": the cycle window is INCLUSIVE of the payday
   // date (a bill due on payday is deducted), so the definition says so.

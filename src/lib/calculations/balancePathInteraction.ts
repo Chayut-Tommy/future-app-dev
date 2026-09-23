@@ -13,6 +13,7 @@
  */
 
 import { BalancePath, BalancePathGroupEvent, BalancePathMarkerGroup } from './balancePath';
+import type { RailMarkerKind, TimelineRail } from './timelineMarkers';
 import { LocalDate, localDatesEqual } from './localCalendar';
 import { formatCentsCentsAware } from './money';
 
@@ -35,14 +36,25 @@ export function plotX(x: number, trackWidth: number): number {
 
 export const BALANCE_PATH_MIN_TARGET = 44;
 
-export interface BalancePathHitTarget {
+/** Pass D.3 — the least a marker group must carry to become a press target. Both the
+ * selected-date groups (BalancePathMarkerGroup) and the pay-cycle groups (AupRailGroup)
+ * satisfy it, so ONE slot/target rule serves both rails. */
+export interface RailHitGroup {
+  key: string;
+  /** 0..1 position on the rail. */
+  x: number;
+  events: readonly unknown[];
+  hasShortfall: boolean;
+}
+
+export interface BalancePathHitTarget<G extends RailHitGroup = BalancePathMarkerGroup> {
   /** Stable key: the keys of the groups it holds, joined. */
   key: string;
   /** Left edge and width in plot pixels; never overlaps another target. */
   left: number;
   width: number;
   /** Marker groups in chronological order (one, or a collision group). */
-  groups: BalancePathMarkerGroup[];
+  groups: G[];
 }
 
 /**
@@ -53,11 +65,11 @@ export interface BalancePathHitTarget {
  * inspected together — a deliberate collision group, never two overlapping
  * targets with an ambiguous result. Deterministic and chronological.
  */
-export function resolveHitTargets(path: BalancePath, plotWidth: number, minSize: number = BALANCE_PATH_MIN_TARGET): BalancePathHitTarget[] {
+export function resolveHitTargets<G extends RailHitGroup = BalancePathMarkerGroup>(path: { markers: G[] }, plotWidth: number, minSize: number = BALANCE_PATH_MIN_TARGET): BalancePathHitTarget<G>[] {
   if (!(plotWidth > 0) || path.markers.length === 0) return [];
   const slots = Math.max(1, Math.floor(plotWidth / minSize));
   const slotWidth = plotWidth / slots;
-  const bySlot = new Map<number, BalancePathMarkerGroup[]>();
+  const bySlot = new Map<number, G[]>();
   for (const g of path.markers) {
     if (g.events.length === 0 && !g.hasShortfall) continue;
     const px = plotX(g.x, plotWidth);
@@ -96,6 +108,15 @@ export interface InspectionRow {
   typeLabel: string;
   occurrenceId: string;
   sourceId: string;
+  /** Pass D — the canonical source kind, so a row can be routed by stable identity. */
+  sourceKind: BalancePathGroupEvent['sourceKind'];
+  /** "28 Sep" — for the review action's accessible name. */
+  dateLabel: string;
+  /** Pass D.3 — pay-cycle rows only: whether this event is inside the amount the
+   * card shows, said in words ("Included in Available until payday" / "Expected
+   * income — not included in Available until payday"). Absent on selected-date rows,
+   * where every listed event is included by construction. */
+  statusLabel?: string;
 }
 
 export interface InspectionSection {
@@ -109,8 +130,10 @@ export interface InspectionSection {
   outgoingTotal: string | null;
   /** "Same-day net: -$2,000" (exact date, 2+ events) or "Net effect: …" (weekly). */
   netLine: string | null;
-  /** "End-of-day balance: $8,650" / "End-of-week balance: …". */
-  balanceLine: string;
+  /** "End-of-day balance: $8,650" / "End-of-week balance: …". Null on the pay-cycle
+   * rail, which has NO running balance, lowest point or shortfall path (Pass D.3 —
+   * nothing is invented for visual parity). */
+  balanceLine: string | null;
   shortfallLine: string | null;
 }
 
@@ -138,6 +161,8 @@ function rowFor(e: BalancePathGroupEvent, withDate: boolean): InspectionRow {
     typeLabel: e.typeLabel,
     occurrenceId: e.occurrenceId,
     sourceId: e.sourceId,
+    sourceKind: e.sourceKind,
+    dateLabel: shortDate(e.date),
   };
 }
 
@@ -209,6 +234,163 @@ export function describeHitTarget(target: BalancePathHitTarget, path: BalancePat
     targetLabel: spoken,
     announcement: `Showing ${title}. ${spoken}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 3b. Pay-cycle (Available until payday) inspection — Pass D.3
+// ---------------------------------------------------------------------------
+
+/** One canonical pay-cycle event, exactly as the rail marker carries it. */
+export interface AupRailEvent {
+  occurrenceId: string;
+  sourceId: string;
+  sourceKind: BalancePathGroupEvent['sourceKind'];
+  date: LocalDate;
+  label: string;
+  signedCents: number;
+  typeLabel: string;
+  /** True when AUP subtracted it; false for expected income and the payday. */
+  included: boolean;
+}
+
+/** A pay-cycle marker as a press-target group: ONE rail marker (one kind, one date). */
+export interface AupRailGroup extends RailHitGroup {
+  key: string;
+  x: number;
+  date: LocalDate;
+  kind: RailMarkerKind;
+  events: AupRailEvent[];
+  hasShortfall: false;
+  netCents: number;
+}
+
+export const AUP_INCLUDED_STATUS = 'Included in Available until payday';
+export const AUP_EXPECTED_INCOME_STATUS = 'Expected income — not included in Available until payday';
+export const AUP_PAYDAY_STATUS = 'Expected payday — not included in this amount';
+
+/** The pay-cycle rail's markers as groups. Only markers that carry a real canonical
+ * event become targets; a decorative endpoint with no event is never interactive. */
+export function buildAupRailGroups(rail: Pick<TimelineRail, 'markers'>): AupRailGroup[] {
+  return rail.markers
+    .filter((m) => (m.events?.length ?? 0) > 0)
+    .map((m) => ({
+      key: m.key,
+      x: m.position,
+      date: m.date,
+      kind: m.kind,
+      events: (m.events ?? []).map((e) => ({ ...e })),
+      hasShortfall: false as const,
+      netCents: (m.events ?? []).reduce((n, e) => n + e.signedCents, 0),
+    }));
+}
+
+function aupStatus(kind: RailMarkerKind): string {
+  if (kind === 'payday_endpoint') return AUP_PAYDAY_STATUS;
+  if (kind === 'expected_income' || kind === 'income') return AUP_EXPECTED_INCOME_STATUS;
+  return AUP_INCLUDED_STATUS;
+}
+
+function aupSectionFor(g: AupRailGroup): InspectionSection {
+  const n = g.events.length;
+  const status = aupStatus(g.kind);
+  return {
+    key: g.key,
+    heading: `${shortDate(g.date)} · ${eventsWord(n)}`,
+    weekly: false,
+    rows: g.events.map((e) => ({
+      key: e.occurrenceId,
+      label: e.label,
+      amount: formatSignedCents(e.signedCents),
+      typeLabel: e.typeLabel,
+      occurrenceId: e.occurrenceId,
+      sourceId: e.sourceId,
+      sourceKind: e.sourceKind,
+      dateLabel: shortDate(e.date),
+      statusLabel: status,
+    })),
+    incomeTotal: null,
+    outgoingTotal: null,
+    netLine: n > 1 ? `Same-day total: ${formatSignedCents(g.netCents)}` : null,
+    balanceLine: null,
+    shortfallLine: null,
+  };
+}
+
+function spokenAupSection(g: AupRailGroup): string {
+  const status = aupStatus(g.kind);
+  const parts = g.events.map((e) => `${e.label}, ${e.typeLabel.toLowerCase()}, ${spokenSigned(e.signedCents)}`);
+  return `${longDate(g.date)}: ${parts.join('. ')}. ${status}.`;
+}
+
+/** Describe one pay-cycle press target. Reuses the selected-date inspection SHAPE so
+ * the same detail surface renders both rails, but carries no balance line: Available
+ * until payday has no daily path, and none is invented. */
+export function describeAupHitTarget(target: BalancePathHitTarget<AupRailGroup>): BalancePathInspection {
+  const sections = target.groups.map(aupSectionFor);
+  const totalEvents = target.groups.reduce((n, g) => n + g.events.length, 0);
+  const first = target.groups[0];
+  const last = target.groups[target.groups.length - 1];
+  const title = `${rangeShort(first.date, last.date)} · ${eventsWord(totalEvents)}`;
+  let remaining = INSPECTION_ROW_CAP;
+  let hidden = 0;
+  for (const s of sections) {
+    const keep = Math.max(0, Math.min(s.rows.length, remaining));
+    hidden += s.rows.length - keep;
+    s.rows = s.rows.slice(0, keep);
+    remaining -= keep;
+  }
+  const spoken = target.groups.map(spokenAupSection).join(' ');
+  return {
+    key: target.key,
+    title,
+    sections,
+    hiddenRowCount: hidden,
+    moreLine: hidden > 0 ? `${hidden} more in View upcoming events` : null,
+    targetLabel: spoken,
+    announcement: `Showing ${title}. ${spoken}`,
+  };
+}
+
+/** Pass D.1 — breathing room kept between the marker band, the detail and the dock. */
+export const DETAIL_VIEWPORT_GAP = 12;
+/** Never bound the detail below its heading plus three 44pt rows. */
+export const DETAIL_MIN_HEIGHT = BALANCE_PATH_MIN_TARGET * 4;
+
+export interface DetailViewport {
+  /** Window height in points. */
+  windowHeight: number;
+  /** Top safe-area inset (status bar / Dynamic Island). */
+  topInset: number;
+  /** Space the floating dock/FAB assembly occupies from the literal bottom of the
+   * screen, INCLUDING the bottom safe area — the shared `screenBottomClearance`. */
+  bottomClearance: number;
+}
+
+/** The tallest the detail may be so that it — and the marker band it belongs to —
+ * can rest entirely between the top safe area and the dock. */
+export function resolveDetailMaxHeight(v: DetailViewport): number {
+  const clear = v.windowHeight - Math.max(v.topInset, 0) - Math.max(v.bottomClearance, 0);
+  if (!Number.isFinite(clear)) return DETAIL_MIN_HEIGHT;
+  return Math.max(Math.floor(clear - BALANCE_PATH_MIN_TARGET - DETAIL_VIEWPORT_GAP * 2), DETAIL_MIN_HEIGHT);
+}
+
+/** Where the page must scroll so an opened detail rests clear of the dock, or null
+ * when it already does. `frameY`/`frameHeight` are the detail's measured window frame.
+ * The page only ever moves DOWN the content, and never so far that the marker band
+ * the detail is attached to leaves the top of the screen. */
+export function resolveDetailReveal(input: DetailViewport & { frameY: number; frameHeight: number; scrollY: number; anchorY?: number }): number | null {
+  const values = [input.frameY, input.frameHeight, input.scrollY, input.windowHeight];
+  if (!values.every((n) => Number.isFinite(n)) || input.frameHeight <= 0) return null;
+  const clearBottom = input.windowHeight - Math.max(input.bottomClearance, 0) - DETAIL_VIEWPORT_GAP;
+  const overflow = input.frameY + input.frameHeight - clearBottom;
+  if (overflow <= 0.5) return null;
+  // Pass D.3 (F5) — the page may move only as far as keeps the MARKER BAND on screen:
+  // `anchorY` is the band's measured window top. Without a measurement the band is
+  // assumed to sit one target-height directly above the detail (the D.1 estimate).
+  const anchorTop = input.anchorY !== undefined && Number.isFinite(input.anchorY) ? input.anchorY : input.frameY - BALANCE_PATH_MIN_TARGET;
+  const headroom = anchorTop - DETAIL_VIEWPORT_GAP - Math.max(input.topInset, 0);
+  const delta = Math.min(overflow, Math.max(headroom, 0));
+  return delta > 0.5 ? Math.round(Math.max(input.scrollY, 0) + delta) : null;
 }
 
 /** Anchored (caret under the marker) when it fits; otherwise a full-width

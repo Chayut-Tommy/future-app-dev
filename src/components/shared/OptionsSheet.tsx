@@ -6,8 +6,17 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { MOTION_MS, SHEET_OFFSCREEN_TRAVEL_PT } from '../../theme/motion';
 import { sheetChromeStyles } from './sheetChrome';
+import { EditorCompletionStatus } from './EditorCompletionStatus';
+import { sendFocusEvent } from '../../lib/a11yFocus';
+import type { EditorPendingKind } from '../../lib/editorCompletion';
+import { typeStyle } from '../../theme/textStyle';
+import { fontFamilyForWeight } from '../../theme/typography';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 
 export interface SheetOption {
+  /** Pass D0.1 — report the selection immediately and keep the sheet presented. */
+  inPlace?: boolean;
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -47,6 +56,12 @@ export function OptionsSheet({
   options,
   onSelect,
   onClosed,
+  busy = false,
+  pendingKind = null,
+  errorText = null,
+  cancelLabel = 'Cancel',
+  onCancel,
+  viewKey,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -54,6 +69,26 @@ export function OptionsSheet({
   subtitle?: string;
   options: SheetOption[];
   onSelect: (key: string) => void;
+  /**
+   * Pass D0.1 — ONE native host, several internal views. All optional; a caller
+   * that passes none gets the original behaviour exactly.
+   * - an option marked `inPlace` reports its selection IMMEDIATELY and leaves
+   *   the sheet presented, so the host can swap this sheet's own content (a
+   *   second view, or a durable action with a pending state) without the
+   *   close-then-reopen choreography that briefly exposed the screen behind;
+   * - `busy` disables every row and REFUSES dismissal (Cancel, backdrop, swipe,
+   *   hardware Back) while a durable write is unresolved;
+   * - `pendingKind` / `errorText` show the shared Saving… / failure line;
+   * - `cancelLabel` + `onCancel` turn the footer into an internal Back;
+   * - `viewKey` names the current view: when it changes while presented, focus
+   *   moves to the new heading once.
+   */
+  busy?: boolean;
+  pendingKind?: EditorPendingKind | null;
+  errorText?: string | null;
+  cancelLabel?: string;
+  onCancel?: () => void;
+  viewKey?: string;
   /** OPTIONAL authoritative completion signal, fired exactly once AFTER native
    * dismissal has actually finished (the same boundary `onSelect` is deferred
    * to), carrying the selected option key or `null` when the sheet was
@@ -65,15 +100,44 @@ export function OptionsSheet({
    * unchanged. */
   onClosed?: (selectedKey: string | null) => void;
 }) {
-  const { colors, semantic, radius, spacing, typography } = useTheme();
+  const { colors, semantic, radius, spacing } = useTheme();
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(0)).current;
+  // Pass D.3 (F3) — the scrim fades WITH the sheet's slide-out, and once that
+  // exit has run the native Modal hides without a second animation of its own.
+  // Before: the JS slide-out finished, then the native `slide` dismissal replayed
+  // the whole (already off-screen) content — a lingering scrim and a second,
+  // laggy exit. One exit now: sheet and scrim leave together, then the host
+  // drops the Modal instantly. Entrance is unchanged (the native slide).
+  const backdropOpacity = useRef(new Animated.Value(1)).current;
+  // A ref, not state: it is read by the render the host's own close triggers, so the
+  // exit adds no state update of its own (and no act() work for the host's tests).
+  const exitingRef = useRef(false);
   const reduceMotion = useReduceMotion();
   const pendingSelectionRef = useRef<string | null>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const titleRef = useRef<Text>(null);
+  const lastViewKeyRef = useRef(viewKey);
+  useEffect(() => {
+    if (!visible) {
+      lastViewKeyRef.current = viewKey;
+      return;
+    }
+    if (lastViewKeyRef.current !== viewKey) {
+      lastViewKeyRef.current = viewKey;
+      sendFocusEvent(titleRef); // an internal view change: focus its heading once
+    }
+  }, [viewKey, visible]);
 
   useEffect(() => {
-    if (visible) translateY.setValue(0);
-  }, [visible, translateY]);
+    if (visible) {
+      translateY.setValue(0);
+      backdropOpacity.setValue(1);
+      exitingRef.current = false;
+    }
+  }, [visible, translateY, backdropOpacity]);
 
   // The single native-dismissal-completion boundary. Fires the deferred
   // selection (only when a row was actually chosen), then always reports the
@@ -93,7 +157,11 @@ export function OptionsSheet({
   // including its Android fallback) is byte-identical on both paths —
   // nothing here depends on the animation having run.
   function finishDismiss() {
-    translateY.setValue(0);
+    // The sheet's position is NOT reset here: it is off-screen (or wherever the
+    // swipe left it) until the host hides the Modal in this same commit, and the
+    // fresh-open effect above resets it. `exiting` switches the Modal's own
+    // dismissal to instant, so the exit the customer saw is the only one.
+    exitingRef.current = true;
     onClose();
     if (Platform.OS === 'android') {
       setTimeout(runCompletion, ANDROID_DISMISS_FALLBACK_MS);
@@ -101,14 +169,23 @@ export function OptionsSheet({
   }
 
   function dismiss() {
+    if (busyRef.current) return; // never an ambiguous dismissal mid-write
     if (reduceMotion) {
       finishDismiss();
       return;
     }
-    Animated.timing(translateY, { toValue: SHEET_OFFSCREEN_TRAVEL_PT, duration: MOTION_MS.sheetInfoOut, useNativeDriver: true }).start(finishDismiss);
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: SHEET_OFFSCREEN_TRAVEL_PT, duration: MOTION_MS.sheetInfoOut, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 0, duration: MOTION_MS.sheetInfoOut, useNativeDriver: true }),
+    ]).start(finishDismiss);
   }
 
   function choose(key: string) {
+    if (busyRef.current) return;
+    if (options.find((o) => o.key === key)?.inPlace) {
+      onSelect(key); // in place: the sheet stays presented
+      return;
+    }
     pendingSelectionRef.current = key;
     dismiss();
   }
@@ -120,7 +197,7 @@ export function OptionsSheet({
         if (gesture.dy > 0) translateY.setValue(gesture.dy);
       },
       onPanResponderRelease: (_, gesture) => {
-        if (gesture.dy > DISMISS_DISTANCE || gesture.vy > DISMISS_VELOCITY) {
+        if (!busyRef.current && (gesture.dy > DISMISS_DISTANCE || gesture.vy > DISMISS_VELOCITY)) {
           dismiss();
         } else {
           Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
@@ -146,8 +223,10 @@ export function OptionsSheet({
           spacingLg: spacing.lg,
           insetBottom: insets.bottom,
         }),
-        title: { ...typography.heading, fontSize: 16, color: colors.textPrimary, textAlign: 'center', marginBottom: 2 },
-        subtitle: { ...typography.caption, fontSize: 12, color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.md },
+        // Pass D.3 (F3) — Design 5.1 roles (Figtree), never the legacy tokens, which
+        // carry no family and therefore rendered the platform font.
+        title: { ...typeStyle('titleCard', locale), color: colors.textPrimary, textAlign: 'center', marginBottom: 2 },
+        subtitle: { ...typeStyle('meta', locale), color: colors.textSecondary, textAlign: 'center', marginBottom: spacing.md },
         row: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -161,28 +240,33 @@ export function OptionsSheet({
         iconBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
         iconBadgeDestructive: { backgroundColor: colors.dangerSoft },
         textBlock: { flex: 1 },
-        rowLabel: { ...typography.body, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
+        rowLabel: { ...typeStyle('support', locale), fontWeight: '600', fontFamily: fontFamilyForWeight(600, locale), color: colors.textPrimary },
         rowLabelDestructive: { color: colors.danger },
-        rowDescription: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 1 },
-        cancelButton: { alignSelf: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
-        cancelText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
+        rowDescription: { ...typeStyle('meta', locale), color: colors.textSecondary, marginTop: 1 },
+        cancelButton: { alignSelf: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs, minHeight: 44, justifyContent: 'center' },
+        cancelText: { ...typeStyle('support', locale), fontWeight: '600', fontFamily: fontFamilyForWeight(600, locale), color: colors.textSecondary },
       }),
-    [colors, semantic, radius, spacing, typography, insets.bottom]
+    [colors, semantic, radius, spacing, locale, insets.bottom]
   );
 
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      // `!visible` guards the re-open render, which runs before the reset effect above.
+      animationType={reduceMotion || (exitingRef.current && !visible) ? 'none' : 'slide'}
       transparent
       onRequestClose={dismiss}
       onDismiss={Platform.OS === 'ios' ? runCompletion : undefined}
     >
-      <View style={styles.backdrop}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={dismiss} />
+      <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]} testID="options-sheet-backdrop">
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={dismiss} accessible={false} importantForAccessibility="no" />
         <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]} {...panResponder.panHandlers}>
           <View style={styles.grabber} />
-          {title ? <Text style={styles.title}>{title}</Text> : null}
+          {title ? (
+            <Text ref={titleRef} style={styles.title} accessibilityRole="header">
+              {title}
+            </Text>
+          ) : null}
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
           {options.map((o) => (
             <TouchableOpacity
@@ -190,8 +274,11 @@ export function OptionsSheet({
               style={styles.row}
               activeOpacity={0.7}
               onPress={() => choose(o.key)}
+              disabled={busy}
               accessibilityRole="button"
               accessibilityLabel={o.description ? `${o.label}. ${o.description}` : o.label}
+              accessibilityState={{ disabled: busy, busy }}
+              testID={`options-sheet-row-${o.key}`}
             >
               <View style={[styles.iconBadge, o.destructive ? styles.iconBadgeDestructive : null]}>
                 <Ionicons name={o.icon} size={17} color={o.destructive ? colors.danger : colors.accentStrong} />
@@ -202,11 +289,20 @@ export function OptionsSheet({
               </View>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity style={styles.cancelButton} onPress={dismiss} accessibilityRole="button" accessibilityLabel="Cancel">
-            <Text style={styles.cancelText}>Cancel</Text>
+          <EditorCompletionStatus pending={pendingKind} errorText={errorText} testID="options-sheet-status" />
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => (busyRef.current ? undefined : onCancel ? onCancel() : dismiss())}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={cancelLabel}
+            accessibilityState={{ disabled: busy }}
+            testID="options-sheet-cancel"
+          >
+            <Text style={styles.cancelText}>{cancelLabel}</Text>
           </TouchableOpacity>
         </Animated.View>
-      </View>
+      </Animated.View>
     </Modal>
   );
 }

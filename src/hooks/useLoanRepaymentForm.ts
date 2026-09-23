@@ -4,6 +4,7 @@ import { Liability, RecurringItem } from '../types/models';
 import { moneyAmountToCents, parseMoneyInputAllowZero } from '../lib/calculations/money';
 import { resolveEligibleBillPaymentSources, BillPaymentSourceOption } from '../lib/calculations/billPaymentSources';
 import { RepaymentResult, ReminderOccurrenceKey } from '../lib/calculations/reminderInteractionLifecycle';
+import { EDITOR_UNCONFIRMED_COPY, isDurableTimeout } from '../lib/editorCompletion';
 
 function formatMoney(value: number): string {
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -154,11 +155,12 @@ export function useLoanRepaymentForm({
           setIsSubmitting(false);
           onResult({ kind: 'completed', occurrenceKey, transactionId });
         },
-        () => {
+        (error: unknown) => {
           submittingRef.current = false;
           if (!mountedRef.current) return;
           setIsSubmitting(false);
-          setErrorText("We couldn't save that repayment, so nothing was recorded. Please try again.");
+          // Pass D0.1 — a timeout is not a rejection: never claim nothing was recorded for it.
+          setErrorText(isDurableTimeout(error) ? EDITOR_UNCONFIRMED_COPY : "We couldn't save that repayment, so nothing was recorded. Please try again.");
         }
       );
       return;

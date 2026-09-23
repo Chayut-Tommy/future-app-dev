@@ -82,7 +82,8 @@ console.log('\n=== 2. Helper text is genuinely unbounded — no line-count cap, 
   );
   assert(
     "2c. styles.preview (the shared style this Text uses) sets no fixed width or fixed height — it already uses the sheet's full available content width and never clips the text vertically, regardless of how many lines font scaling produces",
-    /preview: \{ \.\.\.typography\.caption, fontSize: 12, color: colors\.textSecondary, marginTop: -spacing\.xs, marginBottom: spacing\.sm \},/.test(ADD_INCOME_SRC)
+    // Pass D.3 (F3) — the same style on the Design 5.1 meta role (Figtree); still no width and no height.
+    /preview: \{ \.\.\.typeStyle\('meta', locale\), fontSize: 12, color: colors\.textSecondary, marginTop: -spacing\.xs, marginBottom: spacing\.sm \},/.test(ADD_INCOME_SRC)
   );
   assert(
     '2d. no allowFontScaling={false} exists anywhere in the file — font scaling is never disabled, so this Text (and every other Text in the file) can grow with the device\'s accessibility text-size setting, wrapping to however many lines that requires',

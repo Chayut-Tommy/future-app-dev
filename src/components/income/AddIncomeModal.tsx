@@ -2,6 +2,10 @@ import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, use
 import { Keyboard, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
+import { typeStyle } from '../../theme/textStyle';
+import { fontFamilyForWeight } from '../../theme/typography';
+import type { AppLocale } from '../../theme/typography';
+import i18n from '../../i18n';
 import { useAppState, MidCycleIncomeOccurrenceChoice } from '../../state/AppStateContext';
 import { useSavingsAllocationPrompt } from '../../state/SavingsAllocationPromptContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
@@ -25,6 +29,10 @@ import { TextField } from '../shared/fields/TextField';
 import { CurrencyField } from '../shared/fields/CurrencyField';
 import { brand } from '../../lib/brand';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
+import { EditorCompletionStatus } from '../shared/EditorCompletionStatus';
+import { useDurableEditorCompletion } from '../../hooks/useDurableEditorCompletion';
+import { EDITOR_DELETING_LABEL, EDITOR_SAVING_LABEL, EditorOutcome } from '../../lib/editorCompletion';
+import { useLatchedWhileHidden } from '../../hooks/useLatchedWhileHidden';
 
 // Wave 9c final correction pass — the ids, labels and saved-icon mapping
 // moved verbatim to lib/incomeSources.ts so onboarding's optional income
@@ -90,6 +98,8 @@ export const AddIncomeModal = forwardRef<
     onClose: () => void;
     /** Present = editing this existing income source instead of adding a new one. */
     editItem?: RecurringItem | null;
+    /** Pass D0 — the structured, durable completion (see lib/editorCompletion). */
+    onOutcome?: (outcome: EditorOutcome) => void;
     /** True only when rendered inside the embedded Add Anything -> Income
      * source route — activates real dirty-detection and a "Discard income?"
      * confirmation on Cancel/backdrop/swipe/Android Back, and reroutes the
@@ -113,13 +123,21 @@ export const AddIncomeModal = forwardRef<
     suppressSavingsAllocationPrompt?: boolean;
   }
 >(function AddIncomeModal(
-  { visible, onClose, editItem, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose, suppressSavingsAllocationPrompt = false },
+  { visible, onClose, editItem: editItemProp, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose, suppressSavingsAllocationPrompt = false, onOutcome },
   ref
 ) {
+  // Pass D0.1 — keep showing what was presented until native dismissal finishes (never the Add form mid-close).
+  const editItem = useLatchedWhileHidden(visible, editItemProp);
   const { data, addRecurringItem, updateRecurringItem, deleteRecurringItem, addRecurringIncomeWithMidCycleOccurrence } = useAppState();
+  const completion = useDurableEditorCompletion({ visible, onOutcome });
+  // One identity per draft, so a retried Add can only ever create one income source.
+  const draftIdRef = useRef<string>(generateId());
+  const promptQualifiesRef = useRef(false);
   const { requestPrompt } = useSavingsAllocationPrompt();
   const { confirmSaveSuccess } = useCelebration();
   const { colors, radius, spacing, typography, semantic } = useTheme();
+  // Pass D.3 (F3) — the Design 5.1 roles for this editor's own text.
+  const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('cash-outline');
   const [label, setLabel] = useState('');
   const [income, setIncome] = useState('');
@@ -182,7 +200,7 @@ export const AddIncomeModal = forwardRef<
   // option handlers checks and sets this before doing anything else, the
   // same presentation-level pattern SmartReminderCard's isSubmitting
   // already uses for the analogous confirm-tap risk.
-  const [midCycleSubmitting, setMidCycleSubmitting] = useState(false);
+  const midCycleSubmitting = completion.isPending; // Pass D0 — one pending state for every Save path
 
   const isEditing = !!editItem;
   const isIrregular = frequency === 'irregular';
@@ -234,7 +252,8 @@ export const AddIncomeModal = forwardRef<
     setMidCycleDate(null);
     setMidCycleRecurringItemId(null);
     setAwaitingDestination(false);
-    setMidCycleSubmitting(false);
+    draftIdRef.current = generateId(); // a new presentation is a new draft
+    promptQualifiesRef.current = false;
   }, [visible, editItem]);
 
   // True once any field genuinely differs from the snapshot captured when
@@ -338,16 +357,23 @@ export const AddIncomeModal = forwardRef<
   // member from this gate ONLY because that step no longer exists; the
   // mid-cycle half of the guard is unchanged and still load-bearing.
   useEffect(() => {
-    onCanSaveChange?.(canSave && formStep === 'details');
-  }, [canSave, formStep, onCanSaveChange]);
+    onCanSaveChange?.(canSave && formStep === 'details' && !completion.isPending);
+  }, [canSave, formStep, onCanSaveChange, completion.isPending]);
 
-  /** Show the calm factual confirmation only once the write has resolved. */
-  function confirmAfterSave(saved: Promise<void> | void, displayName: 'Main payday' | 'Income' | null) {
-    if (!displayName) return;
-    Promise.resolve(saved).then(
-      () => confirmSaveSuccess(buildSaveConfirmation(displayName, 'updated')),
-      () => undefined
-    );
+  /**
+   * Pass D0 — the ONE durable Save tail for every path in this editor (details
+   * Save and the three mid-cycle choices). Everything that says "saved" waits
+   * for the stored write: the savings-allocation prompt request, the calm
+   * confirmation, the structured outcome and the close. A rejected write shows
+   * none of them and leaves the draft (and the mid-cycle choice) on screen.
+   */
+  function finishSave(mutate: () => Promise<void>, operation: 'add' | 'update', id: string, displayName: 'Main payday' | 'Income' | null) {
+    void completion.run('saving', mutate, { outcome: 'saved', operation, entity: 'income', id }, () => {
+      if (promptQualifiesRef.current) requestPrompt();
+      if (!embedded && displayName) confirmSaveSuccess(buildSaveConfirmation(displayName, 'updated'));
+      if (embedded) onSaveSuccess?.();
+      else onClose();
+    });
   }
 
   function handleSave() {
@@ -368,7 +394,8 @@ export const AddIncomeModal = forwardRef<
       activeIncomeCountBefore === 0 &&
       !data.user.savingsAllocationPromptHandled &&
       (!data.user.savingsAllocation || data.user.savingsAllocation.mode === 'off');
-    if (qualifiesForSavingsAllocationPrompt) requestPrompt();
+    // Pass D0 — requested only once the income is durably stored (see finishSave).
+    promptQualifiesRef.current = qualifiesForSavingsAllocationPrompt;
 
     const payload = {
       type: 'income' as const,
@@ -421,23 +448,27 @@ export const AddIncomeModal = forwardRef<
     // Pass C.4 — the income edit and any intentional Main-payday change are
     // ONE authoritative write (the option rides the same persist), so no
     // intermediate or contradictory state is ever exposed.
-    const saved = editItem
-      ? updateRecurringItem(editItem.id, payload, { setAsMainPayday: willSetMainPayday })
-      : addRecurringItem(payload, { setAsMainPayday: willSetMainPayday });
-    // Confirmation only AFTER the authoritative save has COMPLETED (the write's
-    // own promise); a failed write is surfaced by the app's persistence state
-    // and is never announced as a success. The embedded Add workspace owns its
-    // own single "… added" confirmation.
-    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : editItem ? 'Income' : null);
-    // Embedded: hand control back to the host, which closes the whole Add
-    // Anything journey exactly once. Standalone: unchanged direct onClose().
-    if (embedded) onSaveSuccess?.();
-    else onClose();
+    // Pass D0 — and that one write is DURABLE: nothing below says "saved" until it
+    // is stored. Embedded: the host closes the whole Add Anything journey exactly
+    // once. Standalone: direct onClose().
+    const id = editItem ? editItem.id : draftIdRef.current;
+    finishSave(
+      () => (editItem ? updateRecurringItem(editItem.id, payload, { setAsMainPayday: willSetMainPayday }) : addRecurringItem(payload, { setAsMainPayday: willSetMainPayday, id })),
+      editItem ? 'update' : 'add',
+      id,
+      willSetMainPayday ? 'Main payday' : editItem ? 'Income' : null
+    );
   }
 
   function handleDelete() {
-    if (editItem) deleteRecurringItem(editItem.id);
-    onClose();
+    if (!editItem) return;
+    void completion.run('deleting', () => deleteRecurringItem(editItem.id), { outcome: 'deleted', operation: 'delete', entity: 'income', id: editItem.id }, onClose);
+  }
+
+  // Cancel / Back / swipe / backdrop: zero writes, one `dismissed` outcome — and
+  // refused while a durable write is unresolved.
+  function handleDismiss() {
+    completion.dismiss(onClose);
   }
 
   // UX correction — the details step's footer Cancel button, a separate
@@ -448,7 +479,8 @@ export const AddIncomeModal = forwardRef<
   // swipe gesture, a button's onPress handler is never captured inside a
   // one-time useRef closure, so this needs no ref-based staleness guard.
   function requestCancel() {
-    confirmDiscardIfDirty(isDetailsDirty, onClose, 'Discard income?', 'Your entered income details will be lost.');
+    if (completion.isPendingRef.current) return;
+    confirmDiscardIfDirty(isDetailsDirty, handleDismiss, 'Discard income?', 'Your entered income details will be lost.');
   }
 
   // Full-workspace extension — 'back' never discards (draft preserved
@@ -459,6 +491,7 @@ export const AddIncomeModal = forwardRef<
   // 'category' and correctly still reflects the details fields on
   // 'midCycle', since those fields are never cleared until a genuine save).
   function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (completion.isPendingRef.current) return; // never an ambiguous dismissal mid-write
     if (reason === 'back') {
       onConfirmedClose?.(reason);
       return;
@@ -477,32 +510,24 @@ export const AddIncomeModal = forwardRef<
   // untouched. Kept as one shared handler since the two answers are
   // identical in effect, differing only in the copy that led to them.
   function chooseMidCycleNoOccurrence() {
-    if (!midCyclePayload || midCycleSubmitting) return;
-    setMidCycleSubmitting(true);
-    const saved = addRecurringItem(midCyclePayload, { setAsMainPayday: willSetMainPayday });
-    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
-    if (embedded) onSaveSuccess?.();
-    else onClose();
+    if (!midCyclePayload || completion.isPendingRef.current) return;
+    const payload = midCyclePayload;
+    const id = midCycleRecurringItemId ?? draftIdRef.current;
+    finishSave(() => addRecurringItem(payload, { setAsMainPayday: willSetMainPayday, id }), 'add', id, willSetMainPayday ? 'Main payday' : null);
   }
 
   function chooseMidCycleAlreadyIncluded() {
-    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
-    setMidCycleSubmitting(true);
+    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || completion.isPendingRef.current) return;
+    const [payload, id, date] = [midCyclePayload, midCycleRecurringItemId, midCycleDate];
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'already_included' };
-    const saved = addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate, { setAsMainPayday: willSetMainPayday });
-    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
-    if (embedded) onSaveSuccess?.();
-    else onClose();
+    finishSave(() => addRecurringIncomeWithMidCycleOccurrence(payload, id, choice, date, { setAsMainPayday: willSetMainPayday }), 'add', id, willSetMainPayday ? 'Main payday' : null);
   }
 
   function chooseMidCycleAddToBalance(targetAssetId: string) {
-    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || midCycleSubmitting) return;
-    setMidCycleSubmitting(true);
+    if (!midCyclePayload || !midCycleDate || !midCycleRecurringItemId || completion.isPendingRef.current) return;
+    const [payload, id, date] = [midCyclePayload, midCycleRecurringItemId, midCycleDate];
     const choice: MidCycleIncomeOccurrenceChoice = { kind: 'add_to_balance', targetAssetId };
-    const saved = addRecurringIncomeWithMidCycleOccurrence(midCyclePayload, midCycleRecurringItemId, choice, midCycleDate, { setAsMainPayday: willSetMainPayday });
-    if (!embedded) confirmAfterSave(saved, willSetMainPayday ? 'Main payday' : null);
-    if (embedded) onSaveSuccess?.();
-    else onClose();
+    finishSave(() => addRecurringIncomeWithMidCycleOccurrence(payload, id, choice, date, { setAsMainPayday: willSetMainPayday }), 'add', id, willSetMainPayday ? 'Main payday' : null);
   }
 
   function chooseSource(nextSourceId: string) {
@@ -526,7 +551,7 @@ export const AddIncomeModal = forwardRef<
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        label: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
+        label: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
         row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
         chip: { paddingHorizontal: spacing.md, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
         // Pass C.3 — the same Design 5.1 interactive selection pairing the
@@ -534,14 +559,14 @@ export const AddIncomeModal = forwardRef<
         // legacy pale-mint accentSoft/accentStrong pairing read as barely
         // selected on device.
         chipActive: { backgroundColor: semantic.interactive },
-        chipText: { ...typography.caption, fontSize: 13, color: colors.textSecondary },
+        chipText: { ...typeStyle('meta', locale), color: colors.textSecondary },
         chipTextActive: { color: semantic.onInteractive, fontWeight: '600' },
         footerButton: { flex: 1 },
         deleteButton: { alignSelf: 'center', marginTop: spacing.lg },
-        deleteText: { ...typography.caption, color: colors.danger, fontWeight: '600' },
-        preview: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.sm },
-        midCycleTitle: { ...typography.title, fontSize: 18, color: colors.textPrimary, marginBottom: spacing.xs },
-        midCycleBody: { ...typography.body, fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.lg },
+        deleteText: { ...typeStyle('meta', locale), color: colors.danger, fontWeight: '600', fontFamily: fontFamilyForWeight(600, locale) },
+        preview: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: -spacing.xs, marginBottom: spacing.sm },
+        midCycleTitle: { ...typeStyle('titleCard', locale), fontSize: 18, color: colors.textPrimary, marginBottom: spacing.xs },
+        midCycleBody: { ...typeStyle('support', locale), color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.lg },
         midCycleOption: {
           backgroundColor: colors.surfaceMuted,
           borderRadius: radius.control,
@@ -550,17 +575,17 @@ export const AddIncomeModal = forwardRef<
           marginBottom: spacing.sm,
         },
         midCycleOptionDisabled: { opacity: 0.5 },
-        midCycleOptionText: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
+        midCycleOptionText: { ...typeStyle('support', locale), fontSize: 15, fontWeight: '600', fontFamily: fontFamilyForWeight(600, locale), color: colors.textPrimary },
         toggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
-        toggleText: { ...typography.caption, fontSize: 13, color: colors.textSecondary, flex: 1, lineHeight: 18 },
-        irregularNote: { ...typography.micro, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 15 },
+        toggleText: { ...typeStyle('meta', locale), color: colors.textSecondary, flex: 1, lineHeight: 18 },
+        irregularNote: { ...typeStyle('meta', locale), fontSize: 11, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 15 },
         mainPaydayRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.lg, minHeight: 44, paddingVertical: spacing.xs },
         mainPaydayRowDisabled: { opacity: 0.55 },
         mainPaydayTextBlock: { flex: 1 },
-        mainPaydayTitle: { ...typography.body, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
-        mainPaydaySupport: { ...typography.caption, fontSize: 12, color: colors.textSecondary, marginTop: 2, lineHeight: 17 },
+        mainPaydayTitle: { ...typeStyle('support', locale), fontSize: 15, fontWeight: '600', fontFamily: fontFamilyForWeight(600, locale), color: colors.textPrimary },
+        mainPaydaySupport: { ...typeStyle('meta', locale), fontSize: 12, color: colors.textSecondary, marginTop: 2, lineHeight: 17 },
       }),
-    [colors, radius, spacing, typography, semantic]
+    [colors, radius, spacing, typography, semantic, locale]
   );
 
   if (formStep === 'midCycle' && midCyclePayload && midCycleDate) {
@@ -609,6 +634,8 @@ export const AddIncomeModal = forwardRef<
             onAddBalance={() => setAddBalanceVisible(true)}
           />
         )}
+        {/* Pass D0 — the mid-cycle choices are Saves too: same pending / failure line. */}
+        <EditorCompletionStatus pending={completion.pending} errorText={completion.errorText} testID="income-editor-status" />
         <AddWealthItemModal visible={addBalanceVisible} kind="asset" onClose={() => setAddBalanceVisible(false)} onlyLiquidCategories />
       </>
     );
@@ -618,10 +645,10 @@ export const AddIncomeModal = forwardRef<
     return (
       <KeyboardSheet
         visible={visible}
-        onClose={onClose}
+        onClose={handleDismiss}
         isDirty={false}
         title="One more thing"
-        footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} disabled={midCycleSubmitting} />}
+        footer={<Button label="Cancel" variant="secondary" onPress={handleDismiss} style={styles.footerButton} disabled={midCycleSubmitting} />}
       >
         {midCycleContent}
       </KeyboardSheet>
@@ -798,10 +825,18 @@ export const AddIncomeModal = forwardRef<
       )}
 
       {isEditing ? (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-          <Text style={styles.deleteText}>Delete income source</Text>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={handleDelete}
+          disabled={completion.isPending}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: completion.isPending, busy: completion.pending === 'deleting' }}
+          testID="income-editor-delete"
+        >
+          <Text style={styles.deleteText}>{completion.pending === 'deleting' ? EDITOR_DELETING_LABEL : 'Delete income source'}</Text>
         </TouchableOpacity>
       ) : null}
+      <EditorCompletionStatus pending={completion.pending} errorText={completion.errorText} testID="income-editor-status" />
     </>
   );
 
@@ -810,15 +845,22 @@ export const AddIncomeModal = forwardRef<
   return (
     <KeyboardSheet
       visible={visible}
-      onClose={onClose}
+      onClose={handleDismiss}
       title={isEditing ? 'Edit income source' : 'Add income source'}
       isDirty={isDetailsDirty}
       discardTitle="Discard income?"
       discardMessage="Your entered income details will be lost."
       footer={
         <>
-          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+          <Button label="Cancel" variant="secondary" onPress={requestCancel} disabled={completion.isPending} style={styles.footerButton} />
+          <Button
+            label={completion.pending === 'saving' ? EDITOR_SAVING_LABEL : 'Save'}
+            onPress={handleSave}
+            disabled={!canSave || completion.isPending}
+            loading={completion.pending === 'saving'}
+            style={styles.footerButton}
+            testID="income-editor-save"
+          />
         </>
       }
     >

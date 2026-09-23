@@ -125,7 +125,7 @@ console.log('\n=== 4. AddWealthItemModal.tsx: embedded only ever skips the Keybo
   assert('4b. performSave still branches embedded vs standalone only for HOW it closes and confirms, never for whether addAsset/updateAsset is called', /if \(embedded\) \{\s*\n\s*onSaveSuccess\?\.\(kind === 'asset' \? assetType : liabilityType\);\s*\n\s*\} else \{[\s\S]{0,900}?onClose\(\);\s*\n\s*\}/.test(ADD_WEALTH_SRC));
   assert(
     '4c. requestEmbeddedClose never bypasses the discard-confirmation gate for any reason except the never-discards "back" — nested-handoff correction: \'back\' may now first take an internal step back to this form\'s own picker (never a discard, just internal navigation) before it forwards to onConfirmedClose, but the confirmDiscardIfDirty tail for every OTHER reason is untouched',
-    /function requestEmbeddedClose\(reason: AddWealthItemCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{[\s\S]*?onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\)\);/.test(ADD_WEALTH_SRC)
+    /function requestEmbeddedClose\(reason: AddWealthItemCloseReason\) \{\s*\n\s*if \(completion\.isPendingRef\.current\) return;[^\n]*\n\s*if \(reason === 'back'\) \{[\s\S]*?onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\)\);/.test(ADD_WEALTH_SRC)
   );
   assert(
     "4d. nested-handoff correction — the internal picker-back only ever flips showLiabilitySelector back to true, never calls confirmDiscardIfDirty/onClose/resetDraft-equivalent logic — a genuinely non-discarding internal navigation step, not a disguised close",

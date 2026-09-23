@@ -139,7 +139,7 @@ console.log('\n=== 3. Exactly four haptic events, one dispatch module ===');
   assert('3k. QuickAddModal funnels ALL confirmed transaction deletions through ONE rigid boundary', (QAM.match(/hapticRigid\(\);/g) ?? []).length === 1 && (QAM.match(/confirmedDeleteTransaction\(/g) ?? []).length === 11 && !/onPress: \(\) => \{ deleteTransaction\(/.test(QAM));
   assert('3l. goal deletion fires rigid ONLY inside the confirmed destructive press', /hapticRigid\(\);\s*\n\s*deleteGoal\(/.test(code(read('src/components/goals/GoalDetailSheet.tsx'))));
   const AWM = code(read('src/components/wealth/AddWealthItemModal.tsx'));
-  assert('3m. both confirmed wealth removals (Everyday asset, BNPL plan) fire rigid post-confirmation', /hapticRigid\(\);\s*\n\s*deleteAsset\(/.test(AWM) && /hapticRigid\(\);\s*\n\s*deleteLiability\(/.test(AWM) && (AWM.match(/hapticRigid\(\);/g) ?? []).length === 2);
+  assert('3m. both confirmed wealth removals (Everyday asset, BNPL plan) fire rigid post-confirmation', (AWM.match(/hapticRigid\(\);\s*\n\s*runDelete\(\);/g) ?? []).length === 2 && (AWM.match(/hapticRigid\(\);/g) ?? []).length === 2); // Pass D0 — both confirmed removals share the ONE durable Delete tail
   const lightSites = ALL_SRC.filter((rel) => rel !== 'src/lib/haptics.ts' && /hapticLight\(\)/.test(code(read(rel))));
   assert('3n. hapticLight is AUTHORISED BUT UNUSED — zero call sites, so light is NOT device-testable yet', lightSites.length === 0);
 }

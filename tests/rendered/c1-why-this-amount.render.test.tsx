@@ -62,13 +62,14 @@ describe('Pass C.1 — Why this amount? detail', () => {
   test('§3 breakdown reconciles: both salaries once (+$5,000), bills −$2,150, over starting $1,200', async () => {
     const user = userEvent.setup();
     await render(<Harness data={approvedData()} asOf={new Date(2026, 7, 15)} target={new Date(2026, 8, 30)} />);
-    await user.press(await screen.findByTestId('look-ahead-breakdown-toggle'));
+    // Pass D.4 — the ledger is visible by default; there is no expand control.
     expect(await screen.findByText('$1,200.00')).toBeOnTheScreen();
     expect(screen.getByText('$5,000.00')).toBeOnTheScreen();
     expect(screen.getByText('-$2,150.00')).toBeOnTheScreen();
     expect(screen.getByTestId('look-ahead-assumed')).toHaveTextContent(/Includes 2 assumed income payments/);
-    await user.press(screen.getByTestId('look-ahead-assumptions-toggle'));
-    expect(await screen.findByTestId('look-ahead-savings')).toHaveTextContent(/set aside about \$600 for savings and goals\. That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./); // C.3 single statement
+    // D.5 — the amount is carried by the row it annotates; the sentence is stated ONCE, beside it.
+    expect(await screen.findByTestId('look-ahead-planned')).toHaveTextContent('$600', { exact: false });
+    expect(screen.getByTestId('look-ahead-savings')).toHaveTextContent(/That plan is shown for information only — the money may not have moved yet, and it is not subtracted from this estimated balance\./);
     expect(screen.getByTestId('look-ahead-protected')).toBeOnTheScreen();
   }, 30000);
 

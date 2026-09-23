@@ -50,7 +50,7 @@ console.log('=== 1. Bill (AddRecurringItemModal.tsx) — embedded wiring (Class 
   assert('1a. forwardRef with AddRecurringItemModalHandle = EmbeddedStepHandle', /export type AddRecurringItemModalHandle = EmbeddedStepHandle;/.test(BILL_SRC) && /export const AddRecurringItemModal = forwardRef</.test(BILL_SRC));
   assert('1b. onRequestLoan (embedded handoff) is distinct from onSelectLoan (standalone) — both present', /onSelectLoan\?: \(type: LiabilityType\) => void;/.test(BILL_SRC) && /onRequestLoan\?: \(type: LiabilityType\) => void;/.test(BILL_SRC));
   assert('1c. chooseBillType branches embedded (onRequestLoan, synchronous) vs standalone (the original defer/timer dance, byte-unchanged)', /if \(embedded\) \{\s*\n\s*onRequestLoan\?\.\(p\.handoffLoanType\);\s*\n\s*return;\s*\n\s*\}/.test(BILL_SRC));
-  assert('1d. handleRequestClose never discards on \'back\', confirms on every other reason', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\), 'Discard this bill\?', 'Your new bill details will be lost\.'\);/.test(BILL_SRC));
+  assert('1d. handleRequestClose never discards on \'back\', confirms on every other reason', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(completion\.isPendingRef\.current\) return;[^\n]*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}\s*\n\s*confirmDiscardIfDirty\(isDirty, \(\) => onConfirmedClose\?\.\(reason\), 'Discard this bill\?', 'Your new bill details will be lost\.'\);/.test(BILL_SRC));
   assert('1e. handleSave success path branches embedded (onSaveSuccess) vs standalone (onClose), never a discard prompt on success', /if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/.test(BILL_SRC));
   assert('1f. the single remaining render step returns bare content when embedded, before falling through to the unchanged standalone KeyboardSheet wrap', (BILL_SRC.match(/if \(embedded\) return content;/g) || []).length === 1);
   assert('1f-i. no category render branch survives (Design 5.1 Wave 4 — the bill-type choice is in-form)', !/categoryContent/.test(BILL_SRC));
@@ -62,7 +62,7 @@ console.log('\n=== 2. Income source (AddIncomeModal.tsx) — embedded wiring acr
   assert('2a. forwardRef with AddIncomeModalHandle = EmbeddedStepHandle', /export type AddIncomeModalHandle = EmbeddedStepHandle;/.test(INCOME_SRC) && /export const AddIncomeModal = forwardRef</.test(INCOME_SRC));
   assert(
     '2b. onCanSaveChange is gated to formStep===\'details\' — Save is never reported reachable from category or midCycle, preventing a stray host Save tap from re-triggering the mid-cycle branch and minting an unused id',
-    /onCanSaveChange\?\.\(canSave && formStep === 'details'\);/.test(INCOME_SRC)
+    /onCanSaveChange\?\.\(canSave && formStep === 'details' && !completion\.isPending\);/.test(INCOME_SRC)
   );
   assert('2c. handleSave itself also guards on formStep===\'details\', defensively, not just the reported canSave', /if \(!canSave \|\| !parsedIncome\.valid \|\| formStep !== 'details'\) return;/.test(INCOME_SRC));
   // SUPERSEDED by Design 5.1 Wave 4: the 'category' step is removed (its
@@ -83,10 +83,10 @@ console.log('\n=== 2. Income source (AddIncomeModal.tsx) — embedded wiring acr
     /<InlineSelect\n\s+label="Where does this income come from\?"/.test(INCOME_SRC) &&
       /Tell \{brand\.name\} where your income comes from\./.test(INCOME_SRC)
   );
-  assert('2e. handleRequestClose never discards on \'back\'', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}/.test(INCOME_SRC));
+  assert('2e. handleRequestClose never discards on \'back\'', /function handleRequestClose\(reason: EmbeddedCloseReason\) \{\s*\n\s*if \(completion\.isPendingRef\.current\) return;[^\n]*\n\s*if \(reason === 'back'\) \{\s*\n\s*onConfirmedClose\?\.\(reason\);\s*\n\s*return;\s*\n\s*\}/.test(INCOME_SRC));
   assert(
     '2f. all three mid-cycle option handlers (chooseMidCycleNoOccurrence/AlreadyIncluded/AddToBalance) branch embedded (onSaveSuccess) vs standalone (onClose) on their own successful-completion path — not just the ordinary handleSave',
-    (INCOME_SRC.match(/if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/g) || []).length === 4
+    (INCOME_SRC.match(/if \(embedded\) onSaveSuccess\?\.\(\);\s*\n\s*else onClose\(\);/g) || []).length === 1 && ['chooseMidCycleNoOccurrence', 'chooseMidCycleAlreadyIncluded', 'chooseMidCycleAddToBalance'].every((fn) => new RegExp(`function ${fn}\\([^)]*\\) \\{[\\s\\S]{0,700}?finishSave\\(`).test(INCOME_SRC)) // Pass D0 — one durable tail, used by all three
   );
   assert('2g. both remaining render steps (midCycle, details) return bare content when embedded', (INCOME_SRC.match(/if \(embedded\) return (midCycleContent|content);/g) || []).length === 2);
   assert('2g-i. no category render branch survives', !/categoryContent/.test(INCOME_SRC));

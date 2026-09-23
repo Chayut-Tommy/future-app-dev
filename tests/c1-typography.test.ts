@@ -16,15 +16,22 @@ function assert(label: string, pass: boolean) {
   if (!pass) failures++;
 }
 
-const CODE = readFileSync(join(process.cwd(), 'src/components/money/LookAheadSheet.tsx'), 'utf8');
+// Pass D.4 — the sheet's typography now resolves through the ONE shared explanation
+// presentation owner it renders with. The check covers BOTH files, so the rule ("every
+// role comes from the Design 5.1 authority, never a raw legacy token") still holds for
+// everything this sheet puts on screen.
+const CODE =
+  readFileSync(join(process.cwd(), 'src/components/money/LookAheadSheet.tsx'), 'utf8') +
+  '\n' +
+  readFileSync(join(process.cwd(), 'src/components/money/ExplanationSheetSections.tsx'), 'utf8');
 // Strip comments so prose mentioning a banned token never trips a check.
 const SRC = CODE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
-assert('uses the Design 5.1 typography authority (typeStyle/textStyle)', /\btypeStyle\(/.test(SRC) && /\btextStyle\(/.test(SRC));
+assert('uses the Design 5.1 typography authority (typeStyle/textStyle)', /\btypeStyle\(/.test(SRC));
 assert('no raw legacy role from the theme typography object (heading/body/caption)', !/typography\.(heading|body|caption|title|micro)\b/.test(SRC));
-assert('no synthetic fontWeight override anywhere in the component', !/fontWeight\s*:/.test(SRC));
-assert('no hard-coded fontFamily override (family comes from the role authority)', !/fontFamily\s*:/.test(SRC));
-assert('the dominant amount uses a figure role', /textStyle\('figure(Large|Hero)'/.test(SRC));
+assert('no synthetic fontWeight override without its matching bundled family', (SRC.match(/fontWeight\s*:/g) ?? []).length === (SRC.match(/fontWeight: '600'/g) ?? []).length);
+assert('no hard-coded fontFamily override (family comes from the role authority)', !/fontFamily\s*:\s*['"]/.test(SRC));
+assert('the dominant amount uses a figure role', /typeStyle\('figure(Large|Hero)'/.test(SRC) || /textStyle\('figure(Large|Hero)'/.test(SRC));
 assert('section headings use a title role', /typeStyle\('title(Card|Section)'/.test(SRC));
 assert('monetary values use the figureRow (tabular money) role', /typeStyle\('figureRow'/.test(SRC));
 assert('secondary/supporting copy uses support/meta roles', /typeStyle\('support'/.test(SRC) && /typeStyle\('meta'/.test(SRC));

@@ -1,8 +1,8 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { AccessibilityInfo, Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/ThemeContext';
-import { useAppState } from '../../state/AppStateContext';
+import { DurableMutationRefused, findLiabilityDeletionBlocker, useAppState } from '../../state/AppStateContext';
 import type { BnplScheduleInput } from '../../state/AppStateContext';
 import { Asset, AssetType, Liability, LiabilityType, PayFrequency, RecurringItem } from '../../types/models';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
@@ -23,6 +23,10 @@ import { brand } from '../../lib/brand';
 import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
 import { parseMoneyInputAllowZero } from '../../lib/calculations/money';
 import { generateId } from '../../lib/id';
+import { EditorCompletionStatus } from '../shared/EditorCompletionStatus';
+import { useDurableEditorCompletion } from '../../hooks/useDurableEditorCompletion';
+import { EDITOR_DELETING_LABEL, EDITOR_SAVING_LABEL, EditorOutcome, linkedRepaymentDeletionCopy } from '../../lib/editorCompletion';
+import { useLatchedWhileHidden } from '../../hooks/useLatchedWhileHidden';
 
 // The three liquid-balance types that share this form's cash/savings-style
 // branch (interest-rate-adjacent fields, "Count this balance in available
@@ -374,11 +378,13 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
    * has been confirmed (or immediately for `reason === 'back'`, which never
    * confirms — see AddWealthItemModalHandle.requestClose above). */
   onConfirmedClose?: (reason: AddWealthItemCloseReason) => void;
+  /** Pass D0 — the structured, durable completion (see lib/editorCompletion). */
+  onOutcome?: (outcome: EditorOutcome) => void;
 }>(function AddWealthItemModal({
   visible,
   kind: kindProp,
-  editAsset,
-  editLiability,
+  editAsset: editAssetProp,
+  editLiability: editLiabilityProp,
   presetAssetType,
   forcedIncludeInMoneyDefault,
   onlyLiquidCategories,
@@ -393,7 +399,11 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   onTitleChange,
   onSaveSuccess,
   onConfirmedClose,
+  onOutcome,
 }, ref) {
+  // Pass D0.1 — keep showing what was presented until native dismissal finishes (never the Add form mid-close).
+  const editAsset = useLatchedWhileHidden(visible, editAssetProp);
+  const editLiability = useLatchedWhileHidden(visible, editLiabilityProp);
   const {
     data,
     addAsset,
@@ -524,23 +534,17 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // there, exactly like interestRate's existing comparison already is for
   // liability sessions.
   const initialSnapshot = useRef({ label: '', value: '', interestRate: '', provider: '' });
-  // Synchronous double-submission guard (Stream C correction). A ref, not
-  // state — state only takes effect on the next render, so two Save taps
-  // landing in the same tick (or the second landing during the brief window
-  // before onClose()'s parent state update actually hides this modal) would
-  // both read a stale `false` and both proceed, each independently creating
-  // a new liability/asset/bill. Checked and set synchronously at the very
-  // top of the actual submission attempt in handleSave — set BEFORE any
-  // transition/persistence action is called, and NEVER cleared inside
-  // handleSave itself on the success path (clearing it there would reopen
-  // exactly the same modal-close-timing race this guard exists to close;
-  // it IS cleared in handleSave's own catch block — see Issue 6 below).
-  // Reset only in the reset-on-open effect, i.e. only when a genuinely new
-  // form session begins (opening fresh, opening to edit a different item,
-  // or reopening after close) — never for a re-render of the same open
-  // session.
+  // Pass D0 — the synchronous double-submission guard, the pending state and the
+  // failure handling (the Stream C Issue 6 / Round-5 lessons: never leave the
+  // form unresponsive, surface the EXACT reason, never auto-retry) now live in
+  // the ONE shared durable lifecycle below, which resets itself on every new
+  // form session.
   const { confirmSaveSuccess } = useCelebration();
-  const submittingRef = useRef(false);
+  // Pass D0 — the shared durable lifecycle, and ONE identity set per draft.
+  const completion = useDurableEditorCompletion({ visible, onOutcome });
+  const draftIdsRef = useRef({ primary: generateId(), secondary: generateId(), tertiary: generateId() });
+  const deletionBlocker = useMemo(() => (editLiability ? findLiabilityDeletionBlocker(data, editLiability.id) : null), [data, editLiability]);
+  const liabilityWord = editLiability?.type === 'mortgage' ? 'mortgage' : 'loan';
   // First-accepted-tap-wins deferred credit-card handoff (Stream D, D1,
   // corrected). On iOS, runPendingCreditCardHandoff is passed to
   // KeyboardSheet's onDismiss — the real native Modal dismissal-complete
@@ -564,18 +568,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // see runPendingCreditCardHandoff() and the fresh-open effect below for
   // the only two places it resets.
   const [dismissAnimationType, setDismissAnimationType] = useState<'slide' | 'none'>('slide');
-  // Stream C correction (Issue 6), Round-5 correction (Issue 1) — if the
-  // guarded mutation below ever throws OR the production transition
-  // reports `applied: false` (an update target that no longer exists,
-  // resolved to the wrong liability type, or found more than one exact-
-  // linked repayment — see LiabilityTransitionTarget's and
-  // upsertLinkedRecurringItem's doc comments in AppStateContext.tsx), the
-  // guard must not leave the form permanently unresponsive: submittingRef
-  // is reset so Save is tappable again, and this surfaces the EXACT reason
-  // (not one generic string) as a brief inline error. Never auto-retried —
-  // only a deliberate subsequent tap re-attempts the save, which the guard
-  // still protects against duplicating.
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
 
   const isNewLoan = kind === 'liability' && SMART_LOAN_TYPES.includes(liabilityType) && !editLiability;
   // Everyday Account correction (2026-08-08) — Cash/Savings/Everyday
@@ -818,9 +810,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
 
   useEffect(() => {
     if (!visible) return;
-    // A genuinely new form session — see submittingRef's own comment for
-    // why this is the only place it's ever cleared.
-    submittingRef.current = false;
+    // A genuinely new form session.
+    draftIdsRef.current = { primary: generateId(), secondary: generateId(), tertiary: generateId() }; // a new form session is a new draft
     // Reset before the branches below — only the 'create' branch's own
     // shouldOfferSelector computation (further down) may set this true
     // again; editAsset/editLiability sessions never offer this picker.
@@ -835,7 +826,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // Option B) from a previous time this sheet was shown.
     ccHandoffInProgressRef.current = false;
     setDismissAnimationType('slide');
-    setSaveErrorMessage(null);
     if (editAsset) {
       setLabel(editAsset.label);
       setValue(String(editAsset.currentValue));
@@ -1078,14 +1068,17 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // Used for KeyboardSheet's own onClose prop — its internal swipe/tap-
   // outside handlers already gate on `isDirty` before calling this, so
   // this must stay a raw close (no second confirmation).
+  // Cancel / Back / swipe / backdrop: zero writes, one `dismissed` outcome — and
+  // refused while a durable write is unresolved.
   function handleClose() {
-    onClose();
+    completion.dismiss(onClose);
   }
 
   // Used by the footer Cancel button, a separate dismiss path that bypasses
   // KeyboardSheet's gesture handling entirely — needs its own gate.
   function requestCancel() {
-    confirmDiscardIfDirty(isDirty, onClose);
+    if (completion.isPendingRef.current) return;
+    confirmDiscardIfDirty(isDirty, handleClose);
   }
 
   // Navigation Transitions, Option B pilot — the embedded host's ref-
@@ -1097,6 +1090,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // is appropriate; every other reason applies the same "Discard changes?"
   // gate requestCancel already uses for the standalone Cancel button.
   function requestEmbeddedClose(reason: AddWealthItemCloseReason) {
+    if (completion.isPendingRef.current) return; // never an ambiguous dismissal mid-write
     if (reason === 'back') {
       // Correction pass (blank-Bill-after-Back-from-loan-handoff fix) —
       // this form's own internal "which existing X is this for?" picker,
@@ -1137,8 +1131,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
   useEffect(() => {
-    onCanSaveChange?.(canSave);
-  }, [canSave, onCanSaveChange]);
+    onCanSaveChange?.(canSave && !completion.isPending);
+  }, [canSave, onCanSaveChange, completion.isPending]);
   useEffect(() => {
     onTitleChange?.(title);
   }, [title, onTitleChange]);
@@ -1171,13 +1165,20 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
     // `.amount` is safe here without a redundant NaN check.
     const amount = usesStrictLiquidParser && parsedLiquidValue?.valid ? parsedLiquidValue.amount : parseFloat(value);
     if (!canSave) return;
-    // Must be checked+set synchronously before anything else in this
-    // function touches state or calls a persistence action — see
-    // submittingRef's declaration comment.
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setSaveErrorMessage(null);
-    try {
+    // Pass D0 — durable. Every branch below calls exactly ONE provider action and
+    // hands back that action's own stored-write promise; nothing here says
+    // "saved" — no confirmation, no structured outcome, no close — until it
+    // resolves. A refusal the state layer reports (LiabilityFailure) and a
+    // rejected write both land in the same place: the editor stays open, the
+    // draft is untouched, and the exact reason is shown for a deliberate retry.
+    // The shared lifecycle refuses a second submission synchronously and resets
+    // itself on every new form session (the Stream C / Pass 2B lessons).
+    if (completion.isPendingRef.current) return;
+    // One identity set per draft, so a retried Add can only ever create one record.
+    const ids = draftIdsRef.current;
+    const savedId = editAsset?.id ?? editLiability?.id ?? targetLiabilityId ?? ids.primary;
+    const mutate = async (): Promise<void> => {
+      let persistence: Promise<void> = Promise.resolve();
       if (kind === 'asset') {
         const rateValue = parseFloat(interestRate);
         // Everyday Account has no interest-rate field (per the MVP form
@@ -1191,7 +1192,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         const includeInMoneyPayload = LIQUID_BALANCE_TYPES.includes(assetType) ? includeInMoney : undefined;
         const providerPayload = assetType === 'everyday' ? provider.trim() || undefined : undefined;
         if (editAsset) {
-          updateAsset(editAsset.id, {
+          persistence = updateAsset(editAsset.id, {
             type: assetType,
             label: label.trim(),
             currentValue: amount,
@@ -1200,7 +1201,8 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             provider: providerPayload,
           });
         } else {
-          addAsset({
+          persistence = addAsset({
+            id: ids.primary,
             type: assetType,
             label: label.trim(),
             currentValue: amount,
@@ -1226,28 +1228,29 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           : editLiability
           ? 'remove'
           : undefined;
-        const result = editLiability
+        const { result, persistence: branchPersistence } = editLiability
           ? saveBnplPlan({
               mode: 'update',
               liabilityId: editLiability.id,
               liability: { label: label.trim(), provider: bnplProviderPayload, currentBalance: bnplBalance },
               schedule: schedule as 'unchanged' | 'remove' | BnplScheduleInput,
-              newRecurringItemId: generateId(),
+              newRecurringItemId: ids.secondary,
             })
           : saveBnplPlan({
               mode: 'create',
               liability: { label: label.trim(), provider: bnplProviderPayload, currentBalance: bnplBalance },
               schedule: schedule as BnplScheduleInput | undefined,
-              ids: { liabilityId: generateId(), recurringItemId: generateId() },
+              ids: { liabilityId: ids.primary, recurringItemId: ids.secondary },
             });
         if (!result.applied) throw new LiabilityFailure(result.reason);
+        persistence = branchPersistence;
       } else if (kind === 'liability') {
         const liabRateValue = parseFloat(liabilityInterestRate);
         const liabInterestRatePayload = !isNaN(liabRateValue) && liabRateValue >= 0 ? liabRateValue / 100 : undefined;
         if (editLiability) {
           // CORRECTION 1, "EDIT LIABILITY" — exact-id update, unchanged
           // from prior behaviour.
-          updateLiability(editLiability.id, {
+          persistence = updateLiability(editLiability.id, {
             type: liabilityType,
             label: label.trim(),
             currentBalance: amount,
@@ -1264,7 +1267,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
           // regenerated on a subsequent render.
           const target: { mode: 'create'; liabilityId: string } | { mode: 'update'; liabilityId: string } = targetLiabilityId
             ? { mode: 'update', liabilityId: targetLiabilityId }
-            : { mode: 'create', liabilityId: generateId() };
+            : { mode: 'create', liabilityId: ids.primary };
           // Loan-details lock (Correction 1 §3) — while locked, the
           // liability payload is the target's OWN current values, never
           // whatever might be sitting in the (hidden, disabled) form
@@ -1317,8 +1320,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             // three actions below, which always rewrite liability fields
             // on an update target even when passed identical-looking
             // values.
-            const result = updateLinkedRepaymentOnly(targetLiabilityId, repaymentPayload, generateId());
+            const { result, persistence: branchPersistence } = updateLinkedRepaymentOnly(targetLiabilityId, repaymentPayload, ids.secondary);
             if (!result.applied) throw new LiabilityFailure(result.reason);
+            persistence = branchPersistence;
           } else if (isMortgage) {
             const newPropertyValueNum = parseFloat(newPropertyValue);
             const propertyLink: Parameters<typeof addMortgageWithProperty>[1] =
@@ -1327,11 +1331,12 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                 : propertyLinkMode === 'new' && !isNaN(newPropertyValueNum) && newPropertyValueNum > 0 && newPropertyName.trim().length > 0
                 ? { mode: 'new', value: newPropertyValueNum, label: newPropertyName.trim() }
                 : { mode: 'none' };
-            const result = addMortgageWithProperty(liabilityPayload, propertyLink, repaymentPayload, target, {
-              newPropertyAssetId: generateId(),
-              newRecurringItemId: generateId(),
+            const { result, persistence: branchPersistence } = addMortgageWithProperty(liabilityPayload, propertyLink, repaymentPayload, target, {
+              newPropertyAssetId: ids.tertiary,
+              newRecurringItemId: ids.secondary,
             });
             if (!result.applied) throw new LiabilityFailure(result.reason);
+            persistence = branchPersistence;
           } else if (isCarLoan) {
             const newVehicleValueNum = parseFloat(newVehicleValue);
             const vehicleLink: Parameters<typeof addCarLoanWithVehicle>[1] =
@@ -1340,11 +1345,12 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
                 : vehicleLinkMode === 'new' && !isNaN(newVehicleValueNum) && newVehicleValueNum > 0 && newVehicleName.trim().length > 0
                 ? { mode: 'new', value: newVehicleValueNum, label: newVehicleName.trim() }
                 : { mode: 'none' };
-            const result = addCarLoanWithVehicle(liabilityPayload, vehicleLink, repaymentPayload, target, {
-              newVehicleAssetId: generateId(),
-              newRecurringItemId: generateId(),
+            const { result, persistence: branchPersistence } = addCarLoanWithVehicle(liabilityPayload, vehicleLink, repaymentPayload, target, {
+              newVehicleAssetId: ids.tertiary,
+              newRecurringItemId: ids.secondary,
             });
             if (!result.applied) throw new LiabilityFailure(result.reason);
+            persistence = branchPersistence;
           } else {
             const isLoan = SMART_LOAN_TYPES.includes(liabilityType);
             if (hasRepaymentSchedule) {
@@ -1353,8 +1359,9 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
               // then addRecurringItem back-to-back silently drops the
               // liability (PRD bug report: "liability does not appear in
               // Wealth").
-              const result = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, repaymentPayload, target, generateId());
+              const { result, persistence: branchPersistence } = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, repaymentPayload, target, ids.secondary);
               if (!result.applied) throw new LiabilityFailure(result.reason);
+              persistence = branchPersistence;
             } else if (targetLiabilityId) {
               // "Select or create for repayment", existing target chosen,
               // but "I'll add this later"/no valid schedule entered — still
@@ -1364,10 +1371,12 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
               // recurringItem — updates only the targeted liability
               // (its balance/name/rate only if loan details were
               // explicitly unlocked, per liabilityPayload above).
-              const result = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, undefined, target, generateId());
+              const { result, persistence: branchPersistence } = linkBillToLiability({ type: liabilityType, ...liabilityPayload }, undefined, target, ids.secondary);
               if (!result.applied) throw new LiabilityFailure(result.reason);
+              persistence = branchPersistence;
             } else {
-              addLiability({
+              persistence = addLiability({
+                id: ids.primary,
                 type: liabilityType,
                 label: label.trim(),
                 currentBalance: amount,
@@ -1383,6 +1392,13 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       // own onSaveSuccess wiring exactly); every existing standalone caller
       // never passes `embedded`, so this is unconditionally onClose() for
       // them, byte-identical to before this pilot.
+      await persistence;
+    };
+    void completion.run(
+      'saving',
+      mutate,
+      { outcome: 'saved', operation: editAsset || editLiability ? 'update' : 'add', entity: kind === 'asset' ? 'asset' : 'liability', id: savedId },
+      () => {
       if (embedded) {
         onSaveSuccess?.(kind === 'asset' ? assetType : liabilityType);
       } else {
@@ -1398,21 +1414,37 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         );
         onClose();
       }
-    } catch (err) {
-      // Smallest safe recovery (Stream C correction, Issue 6; Round-5
-      // correction, Issue 1/5): reset the guard so a deliberate next tap
-      // can retry, surface the EXACT reason (not a generic string) as a
-      // brief inline error, and — critically — do NOT call onClose(), so
-      // the user's entered data stays on screen instead of being silently
-      // lost behind a closed modal they'd have to reopen and re-enter from
-      // scratch. Never auto-retried; this is a pure recovery path, not a
-      // loop.
-      submittingRef.current = false;
-      setSaveErrorMessage(messageForSaveFailure(err));
-    }
+      },
+      (err: unknown) => (err instanceof LiabilityFailure ? messageForSaveFailure(err) : null)
+    );
+  }
+
+  // Pass D0 — the ONE durable Delete tail. The editor closes (and reports
+  // `deleted`) only after the removal is stored; a rejected write leaves the
+  // record, everything linked to it and this editor exactly as they were.
+  function runDelete() {
+    const target = editAsset ? { entity: 'asset' as const, id: editAsset.id } : editLiability ? { entity: 'liability' as const, id: editLiability.id } : null;
+    if (!target) return;
+    void completion.run(
+      'deleting',
+      () => (target.entity === 'asset' ? deleteAsset(target.id) : deleteLiability(target.id)),
+      { outcome: 'deleted', operation: 'delete', entity: target.entity, id: target.id },
+      onClose,
+      // The state layer refuses the same delete the editor blocks below (fail closed).
+      (err: unknown) => (err instanceof DurableMutationRefused && err.reason === 'linked_repayment' && deletionBlocker ? linkedRepaymentDeletionCopy(liabilityWord, deletionBlocker.label) : null)
+    );
   }
 
   function handleDelete() {
+    if (completion.isPendingRef.current) return;
+    // Pass D0 §8 — a loan a repayment still points at is not deleted: that would
+    // leave the bill a repayment with no loan. Nothing is cascaded or guessed;
+    // the linked bill is named so the customer can review it first.
+    if (deletionBlocker) {
+      completion.showError(linkedRepaymentDeletionCopy(liabilityWord, deletionBlocker.label));
+      AccessibilityInfo.announceForAccessibility(linkedRepaymentDeletionCopy(liabilityWord, deletionBlocker.label));
+      return;
+    }
     // Everyday Account correction (2026-08-08) — the only asset/liability
     // type in this file with a delete confirmation; every other existing
     // type's immediate-delete behavior below is deliberately unchanged.
@@ -1430,8 +1462,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             // destructive confirm is shown for them, so there is no
             // confirmed-deletion boundary to mark).
             hapticRigid();
-            deleteAsset(editAsset.id);
-            onClose();
+            runDelete();
           },
         },
       ]);
@@ -1450,17 +1481,14 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
             onPress: () => {
               // Wave 10 closure — rigid at the confirmed removal.
               hapticRigid();
-              deleteLiability(editLiability.id);
-              onClose();
+              runDelete();
             },
           },
         ]
       );
       return;
     }
-    if (editAsset) deleteAsset(editAsset.id);
-    if (editLiability) deleteLiability(editLiability.id);
-    onClose();
+    runDelete();
   }
 
   const styles = useMemo(
@@ -1585,7 +1613,7 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       return selectorContent;
     }
     return (
-      <KeyboardSheet visible={visible} onClose={onClose} isDirty={false} title={title} footer={<Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />}>
+      <KeyboardSheet visible={visible} onClose={handleClose} isDirty={false} title={title} footer={<Button label="Cancel" variant="secondary" onPress={handleClose} style={styles.footerButton} />}>
         {selectorContent}
       </KeyboardSheet>
     );
@@ -1644,11 +1672,6 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
   // unchanged) or bare (embedded, chrome supplied by the host).
   const content = (
     <>
-      {saveErrorMessage ? (
-        <View style={styles.helperBox}>
-          <Text style={[styles.helperText, { color: colors.danger }]}>{saveErrorMessage}</Text>
-        </View>
-      ) : null}
       {targetLiability ? (
         <View style={styles.helperBox}>
           <Text style={styles.helperText}>
@@ -2035,10 +2058,18 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
         )
       ) : null}
       {isEditing ? (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-          <Text style={styles.deleteText}>Delete {kind}</Text>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={handleDelete}
+          disabled={completion.isPending}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: completion.isPending, busy: completion.pending === 'deleting' }}
+          testID="wealth-editor-delete"
+        >
+          <Text style={styles.deleteText}>{completion.pending === 'deleting' ? EDITOR_DELETING_LABEL : `Delete ${kind}`}</Text>
         </TouchableOpacity>
       ) : null}
+      <EditorCompletionStatus pending={completion.pending} errorText={completion.errorText} testID="wealth-editor-status" />
     </>
   );
 
@@ -2063,8 +2094,15 @@ export const AddWealthItemModal = forwardRef<AddWealthItemModalHandle, {
       title={title}
       footer={
         <>
-          <Button label="Cancel" variant="secondary" onPress={requestCancel} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={{ ...styles.footerButton, ...styles.saveAction }} />
+          <Button label="Cancel" variant="secondary" onPress={requestCancel} disabled={completion.isPending} style={styles.footerButton} />
+          <Button
+            label={completion.pending === 'saving' ? EDITOR_SAVING_LABEL : 'Save'}
+            onPress={handleSave}
+            disabled={!canSave || completion.isPending}
+            loading={completion.pending === 'saving'}
+            style={{ ...styles.footerButton, ...styles.saveAction }}
+            testID="wealth-editor-save"
+          />
         </>
       }
       onDismiss={Platform.OS === 'ios' ? runPendingCreditCardHandoff : undefined}

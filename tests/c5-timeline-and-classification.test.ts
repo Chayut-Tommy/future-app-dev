@@ -243,7 +243,7 @@ console.log('\n=== §3 future-date timeline rail ===');
   assert('collision clustering: ≥ 44pt, non-overlapping, chronological, every group in exactly one target', targets.every((t) => t.width >= 44 - 1e-9) && targets.every((t, i) => i === 0 || t.left >= targets[i - 1].left + targets[i - 1].width - 1e-9) && targets.flatMap((t) => t.groups.map((g) => g.key)).join() === t30.markers.map((m) => m.key).join());
   const withToday = targets.find((t) => t.groups.some((g) => g.key === '2026-09-20'))!;
   const insp = describeHitTarget(withToday, t30);
-  assert('a collision target discloses its date range and count and keeps a section per date with its own end-of-day balance', /^\d+ Sep – \d+ Sep · \d+ scheduled events$/.test(insp.title) && insp.sections.some((s) => s.balanceLine === 'End-of-day balance: $8,650') && insp.sections.every((s) => /^End-of-day balance: /.test(s.balanceLine)));
+  assert('a collision target discloses its date range and count and keeps a section per date with its own end-of-day balance', /^\d+ Sep – \d+ Sep · \d+ scheduled events$/.test(insp.title) && insp.sections.some((s) => s.balanceLine === 'End-of-day balance: $8,650') && insp.sections.every((s) => /^End-of-day balance: /.test(s.balanceLine ?? '')));
 
   // Paid occurrence removal and the next recurrence.
   const after = afterRecording();

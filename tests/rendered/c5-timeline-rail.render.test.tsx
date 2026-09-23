@@ -168,7 +168,9 @@ describe('C.5 §1 — the future-date card draws ONE "Timeline to [date]" rail',
   test('30 Sep: heading, cycle start → Today deep blue, Today → selected date pale blue, truthful labels, no graph, locked figures unchanged', async () => {
     await render(<Wrap><Card data={deviceData()} target={[2026, 9, 30]} /></Wrap>);
     expect(await screen.findByTestId('money-scenario-amount')).toHaveTextContent(/^\$14,400$/);
-    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · Lowest scheduled end-of-day balance \$8,650 on 20 Sep$/);
+    // Pass D.2 — the same authoritative status, now a title and one supporting line.
+    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected$/);
+    expect(screen.getByTestId('money-scenario-cashflow-detail')).toHaveTextContent(/^Lowest scheduled end-of-day balance: \$8,650 on 20 Sep$/);
     await layoutRail(286);
     expect(screen.getByTestId(`${P}-title`, H)).toHaveTextContent('Timeline to 30 Sep');
     expect(screen.getAllByTestId(P)).toHaveLength(1);
@@ -184,7 +186,7 @@ describe('C.5 §1 — the future-date card draws ONE "Timeline to [date]" rail',
     expect(fill.height).toBe(8);
     expect(track.height).toBe(8);
     // Labels.
-    expect(screen.getByTestId(`${P}-start`, H)).toHaveTextContent(/(7 Sep|Sep 7)Cycle start$/);
+    expect(screen.getByTestId(`${P}-start`, H)).toHaveTextContent(/(7 Sep|Sep 7)Estimated cycle start$/); // Pass D.2 — the estimate is stated ON the endpoint
     expect(screen.getByTestId(`${P}-end`, H)).toHaveTextContent(/(30 Sep|Sep 30)Selected date$/);
     expect(within(screen.getByTestId(`${P}-container`)).queryByText(/^Payday/, H)).toBeNull();
     const today = screen.getByTestId(`${P}-today`, H);
@@ -371,7 +373,7 @@ describe('C.5 §2 — Money screen: payday mode unchanged; future mode uses AUP\
     await screen.findByTestId('money-scenario-card');
     expect(screen.getByTestId('money-scenario-amount')).toHaveTextContent(/^\$14,400$/);
     expect(screen.getByTestId(`${P}-title`, H)).toHaveTextContent('Timeline to 30 Sep');
-    expect(screen.getByTestId(`${P}-start`, H)).toHaveTextContent(/(7 Sep|Sep 7)Cycle start$/);
+    expect(screen.getByTestId(`${P}-start`, H)).toHaveTextContent(/(7 Sep|Sep 7)Estimated cycle start$/); // Pass D.2 — the estimate is stated ON the endpoint
     expect(screen.getByTestId(`${P}-end`, H)).toHaveTextContent(/(30 Sep|Sep 30)Selected date$/);
     expect(screen.queryByText('Pay cycle progress', H)).toBeNull();
     expect(screen.getAllByTestId(P)).toHaveLength(1);
@@ -486,9 +488,12 @@ describe('C.5 §4 — one Main-payday eligibility authority', () => {
     await render(<Wrap><Probe /></Wrap>);
     await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('ready'));
     const before = writes();
-    await api!.setMainPaydayIncome('gig');
-    await api!.setMainPaydayIncome('rent'); // an expense
-    await api!.setMainPaydayIncome('nope');
+    // Pass D0.1 — the action is durable and REJECTS an ineligible or unknown source.
+    for (const bad of ['gig', 'rent' /* an expense */, 'nope']) {
+      let refused = false;
+      await api!.setMainPaydayIncome(bad).catch(() => { refused = true; });
+      expect(refused).toBe(true);
+    }
     await new Promise((r) => setTimeout(r, 30));
     expect(writes()).toBe(before);
     expect((await stored()).user.mainPaydayIncomeId).toBeUndefined();

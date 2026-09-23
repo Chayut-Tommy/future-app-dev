@@ -506,12 +506,23 @@ export function incomeRecordingNotice(amount: number | undefined): string | null
 }
 
 /** The confirmation summary shown once an account is chosen, so the
- * customer confirms against facts rather than memory. */
-export function confirmationSummary(input: { amount: number | undefined; accountName: string | null; dateISO?: string }): string | null {
+ * customer confirms against facts rather than memory.
+ *
+ * Pass D.5 — the preposition states the account's actual ROLE. Income arrives INTO
+ * the chosen account ("$250 to Savings"); a bill or repayment is funded FROM it
+ * ("$250 from Savings"). The default stays `from`, so every existing caller that
+ * names a funding source is unchanged. */
+export function confirmationSummary(input: {
+  amount: number | undefined;
+  accountName: string | null;
+  dateISO?: string;
+  direction?: 'to' | 'from';
+}): string | null {
   const money = wholeMoney(input.amount);
   if (!money || !input.accountName) return null;
+  const preposition = input.direction === 'to' ? 'to' : 'from';
   const day = shortDay(input.dateISO);
-  return day ? `${money} from ${input.accountName} · ${day}` : `${money} from ${input.accountName}`;
+  return day ? `${money} ${preposition} ${input.accountName} · ${day}` : `${money} ${preposition} ${input.accountName}`;
 }
 
 /** Minimum height for the one full-width primary action. Taller than the

@@ -210,7 +210,7 @@ function chooseAddNewLiabilityForRepayment(s: FormState, displayName: string) {
 
 console.log('=== 1. Structural: the mirror above matches the shipped source (closes the mirror-accuracy gap) ===');
 {
-  assert('1a. Alert is imported from react-native', /import \{ Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View \} from 'react-native';/.test(WEALTH_SRC));
+  assert('1a. Alert is imported from react-native', /import \{ AccessibilityInfo, Alert, Keyboard, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View \} from 'react-native';/.test(WEALTH_SRC));
   const guardBody = functionBody('function confirmPickerSelectionIfDirty(', WEALTH_SRC);
   assert('1b. confirmPickerSelectionIfDirty is found and reuses the existing isDirty signal (no second dirty flag invented)', guardBody.length > 0 && /if \(!isDirty\) \{/.test(guardBody));
   assert(

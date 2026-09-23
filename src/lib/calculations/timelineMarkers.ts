@@ -37,6 +37,21 @@ export type RailMarkerKind = 'income' | 'expected_income' | 'bill' | 'payday_end
  * cycle rail, stated every time so it is never mistaken for money AUP added. */
 export const EXPECTED_INCOME_NOT_INCLUDED = 'Expected income — not included in Available until payday';
 
+/** Pass D.3 — one canonical event behind a pay-cycle marker, carried so a tap can
+ * show it. Identity is the SAME occurrence id AUP / A3 already assigned; nothing is
+ * re-enumerated or matched by amount or date. */
+export interface RailMarkerEvent {
+  occurrenceId: string;
+  sourceId: string;
+  sourceKind: ProjectedEvent['sourceKind'];
+  date: LocalDate;
+  label: string;
+  signedCents: number;
+  typeLabel: string;
+  /** True when AUP subtracted it; false for expected income and the payday. */
+  included: boolean;
+}
+
 export interface RailMarker {
   /** Stable, deterministic key (kind + iso date) for React and dedup. */
   key: string;
@@ -53,6 +68,9 @@ export interface RailMarker {
    * payday endpoint and the shortfall marker are deliberately NOT included. */
   included: boolean;
   label: string;
+  /** Pass D.3 — the canonical events this marker stands for (pay-cycle rail). A
+   * marker with none is decorative and never interactive. */
+  events?: RailMarkerEvent[];
 }
 
 export interface TimelineRail {
@@ -79,7 +97,7 @@ function money(n: number): string {
 
 /** Aggregate same-kind, same-day entries into one marker without losing any. */
 function aggregate(
-  entries: { kind: RailMarkerKind; date: LocalDate; signedAmount: number; included: boolean; label: string }[],
+  entries: { kind: RailMarkerKind; date: LocalDate; signedAmount: number; included: boolean; label: string; event?: RailMarkerEvent }[],
   start: LocalDate,
   span: number
 ): RailMarker[] {
@@ -91,6 +109,7 @@ function aggregate(
       existing.count += 1;
       existing.signedAmount = (existing.signedAmount ?? 0) + e.signedAmount;
       existing.label = `${existing.count} payments on ${toISODate(e.date)} — ${money(existing.signedAmount ?? 0)}${e.kind === 'expected_income' ? ` · ${EXPECTED_INCOME_NOT_INCLUDED}` : ''}`;
+      if (e.event) existing.events = [...(existing.events ?? []), e.event];
     } else {
       byKey.set(key, {
         key,
@@ -101,6 +120,7 @@ function aggregate(
         signedAmount: e.signedAmount,
         included: e.included,
         label: e.label,
+        ...(e.event ? { events: [e.event] } : {}),
       });
     }
   }
@@ -120,21 +140,47 @@ export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate, ex
   const endDate = localDateFromDate(safeToSpend.cycleEnd);
   const spanDays = Math.max(1, daysBetween(startDate, endDate));
 
-  const billEntries = safeToSpend.datedDeductions.map((d: AupDatedDeduction) => ({
-    kind: 'bill' as const,
-    date: localDateFromDate(d.date),
-    signedAmount: -Math.abs(d.amount),
-    included: true,
-    label: `${d.label} — ${money(-Math.abs(d.amount))}`,
-  }));
+  const billEntries = safeToSpend.datedDeductions.map((d: AupDatedDeduction) => {
+    const date = localDateFromDate(d.date);
+    const signedCents = -Math.round(Math.abs(d.amount) * 100);
+    return {
+      kind: 'bill' as const,
+      date,
+      signedAmount: -Math.abs(d.amount),
+      included: true,
+      label: `${d.label} — ${money(-Math.abs(d.amount))}`,
+      // Pass D.3 — the SAME occurrence AUP deducted, by its own identity; a
+      // BNPL occurrence without a linked schedule gets a deterministic stand-in.
+      event: {
+        occurrenceId: d.occurrenceId ?? `aup:${d.kind}:${d.sourceId}:${toISODate(date)}`,
+        sourceId: d.sourceId,
+        sourceKind: d.kind,
+        date,
+        label: d.label,
+        signedCents,
+        typeLabel: d.kind === 'card' ? 'Scheduled card repayment' : d.kind === 'bnpl' ? 'Scheduled BNPL repayment' : 'Scheduled bill',
+        included: true,
+      } satisfies RailMarkerEvent,
+    };
+  });
 
   // Pass C.3 — expected income BEFORE the payday, read from the SAME canonical
   // A3 occurrence stream What happens next lists (never re-enumerated here).
   // Marked, never added: `included` is false and the label says so. Income
   // ON the payday date is the payday endpoint below (also not included), so
   // it is not duplicated as a second marker.
-  const expectedEntries = expectedIncome
-    .filter((e) => e.sourceKind === 'income' && e.inclusion === 'included' && e.signedCents > 0)
+  const incomeEvent = (e: ProjectedEvent): RailMarkerEvent => ({
+    occurrenceId: e.occurrenceId,
+    sourceId: e.sourceId,
+    sourceKind: e.sourceKind,
+    date: e.date,
+    label: e.label,
+    signedCents: e.signedCents,
+    typeLabel: 'Expected income',
+    included: false,
+  });
+  const eligibleIncome = expectedIncome.filter((e) => e.sourceKind === 'income' && e.inclusion === 'included' && e.signedCents > 0);
+  const expectedEntries = eligibleIncome
     .filter((e) => compareLocalDates(e.date, asOf) >= 0 && compareLocalDates(e.date, endDate) < 0)
     .map((e) => ({
       kind: 'expected_income' as const,
@@ -142,7 +188,12 @@ export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate, ex
       signedAmount: e.signedCents / 100,
       included: false,
       label: `${e.label} — ${money(e.signedCents / 100)} · ${EXPECTED_INCOME_NOT_INCLUDED}`,
+      event: incomeEvent(e),
     }));
+  // Pass D.3 — income landing ON the payday is the payday itself: the endpoint carries
+  // those canonical events (so a tap can explain the exclusion) but stays decorative
+  // when no such event exists.
+  const paydayEvents = eligibleIncome.filter((e) => compareLocalDates(e.date, endDate) === 0).map(incomeEvent);
 
   const markers = aggregate([...billEntries, ...expectedEntries], startDate, spanDays);
   // Payday endpoint — pinned to the right edge, disclosed as not included.
@@ -154,6 +205,7 @@ export function buildAupRail(safeToSpend: SafeToSpendResult, asOf: LocalDate, ex
     count: 1,
     included: false,
     label: 'Expected payday — not included in this amount',
+    ...(paydayEvents.length > 0 ? { events: paydayEvents } : {}),
   });
 
   const billCount = billEntries.length;

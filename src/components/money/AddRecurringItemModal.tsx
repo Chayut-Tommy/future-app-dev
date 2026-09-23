@@ -7,6 +7,10 @@ import { RecurringItem, PayFrequency, LiabilityType } from '../../types/models';
 import { BillPresetLabel, categoryForBillPreset } from '../../lib/calculations/billCategory';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
+import { EditorCompletionStatus } from '../shared/EditorCompletionStatus';
+import { useDurableEditorCompletion } from '../../hooks/useDurableEditorCompletion';
+import { EDITOR_DELETING_LABEL, EDITOR_SAVING_LABEL, EditorOutcome } from '../../lib/editorCompletion';
+import { generateId } from '../../lib/id';
 import { parseMoneyInput } from '../../lib/calculations/money';
 import { anchoredMonthlyDate } from '../../lib/calculations/recurringSchedule';
 import { confirmDiscardIfDirty } from '../../lib/discardConfirmation';
@@ -17,6 +21,7 @@ import { DateTriggerField } from '../shared/fields/DateTriggerField';
 import { TextField } from '../shared/fields/TextField';
 import { CurrencyField } from '../shared/fields/CurrencyField';
 import { EmbeddedCloseReason, EmbeddedStepHandle } from '../navigation/addWorkspaceTransitionController';
+import { useLatchedWhileHidden } from '../../hooks/useLatchedWhileHidden';
 
 // Rent and Mortgage are deliberately separate presets, not one combined
 // entry (PRD ask): rent is a pure expense, mortgage also builds/reduces a
@@ -123,6 +128,8 @@ export const AddRecurringItemModal = forwardRef<
     onClose: () => void;
     /** Present = editing this existing bill instead of creating a new one. */
     editItem?: RecurringItem | null;
+    /** Pass D0 — the structured, durable completion (see lib/editorCompletion). */
+    onOutcome?: (outcome: EditorOutcome) => void;
     /** A mortgage/car loan/personal loan needs liability linking (property or
      * vehicle) and an explicit repayment date, not this generic bill form —
      * picking one of those presets hands off to the one shared loan flow
@@ -158,10 +165,15 @@ export const AddRecurringItemModal = forwardRef<
     onConfirmedClose?: (reason: EmbeddedCloseReason) => void;
   }
 >(function AddRecurringItemModal(
-  { visible, onClose, editItem, onSelectLoan, onRequestLoan, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose },
+  { visible, onClose, editItem: editItemProp, onSelectLoan, onRequestLoan, embedded = false, onDirtyChange, onCanSaveChange, onTitleChange, onSaveSuccess, onConfirmedClose, onOutcome },
   ref
 ) {
+  // Pass D0.1 — keep showing what was presented until native dismissal finishes (never the Add form mid-close).
+  const editItem = useLatchedWhileHidden(visible, editItemProp);
   const { addRecurringItem, updateRecurringItem, deleteRecurringItem } = useAppState();
+  const completion = useDurableEditorCompletion({ visible, onOutcome });
+  // One identity per draft, so a retried Add can only ever create one bill.
+  const draftIdRef = useRef<string>(generateId());
   const { colors, radius, spacing, typography, semantic } = useTheme();
   const [icon, setIcon] = useState<keyof typeof Ionicons.glyphMap>('home-outline');
   const [billTypeLabel, setBillTypeLabel] = useState<string | null>(null);
@@ -279,6 +291,7 @@ export const AddRecurringItemModal = forwardRef<
 
   useEffect(() => {
     if (!visible) return;
+    draftIdRef.current = generateId(); // a new presentation is a new draft
     // A fresh open must never carry over a stale in-progress handoff,
     // pending loan type, or non-animated dismissal override from a
     // previous time this sheet was shown.
@@ -340,8 +353,9 @@ export const AddRecurringItemModal = forwardRef<
     (usesDayOfMonth ? dayValue >= 1 && dayValue <= 31 : !!nextDueDate);
 
   useEffect(() => {
-    onCanSaveChange?.(canSave);
-  }, [canSave, onCanSaveChange]);
+    // Pass D0 — an embedded host's own Save control is disabled while a write is unresolved.
+    onCanSaveChange?.(canSave && !completion.isPending);
+  }, [canSave, onCanSaveChange, completion.isPending]);
 
   function chooseBillType(p: (typeof BILL_PRESETS)[number]) {
     // Mortgage/car loan/personal loan need liability linking and an
@@ -395,6 +409,7 @@ export const AddRecurringItemModal = forwardRef<
   // embedded host preserves this draft across Back (mirroring the existing
   // Add Asset pattern), so there is nothing to confirm losing.
   function handleRequestClose(reason: EmbeddedCloseReason) {
+    if (completion.isPendingRef.current) return; // never an ambiguous dismissal mid-write
     if (reason === 'back') {
       onConfirmedClose?.(reason);
       return;
@@ -433,22 +448,33 @@ export const AddRecurringItemModal = forwardRef<
       // than inventing a purpose for them.
       categoryId: billCategoryId,
     };
-    if (editItem) {
-      updateRecurringItem(editItem.id, payload);
-    } else {
-      addRecurringItem(payload);
-    }
+    // Pass D0 — durable: the editor closes (and reports `saved`) only after the
+    // change is stored. A rejected write leaves it open with the draft intact.
     // Successful Save never goes through requestClose/confirmDiscardIfDirty
     // — it must never produce a discard prompt. Embedded: hand control back
     // to the host (which closes the whole Add Anything journey exactly
     // once). Standalone: unchanged direct onClose().
-    if (embedded) onSaveSuccess?.();
-    else onClose();
+    const id = editItem ? editItem.id : draftIdRef.current;
+    void completion.run(
+      'saving',
+      () => (editItem ? updateRecurringItem(editItem.id, payload) : addRecurringItem(payload, { id })),
+      { outcome: 'saved', operation: editItem ? 'update' : 'add', entity: 'bill', id },
+      () => {
+        if (embedded) onSaveSuccess?.();
+        else onClose();
+      }
+    );
   }
 
   function handleDelete() {
-    if (editItem) deleteRecurringItem(editItem.id);
-    onClose();
+    if (!editItem) return;
+    void completion.run('deleting', () => deleteRecurringItem(editItem.id), { outcome: 'deleted', operation: 'delete', entity: 'bill', id: editItem.id }, onClose);
+  }
+
+  // Cancel / Back / swipe / backdrop: zero writes, one `dismissed` outcome — and
+  // refused while a durable write is unresolved.
+  function handleDismiss() {
+    completion.dismiss(onClose);
   }
 
   const styles = useMemo(
@@ -580,10 +606,18 @@ export const AddRecurringItemModal = forwardRef<
       )}
 
       {isEditing ? (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-          <Text style={styles.deleteText}>Delete bill</Text>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={handleDelete}
+          disabled={completion.isPending}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: completion.isPending, busy: completion.pending === 'deleting' }}
+          testID="bill-editor-delete"
+        >
+          <Text style={styles.deleteText}>{completion.pending === 'deleting' ? EDITOR_DELETING_LABEL : 'Delete bill'}</Text>
         </TouchableOpacity>
       ) : null}
+      <EditorCompletionStatus pending={completion.pending} errorText={completion.errorText} testID="bill-editor-status" />
     </>
   );
 
@@ -592,12 +626,19 @@ export const AddRecurringItemModal = forwardRef<
   return (
     <KeyboardSheet
       visible={visible}
-      onClose={onClose}
+      onClose={handleDismiss}
       title={isEditing ? 'Edit bill' : 'Add a bill'}
       footer={
         <>
-          <Button label="Cancel" variant="secondary" onPress={onClose} style={styles.footerButton} />
-          <Button label="Save" onPress={handleSave} disabled={!canSave} style={styles.footerButton} />
+          <Button label="Cancel" variant="secondary" onPress={handleDismiss} disabled={completion.isPending} style={styles.footerButton} />
+          <Button
+            label={completion.pending === 'saving' ? EDITOR_SAVING_LABEL : 'Save'}
+            onPress={handleSave}
+            disabled={!canSave || completion.isPending}
+            loading={completion.pending === 'saving'}
+            style={styles.footerButton}
+            testID="bill-editor-save"
+          />
         </>
       }
     >

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { sheetChromeStyles } from './sheetChrome';
@@ -28,16 +28,34 @@ export function InfoSheet({
   title,
   subtitle,
   children,
+  onDismissed,
 }: {
   visible: boolean;
   onClose: () => void;
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+  /** Pass D.5 — fired ONCE after dismissal has actually completed, so the opener can
+   * return assistive focus to the control that invoked this sheet. Omitted by every
+   * existing consumer, whose behaviour is unchanged. */
+  onDismissed?: () => void;
 }) {
   const { colors, semantic, radius, spacing } = useTheme();
   const insets = useSafeAreaInsets();
   const locale = (i18n.language === 'th' ? 'th' : 'en') as AppLocale;
+
+  // iOS reports real dismissal completion through the native Modal's onDismiss; every
+  // other platform completes at the hide itself. The callback is idempotent.
+  const wasVisible = useRef(false);
+  useEffect(() => {
+    if (visible) {
+      wasVisible.current = true;
+      return;
+    }
+    if (!wasVisible.current) return;
+    wasVisible.current = false;
+    if (Platform.OS !== 'ios') onDismissed?.();
+  }, [visible, onDismissed]);
 
   const styles = useMemo(
     () =>
@@ -78,7 +96,7 @@ export function InfoSheet({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} onDismiss={Platform.OS === 'ios' ? onDismissed : undefined}>
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
         <View style={[styles.sheet, styles.sheetCap]}>

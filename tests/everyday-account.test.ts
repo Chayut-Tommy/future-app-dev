@@ -245,7 +245,8 @@ console.log('\n=== 18-20. Add/edit creates no transaction, income, spending, sav
 
   assert(
     '20b. structural: the real addAsset function body (AppStateContext.tsx) matches the mirror exactly — one persist() call touching only `assets`, no call to applyNewTransaction/transferFunds/any income-or-spending-creating function',
-    /const addAsset = useCallback\(\s*\n\s*\(a: Omit<Asset, 'id'>\) => \{\s*\n\s*persist\(upsertNetWorthHistory\(\{ \.\.\.data, assets: \[\.\.\.data\.assets, \{ \.\.\.a, id: generateId\(\) \}\] \}\)\);\s*\n\s*\},/.test(
+    /export function addAssetTransition\(current: AppData, asset: Omit<Asset, 'id'>, id: string\): AppData \{\s*\n\s*if \(current\.assets\.some\(\(a\) => a\.id === id\)\) return current;\s*\n\s*return upsertNetWorthHistory\(\{ \.\.\.current, assets: \[\.\.\.current\.assets, \{ \.\.\.asset, id \}\] \}\);\s*\n\}/.test( // Pass D0 — the same body, now a pure transition run by the one write-first owner
+
       APP_STATE_SRC
     )
   );
@@ -255,7 +256,8 @@ console.log('\n=== 18-20. Add/edit creates no transaction, income, spending, sav
     // currentValue changes). Behaviour is unchanged: still ONE persist() via
     // the net-worth wrapper, touching only `assets`, deps [data, persist].
     '20c. structural: updateAsset routes through applyManualBalanceEdit — one persist() via net-worth wrapper touching only `assets`',
-    /const updateAsset = useCallback\(\s*\n\s*\(id: string, patch: Partial<Omit<Asset, 'id'>>\) => \{[\s\S]*?persist\(upsertNetWorthHistory\(applyManualBalanceEdit\(data, id, patch, new Date\(\)\.toISOString\(\)\)\)\);\s*\n\s*\},\s*\n\s*\[data, persist\]/.test(
+    /export function updateAssetTransition\(current: AppData, id: string, patch: Partial<Omit<Asset, 'id'>>, nowISO: string\): AppData \{\s*\n\s*if \(!current\.assets\.some\(\(a\) => a\.id === id\)\) return current;\s*\n\s*return upsertNetWorthHistory\(applyManualBalanceEdit\(current, id, patch, nowISO\)\);\s*\n\}/.test( // Pass D0 — same routing through applyManualBalanceEdit, as a pure transition
+
       APP_STATE_SRC
     )
   );

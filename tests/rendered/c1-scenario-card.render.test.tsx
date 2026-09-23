@@ -165,7 +165,7 @@ describe('Pass C.1 — AUP hero two-region + top Change date + legend', () => {
     expect(screen.getByText('ABOUT PER DAY')).toBeOnTheScreen();
     expect(screen.getByTestId('money-aup-hero-figure')).toHaveTextContent('$4,300'); // cents-aware, no ".00"
     expect(screen.getByTestId('money-aup-hero-daily')).toBeOnTheScreen();
-    expect(screen.getByTestId('money-payday-bar-markers')).toBeOnTheScreen();
+    expect(screen.getByTestId('money-payday-bar-markers', { includeHiddenElements: true })).toBeOnTheScreen(); // Pass D.3 — the track is decorative under the press band (hidden from AT, like the selected-date rail's)
     expect(screen.getByTestId('timeline-legend')).toBeOnTheScreen();
     // The Change date control is the single in-card horizon entry.
     const row = screen.getByTestId('money-timeframe-row');

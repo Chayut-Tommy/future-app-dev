@@ -37,12 +37,12 @@ console.log('\n=== positive after a temporary shortfall ===');
   assert('2c. lowest line present', /Lowest estimated end-of-day cash position: -\$500\.00 on 16 Aug 2026/.test(p.lowestLine!));
 }
 
-console.log('\n=== final deficit (never a negative dominant headline) ===');
+console.log('\n=== final deficit (Pass D.3, F1: the dominant amount keeps its sign; the gap is explained below it) ===');
 {
   const d = base(); d.assets = [everyday('cba', 100)]; d.recurringItems = [bill('rent', 700, isoT(2026, 8, 20)), income('wage', 500, isoT(2026, 8, 20))];
   const p = sel(d, '2026-08-15', '2026-08-25');
   assert('3a. state below_zero', p.state === 'below_zero');
-  assert('3b. dominant amount is a POSITIVE gap, never "-$..."', !!p.headlineAmount && !p.headlineAmount.startsWith('-') && p.headlineAmount === '$100.00');
+  assert('3b. dominant amount is the SIGNED deficit — the same figure the card shows — and is spoken as minus', p.headlineAmount === '-$100.00' && p.headlineAmountSpoken === 'minus $100.00');
   assert('3c. commitments-exceed-cash wording (deficit line) + possible-shortfall status', /Your scheduled commitments may be about \$100\.00 more than your cash by 25 Aug 2026/.test(p.deficitLine!) && p.cashFlowLine === 'Possible shortfall of $100 on 20 Aug');
   assert('3d. no forbidden words', noForbidden(p));
 }
@@ -56,7 +56,7 @@ console.log('\n=== dip -> recover -> dip below zero at target must stay below_ze
   if (!r.available) throw new Error('expected available');
   const p = selectLookAheadPresentation(r);
   assert('6a. a temporary recovery followed by a final negative target selects below_zero (never a recovered positive)', p.state === 'below_zero' && r.recovers === true && r.targetCents === -20000);
-  assert('6b. the dominant amount is the positive final gap, not a negative hero', p.headlineAmount === '$200.00' && !p.headlineAmount.startsWith('-'));
+  assert('6b. the dominant amount is the signed final deficit; the positive gap lives in the deficit line', p.headlineAmount === '-$200.00' && /about \$200\.00 more than your cash/.test(p.deficitLine!));
 }
 
 console.log('\n=== unavailable / no eligible balance ===');

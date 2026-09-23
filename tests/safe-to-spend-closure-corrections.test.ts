@@ -433,9 +433,12 @@ console.log('\n=== Section 8: selectSafeToSpendHeroState — real, used-by-the-s
   const SAFE_TO_SPEND_PRESENTATION_SRC = readFileSync('src/lib/calculations/safeToSpendPresentation.ts', 'utf8');
   assert(
     'SafeToSpendHero.tsx imports the shared selectSafeToSpendPresentation selector (not a re-derived local copy), and that shared selector itself imports selectSafeToSpendHeroState from safeToSpend.ts unchanged',
-    /import \{ selectSafeToSpendPresentation, formatSafeToSpendAmount as formatMoney \} from '\.\.\/\.\.\/lib\/calculations\/safeToSpendPresentation'/.test(
+    // Pass D.4 — the hero also imports the shared AUP daily-guide explanation from this
+    // same selector module; the rule is still that it imports the SHARED selector and the
+    // shared formatter from there, never a re-derived local copy.
+    /import \{[^}]*\bselectSafeToSpendPresentation\b[^}]*\bformatSafeToSpendAmount as formatMoney\b[^}]*\} from '\.\.\/\.\.\/lib\/calculations\/safeToSpendPresentation'/.test(
       SAFE_TO_SPEND_HERO_SRC
-    ) && /import \{ SafeToSpendResult, SafeToSpendHeroState, selectSafeToSpendHeroState \} from '\.\/safeToSpend'/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
+    ) && !/function selectSafeToSpendPresentation/.test(SAFE_TO_SPEND_HERO_SRC) && /import \{ SafeToSpendResult, SafeToSpendHeroState, selectSafeToSpendHeroState \} from '\.\/safeToSpend'/.test(SAFE_TO_SPEND_PRESENTATION_SRC)
   );
   assert(
     'SafeToSpendHero.tsx calls selectSafeToSpendPresentation exactly once and stores the result as presentation/heroState; the shared selector itself calls selectSafeToSpendHeroState exactly once',

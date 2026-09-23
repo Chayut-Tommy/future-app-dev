@@ -47,12 +47,14 @@ export function TimelineLegend({
       StyleSheet.create({
         wrap: { marginTop: designSpacing.sm, gap: designSpacing.xs },
         row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: designSpacing.md, rowGap: designSpacing.xs },
-        item: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs },
+        // Pass D.2 — an item wraps to the next line as a COMPLETE unit; at very large
+        // text its own label may wrap inside it, but a swatch is never separated from its words.
+        item: { flexDirection: 'row', alignItems: 'center', gap: designSpacing.xs, maxWidth: '100%' },
         swatchBox: { width: SWATCH + 4, alignItems: 'center', justifyContent: 'center' },
         circle: { width: SWATCH, height: SWATCH, borderRadius: SWATCH / 2, backgroundColor: semantic.success },
         diamond: { width: SWATCH - 2, height: SWATCH - 2, backgroundColor: semantic.warningAccent, transform: [{ rotate: '45deg' }], borderRadius: 2 },
         ring: { width: SWATCH, height: SWATCH, borderRadius: SWATCH / 2, borderWidth: 2, borderColor: semantic.success, backgroundColor: 'transparent' },
-        label: { ...typeStyle('meta', locale), color: semantic.textTertiary },
+        label: { ...typeStyle('meta', locale), color: semantic.textTertiary, flexShrink: 1 },
         note: { ...typeStyle('meta', locale), color: semantic.textTertiary, fontStyle: 'italic' },
       }),
     [semantic, locale]

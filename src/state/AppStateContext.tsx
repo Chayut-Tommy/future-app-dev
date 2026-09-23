@@ -1651,6 +1651,165 @@ export function deleteLiabilityTransition(data: AppData, id: string): AppData {
   return upsertNetWorthHistory({ ...data, liabilities: data.liabilities.filter((l) => l.id !== id), recurringItems });
 }
 
+// ===========================================================================
+// Pass D0 — Durable Editor Completion Foundation: the deterministic state
+// transitions behind the four shared editors (income, bill, credit card,
+// asset/liability). Each is a PURE function of the latest accepted AppData, so
+// the provider's one write-first owner (`persistWriteFirst`) can run it, write
+// the result, and — if another accepted update landed meanwhile — run it again
+// on top of that update. Every one is IDEMPOTENT for a retry: adding an id that
+// already exists, updating or deleting an id that no longer exists, returns the
+// SAME object, which the owner treats as "nothing to write".
+// No financial rule lives here that did not already live in the action it
+// replaces; the bodies are the former action bodies, moved verbatim.
+// ===========================================================================
+
+/** A durable mutation the state layer declines to perform. Never a storage
+ * failure: nothing was attempted, so nothing was changed. */
+/** A transition validated synchronously (so the editor keeps its exact refusal
+ * reason) whose durable commit is reported separately. */
+export interface DurableTransitionOutcome<R> {
+  result: R;
+  persistence: Promise<void>;
+}
+
+/** How long a durable write may stay unsettled before the editor is released. */
+export const DURABLE_WRITE_TIMEOUT_MS = 20000;
+/** The bound as the owner reads it. A single mutable field so the deterministic
+ * timeout proofs can shorten it; nothing in the app ever changes it. */
+export const durableWriteConfig = { timeoutMs: DURABLE_WRITE_TIMEOUT_MS };
+
+/** The write did not settle within the bound. NOT a rejection: whether it will
+ * land is unknown, so the customer must never be told "Nothing was changed". */
+export class DurableWriteTimeout extends Error {
+  constructor() {
+    super('durable write timed out');
+    this.name = 'DurableWriteTimeout';
+  }
+}
+
+export class DurableMutationRefused extends Error {
+  constructor(public readonly reason: 'linked_repayment' | 'not_applicable') {
+    super(`durable mutation refused: ${reason}`);
+    this.name = 'DurableMutationRefused';
+  }
+}
+
+/** Pass D0.1 — the ONE Main-payday selection transition (both choosers). The same
+ * eligibility authority the income editor uses; the source is identified by its
+ * stable id only, never by a label, an amount or a date. */
+export function setMainPaydayIncomeTransition(current: AppData, id: string): AppData {
+  const eligible = current.recurringItems.some((r) => r.id === id && isEligibleMainPaydaySource(r));
+  if (!eligible) throw new DurableMutationRefused('not_applicable');
+  if (current.user.mainPaydayIncomeId === id) return current; // already the Main payday — nothing to write
+  return { ...current, user: { ...current.user, mainPaydayIncomeId: id } };
+}
+
+export function addRecurringItemTransition(current: AppData, item: Omit<RecurringItem, 'id'>, id: string, options?: { setAsMainPayday?: boolean }): AppData {
+  if (current.recurringItems.some((r) => r.id === id)) return current;
+  const scheduleAnchorDay = resolveScheduleAnchorDay(null, item);
+  const makeMain = !!options?.setAsMainPayday && isEligibleMainPaydaySource(item);
+  return {
+    ...current,
+    user: makeMain ? { ...current.user, mainPaydayIncomeId: id } : current.user,
+    recurringItems: [...current.recurringItems, { ...item, scheduleAnchorDay, id }],
+  };
+}
+
+export function updateRecurringItemTransition(current: AppData, id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }): AppData {
+  const existing = current.recurringItems.find((r) => r.id === id);
+  if (!existing) return current;
+  const clearsMain = patch.active === false && current.user.mainPaydayIncomeId === id;
+  const makeMain = !!options?.setAsMainPayday && !clearsMain && isEligibleMainPaydaySource({ ...existing, ...patch });
+  return {
+    ...current,
+    user: clearsMain ? { ...current.user, mainPaydayIncomeId: null } : makeMain ? { ...current.user, mainPaydayIncomeId: id } : current.user,
+    recurringItems: current.recurringItems.map((r) => (r.id === id ? { ...r, ...patch, scheduleAnchorDay: resolveScheduleAnchorDay(r, patch) } : r)),
+  };
+}
+
+export function deleteRecurringItemTransition(current: AppData, id: string): AppData {
+  if (!current.recurringItems.some((r) => r.id === id)) return current;
+  const clearsMain = current.user.mainPaydayIncomeId === id;
+  return {
+    ...current,
+    user: clearsMain ? { ...current.user, mainPaydayIncomeId: null } : current.user,
+    recurringItems: current.recurringItems.filter((r) => r.id !== id),
+  };
+}
+
+export function addAssetTransition(current: AppData, asset: Omit<Asset, 'id'>, id: string): AppData {
+  if (current.assets.some((a) => a.id === id)) return current;
+  return upsertNetWorthHistory({ ...current, assets: [...current.assets, { ...asset, id }] });
+}
+
+export function updateAssetTransition(current: AppData, id: string, patch: Partial<Omit<Asset, 'id'>>, nowISO: string): AppData {
+  if (!current.assets.some((a) => a.id === id)) return current;
+  return upsertNetWorthHistory(applyManualBalanceEdit(current, id, patch, nowISO));
+}
+
+export function deleteAssetTransition(current: AppData, id: string): AppData {
+  if (!current.assets.some((a) => a.id === id)) return current;
+  return upsertNetWorthHistory({ ...current, assets: current.assets.filter((a) => a.id !== id) });
+}
+
+export function addLiabilityTransition(current: AppData, liability: Omit<Liability, 'id'>, id: string): AppData {
+  if (current.liabilities.some((l) => l.id === id)) return current;
+  return upsertNetWorthHistory({ ...current, liabilities: [...current.liabilities, { ...liability, id }] });
+}
+
+export function updateLiabilityTransition(current: AppData, id: string, patch: Partial<Omit<Liability, 'id'>>): AppData {
+  const existing = current.liabilities.find((l) => l.id === id);
+  if (!existing) return current;
+  const liabilities = current.liabilities.map((l) => (l.id === id ? { ...l, ...patch } : l));
+  let recurringItems = current.recurringItems;
+  if (typeof patch.label === 'string' && patch.label !== existing.label) {
+    recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, id, patch.label);
+  }
+  return upsertNetWorthHistory({ ...current, liabilities, recurringItems });
+}
+
+/**
+ * Pass D0 §8 — linked-record deletion integrity. Deleting a loan-family
+ * liability while a recurring repayment still points at it would leave that
+ * bill structurally a repayment with no resolvable loan (the dangling state
+ * C.5.2.1 can only fail closed on). That delete is REFUSED, and the linked bill
+ * is named so the customer can review it first. Nothing is cascaded, guessed or
+ * reconstructed, and no recorded transaction is touched.
+ * BNPL is unchanged: its existing, explicit behaviour (deleteLiabilityTransition
+ * deactivates the plan's own schedule) creates no live dangling repayment.
+ * Identity is the structured `linkedLiabilityId` only.
+ */
+export function findLiabilityDeletionBlocker(current: AppData, liabilityId: string): RecurringItem | null {
+  const liability = current.liabilities.find((l) => l.id === liabilityId);
+  if (!liability || liability.type === 'bnpl' || liability.type === 'credit_card') return null;
+  return current.recurringItems.find((r) => r.linkedLiabilityId === liabilityId) ?? null;
+}
+
+export function deleteLiabilityGuardedTransition(current: AppData, id: string): AppData {
+  if (!current.liabilities.some((l) => l.id === id)) return current;
+  if (findLiabilityDeletionBlocker(current, id)) throw new DurableMutationRefused('linked_repayment');
+  return deleteLiabilityTransition(current, id);
+}
+
+export function addCreditCardTransition(current: AppData, card: Omit<CreditCard, 'id'>, id: string): AppData {
+  if (current.creditCards.some((c) => c.id === id)) return current;
+  const newCard: CreditCard = { ...card, id };
+  return upsertCreditCardLiability({ ...current, creditCards: [...current.creditCards, newCard] }, newCard);
+}
+
+export function updateCreditCardTransition(current: AppData, id: string, patch: Partial<Omit<CreditCard, 'id'>>): AppData {
+  const existing = current.creditCards.find((c) => c.id === id);
+  if (!existing) return current;
+  const updatedCard = { ...existing, ...patch } as CreditCard;
+  return upsertCreditCardLiability({ ...current, creditCards: current.creditCards.map((c) => (c.id === id ? updatedCard : c)) }, updatedCard);
+}
+
+export function deleteCreditCardTransition(current: AppData, id: string): AppData {
+  if (!current.creditCards.some((c) => c.id === id)) return current;
+  return removeCreditCardLiability({ ...current, creditCards: current.creditCards.filter((c) => c.id !== id) }, id);
+}
+
 export type TransferFundsResult =
   | { applied: true; data: AppData; effectiveAmountCents: number }
   | {
@@ -2751,13 +2910,16 @@ interface AppStateContextValue {
    * transition; no intermediate state). Ignored unless the saved record is an
    * eligible income (`isEligibleMainPaydaySource`). Absent/false changes
    * nothing about the existing authority. */
-  addRecurringItem: (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean }) => Promise<void>;
+  /** Pass D0 — every add / update / delete below is DURABLE: the promise resolves
+   * only after the change is stored, and a rejection means nothing was changed. */
+  addRecurringItem: (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean; id?: string }) => Promise<void>;
   updateRecurringItem: (id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }) => Promise<void>;
-  deleteRecurringItem: (id: string) => void;
+  deleteRecurringItem: (id: string) => Promise<void>;
   /** Pass C.2 closure — records the customer's explicit Main payday (the stable
    * id of an ACTIVE income source) in exactly one persistence write. Returns
    * false and writes nothing when the id does not name an active income. */
-  setMainPaydayIncome: (id: string) => boolean;
+  /** Pass D0.1 — durable; rejects with DurableMutationRefused for an ineligible or unknown source. */
+  setMainPaydayIncome: (id: string) => Promise<void>;
   addTransaction: (t: Omit<Transaction, 'id'>) => void;
   /** Always reconciles: reverses whatever balance effect the transaction's
    * prior state actually had applied (via its stored appliedBalanceEffect
@@ -2819,8 +2981,8 @@ interface AppStateContextValue {
   addGoal: (g: Omit<Goal, 'id'>) => void;
   updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void;
   deleteGoal: (id: string) => void;
-  addAsset: (a: Omit<Asset, 'id'>) => void;
-  updateAsset: (id: string, patch: Partial<Omit<Asset, 'id'>>) => void;
+  addAsset: (a: Omit<Asset, 'id'> & { id?: string }) => Promise<void>;
+  updateAsset: (id: string, patch: Partial<Omit<Asset, 'id'>>) => Promise<void>;
   /** A1 — explicit occurrence-resolution actions. `linkTransactionToOccurrence`
    * returns a result so a caller can surface a conflict without overwriting. */
   linkTransactionToOccurrence: (transactionId: string, occurrenceId: OccurrenceId, isRepayment: boolean) => LinkOccurrenceResult;
@@ -2833,13 +2995,13 @@ interface AppStateContextValue {
    * each closing over the same pre-loop `data` — silently drops all but the
    * last change in a multi-account save (correction, 2026-08-10 review). */
   updateAssetsIncludeInMoney: (updates: { id: string; included: boolean }[]) => void;
-  deleteAsset: (id: string) => void;
+  deleteAsset: (id: string) => Promise<void>;
   /** `id` may be pre-supplied so a caller can immediately reference the new
    * liability's id in the same action (e.g. linking an auto-created
    * recurring bill to the loan it pays down). */
-  addLiability: (l: Omit<Liability, 'id'> & { id?: string }) => void;
-  updateLiability: (id: string, patch: Partial<Omit<Liability, 'id'>>) => void;
-  deleteLiability: (id: string) => void;
+  addLiability: (l: Omit<Liability, 'id'> & { id?: string }) => Promise<void>;
+  updateLiability: (id: string, patch: Partial<Omit<Liability, 'id'>>) => Promise<void>;
+  deleteLiability: (id: string) => Promise<void>;
   /** Atomically creates-or-updates a liability (per the explicit `target` —
    * see LiabilityTransitionTarget's doc comment; type is never used as an
    * identity/dedup key) and links a new/updated recurring bill to it in a
@@ -2859,7 +3021,7 @@ interface AppStateContextValue {
     recurringItem: Omit<RecurringItem, 'id'> | undefined,
     target: LiabilityTransitionTarget,
     newRecurringItemId: string
-  ) => LiabilityTransitionResult;
+  ) => DurableTransitionOutcome<LiabilityTransitionResult>;
   /** Same atomicity/target contract as linkBillToLiability — creating a new
    * Property asset, the mortgage liability, and an optional recurring bill
    * all in one persist() call so none of them get silently dropped by a
@@ -2872,7 +3034,7 @@ interface AppStateContextValue {
     recurringItem: Omit<RecurringItem, 'id'> | undefined,
     target: LiabilityTransitionTarget,
     ids: { newPropertyAssetId: string; newRecurringItemId: string }
-  ) => LiabilityTransitionResult;
+  ) => DurableTransitionOutcome<LiabilityTransitionResult>;
   /** Same atomicity concern and shape as addMortgageWithProperty, generalized
    * to car loans and their linked vehicle (Asset type 'car'). `target`
    * decides create-vs-update (see LiabilityTransitionTarget's doc comment
@@ -2888,7 +3050,7 @@ interface AppStateContextValue {
     recurringItem: Omit<RecurringItem, 'id'> | undefined,
     target: LiabilityTransitionTarget,
     ids: { newVehicleAssetId: string; newRecurringItemId: string }
-  ) => LiabilityTransitionResult;
+  ) => DurableTransitionOutcome<LiabilityTransitionResult>;
   /** Round-5 addition (Issue 3, repayment-only immutability) — updates ONLY
    * the recurring repayment linked to `liabilityId`; never touches the
    * liability record itself, regardless of what any caller's own state
@@ -2900,12 +3062,12 @@ interface AppStateContextValue {
     liabilityId: string,
     recurringItem: Omit<RecurringItem, 'id'> | undefined,
     newRecurringItemId: string
-  ) => LiabilityTransitionResult;
+  ) => DurableTransitionOutcome<LiabilityTransitionResult>;
   /** Atomic create-or-edit for a BNPL plan and its optional linked
    * repayment schedule — see saveBnplPlanTransition's own doc comment for
    * the full contract. Reads dataRef.current, same rationale as
    * updateLiability/linkBillToLiability above. */
-  saveBnplPlan: (input: SaveBnplPlanInput) => SaveBnplPlanResult;
+  saveBnplPlan: (input: SaveBnplPlanInput) => DurableTransitionOutcome<SaveBnplPlanResult>;
   /** Atomic BNPL repayment confirmation — see confirmBnplRepaymentTransition's
    * own doc comment. transactionId/date are generated exactly once here,
    * never inside the pure transition, mirroring confirmRecurringOccurrence's
@@ -2952,9 +3114,9 @@ interface AppStateContextValue {
    * their own dedicated reverse functions above). Reads dataRef.current,
    * same rationale as reverseLoanRepayment above; one persist() call. */
   reverseRecurringOccurrence: (transactionId: string) => ReverseRecurringOccurrenceResult;
-  addCreditCard: (c: Omit<CreditCard, 'id'>) => void;
-  updateCreditCard: (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => void;
-  deleteCreditCard: (id: string) => void;
+  addCreditCard: (c: Omit<CreditCard, 'id'> & { id?: string }) => Promise<void>;
+  updateCreditCard: (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => Promise<void>;
+  deleteCreditCard: (id: string) => Promise<void>;
   /** Same atomicity concern as linkBillToLiability — onboarding's Wealth
    * Map step used to call addAsset up to 4 times, then addLiability, then
    * updateUser, all back-to-back in one handler. Every one of those closes
@@ -3105,6 +3267,121 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [commitData, trackWrite]
   );
 
+  // Pass C.5.2.1 / D0 — THE write-first owner. Every durable mutation in the app
+  // (the loan repayment, and since D0 every add / update / delete behind the four
+  // shared editors) goes through this one function; no component writes to
+  // storage and no editor has an algorithm of its own.
+  //
+  // `apply` is a PURE function of the latest accepted AppData:
+  //   1. durable mutations are SERIALISED — one runs at a time, in issue order,
+  //      so two overlapping saves can never write snapshots that race;
+  //   2. compute `next` from dataRef.current. If `apply` returns the SAME object
+  //      the mutation is already in place (an idempotent retry): nothing is
+  //      written and the caller is told it is done;
+  //   3. write `next`. A REJECTED write changes nothing — in-memory state was
+  //      never touched, so nothing can appear behind the editor or ride along
+  //      with a later, unrelated successful write or the global retry;
+  //   4. a resolved write commits in memory ONLY if no other accepted update
+  //      (an ordinary optimistic `persist`) landed meanwhile. If one did, that
+  //      update is never overwritten: the same pure mutation is re-applied on
+  //      top of it and written again, so neither result is lost;
+  //   5. a write that never settles is abandoned after a bounded wait so the
+  //      customer is never trapped; if it lands late, storage is rewritten from
+  //      the accepted in-memory state, so "nothing was changed" stays true.
+  // Never a stale-closure rollback, never a blind replacement of newer state.
+  const durableChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const persistWriteFirst = useCallback(
+    (apply: (current: AppData) => AppData | null): Promise<void> => {
+      const prepare = (next: AppData) => upsertLuluScoreHistory(supersedeSetupAcknowledgements(syncIncomeAggregate(next)));
+      /** Issue one storage write and wait for it, but never longer than the bound. */
+      const boundedWrite = async (snapshot: AppData): Promise<{ status: 'written' } | { status: 'timeout'; write: Promise<void> }> => {
+        const write = saveAppData(snapshot);
+        trackWrite(write, 'ordinary');
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), durableWriteConfig.timeoutMs);
+        });
+        try {
+          const settled = await Promise.race([write.then(() => 'written' as const), timedOut]);
+          return settled === 'written' ? { status: 'written' } : { status: 'timeout', write };
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
+      /**
+       * Pass D0.1 — a write that was abandoned as timed out has now LANDED, so
+       * storage holds a mutation memory never accepted (and may have overwritten a
+       * NEWER accepted state). Queued on the same chain, so it can never interleave
+       * with another durable write:
+       *   1. rewrite storage from the accepted in-memory state — the late result
+       *      cannot resurrect the abandoned mutation or regress a newer one;
+       *   2. if that rewrite cannot be stored either, storage is the only fact we
+       *      cannot change, so memory ADOPTS the mutation (re-applied on top of the
+       *      current state). Memory, storage and a later rehydration then agree —
+       *      and the customer was never told "Nothing was changed" (see
+       *      DurableWriteTimeout), only that the change could not be confirmed.
+       */
+      const reconcileLateWrite = (): void => {
+        const job = async (): Promise<void> => {
+          const restored = await boundedWrite(dataRef.current).then(
+            (r) => r.status === 'written',
+            () => false
+          );
+          if (restored) return;
+          const base = dataRef.current;
+          let next: AppData | null = null;
+          try {
+            next = apply(base);
+          } catch {
+            next = null;
+          }
+          if (next && next !== base) commitData(prepare(next));
+        };
+        const queued = durableChainRef.current.then(job, job);
+        durableChainRef.current = queued.catch(() => undefined);
+      };
+      const run = async (): Promise<void> => {
+        let wroteSuperseded = false;
+        try {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const base = dataRef.current;
+            const next = apply(base);
+            if (!next) throw new DurableMutationRefused('not_applicable');
+            if (next === base) return; // already in place — an idempotent retry writes nothing
+            const prepared = prepare(next);
+            const outcome = await boundedWrite(prepared);
+            if (outcome.status === 'timeout') {
+              // Abandoned: the editor is released, nothing is committed, and the
+              // outcome is genuinely unknown until the write settles.
+              outcome.write.then(reconcileLateWrite, () => undefined);
+              throw new DurableWriteTimeout();
+            }
+            if (dataRef.current === base) {
+              commitData(prepared);
+              return;
+            }
+            wroteSuperseded = true; // storage holds a version memory never accepted
+          }
+          throw new Error('write-first mutation could not settle');
+        } catch (error) {
+          if (wroteSuperseded) {
+            const restore = saveAppData(dataRef.current);
+            trackWrite(restore, 'ordinary');
+            await restore.catch(() => undefined);
+          }
+          throw error;
+        }
+      };
+      const result = durableChainRef.current.then(run, run);
+      durableChainRef.current = result.catch(() => undefined);
+      // A caller that does not await still must not raise an unhandled rejection;
+      // a caller that does await `result` still observes the failure.
+      result.catch(() => undefined);
+      return result;
+    },
+    [commitData, trackWrite]
+  );
+
   const updateUser = useCallback(
     (patch: Partial<UserProfile>) => {
       persist({ ...data, user: { ...data.user, ...patch } });
@@ -3112,78 +3389,41 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [data, persist]
   );
 
+  // Pass D0 — durable. `options.id` lets an editor keep ONE identity for a draft
+  // across retries, so a retried Add can only ever produce one record.
   const addRecurringItem = useCallback(
-    (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean }) => {
-      const scheduleAnchorDay = resolveScheduleAnchorDay(null, item);
-      const id = generateId();
-      // Pass C.4 — an intentional "Use as my main payday" on the add form is
-      // recorded atomically with the new source (one persist), and only for an
-      // eligible income. Without the option the authority is untouched.
-      const makeMain = !!options?.setAsMainPayday && isEligibleMainPaydaySource(item);
-      // Returns the write's own promise (C.4) so a caller can confirm success
-      // only once the authoritative save has completed.
-      return persist({
-        ...data,
-        user: makeMain ? { ...data.user, mainPaydayIncomeId: id } : data.user,
-        recurringItems: [...data.recurringItems, { ...item, scheduleAnchorDay, id }],
-      });
+    (item: Omit<RecurringItem, 'id'>, options?: { setAsMainPayday?: boolean; id?: string }): Promise<void> => {
+      const id = options?.id ?? generateId();
+      return persistWriteFirst((current) => addRecurringItemTransition(current, item, id, options));
     },
-    [data, persist]
+    [persistWriteFirst]
   );
 
   const updateRecurringItem = useCallback(
-    (id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }) => {
-      // Pass C.2 closure — deactivating the chosen Main payday clears the
-      // authority in the SAME write (atomic; no second persist), so the app
-      // returns to the fail-closed "choose your main payday" state rather
-      // than silently keeping (or later resurrecting) a stale choice.
-      const clearsMain = patch.active === false && data.user.mainPaydayIncomeId === id;
-      // Pass C.4 — an intentional Main-payday replacement from the income
-      // editor lands in the SAME write as the edit, judged against the record
-      // AS SAVED (existing fields + patch). It replaces the previous id
-      // outright — there is never a moment with two, or with a stale one.
-      const existing = data.recurringItems.find((r) => r.id === id);
-      const makeMain = !!options?.setAsMainPayday && !clearsMain && !!existing && isEligibleMainPaydaySource({ ...existing, ...patch });
-      return persist({
-        ...data,
-        user: clearsMain ? { ...data.user, mainPaydayIncomeId: null } : makeMain ? { ...data.user, mainPaydayIncomeId: id } : data.user,
-        recurringItems: data.recurringItems.map((r) =>
-          r.id === id ? { ...r, ...patch, scheduleAnchorDay: resolveScheduleAnchorDay(r, patch) } : r
-        ),
-      });
-    },
-    [data, persist]
+    (id: string, patch: Partial<Omit<RecurringItem, 'id'>>, options?: { setAsMainPayday?: boolean }): Promise<void> =>
+      persistWriteFirst((current) => updateRecurringItemTransition(current, id, patch, options)),
+    [persistWriteFirst]
   );
 
   const deleteRecurringItem = useCallback(
-    (id: string) => {
-      // Pass C.2 closure — deleting the chosen Main payday clears the
-      // authority atomically with the deletion (see updateRecurringItem).
-      const clearsMain = data.user.mainPaydayIncomeId === id;
-      persist({
-        ...data,
-        user: clearsMain ? { ...data.user, mainPaydayIncomeId: null } : data.user,
-        recurringItems: data.recurringItems.filter((r) => r.id !== id),
-      });
-    },
-    [data, persist]
+    (id: string): Promise<void> => persistWriteFirst((current) => deleteRecurringItemTransition(current, id)),
+    [persistWriteFirst]
   );
 
   // Pass C.2 closure — the ONE deliberate write that records the customer's
   // Main payday. Validates the id names a currently active income source
   // (never inferred from label/amount/date), then persists exactly once via
   // the ordinary pipeline. Opening or cancelling a chooser never reaches here.
+  // Pass D0.1 — DURABLE, through the one write-first owner. The Main payday is a
+  // single identity (`user.mainPaydayIncomeId`), so replacing the previous choice
+  // and selecting the new one is ONE atomic transition by construction: there is
+  // never a moment with two primaries or, for an eligible choice, none. The
+  // promise resolves only after the choice is stored; a rejection means the
+  // previous Main payday is still the Main payday, in memory and in storage.
+  // Choosing the current source resolves without writing (idempotent no-op).
   const setMainPaydayIncome = useCallback(
-    (id: string): boolean => {
-      // Pass C.5 — the SAME eligibility authority the editor and both choosers
-      // use: an irregular, undated, invalid or inactive source is refused here
-      // too, so no entry point can persist a Main payday another would reject.
-      const ok = data.recurringItems.some((r) => r.id === id && isEligibleMainPaydaySource(r));
-      if (!ok) return false;
-      persist({ ...data, user: { ...data.user, mainPaydayIncomeId: id } });
-      return true;
-    },
-    [data, persist]
+    (id: string): Promise<void> => persistWriteFirst((current) => setMainPaydayIncomeTransition(current, id)),
+    [persistWriteFirst]
   );
 
   // Transactions automatically move the relevant part of the Wealth
@@ -3264,17 +3504,18 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // the first call's already-recorded occurrence and is correctly rejected
   // as a no-op by the existing, unmodified duplicate-identity guard.
   const addRecurringIncomeWithMidCycleOccurrence = useCallback(
-    (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string, options?: { setAsMainPayday?: boolean }) => {
+    (itemInput: Omit<RecurringItem, 'id'>, recurringItemId: string, choice: MidCycleIncomeOccurrenceChoice, precedingOccurrenceDate: string, options?: { setAsMainPayday?: boolean }): Promise<void> => {
+      // Generated ONCE, outside the pure mutation, so a rebase re-applies the same identities.
       const transactionId = generateId();
-      const current = dataRef.current;
-      const next = createRecurringIncomeWithMidCycleOccurrence(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
-      // Pass C.4 — same single write; skipped when the creation itself was a
-      // duplicate no-op (next === current) or the saved source is ineligible.
-      const created = next !== current ? next.recurringItems.find((r) => r.id === recurringItemId) : undefined;
-      const makeMain = !!options?.setAsMainPayday && !!created && isEligibleMainPaydaySource(created);
-      return persist(makeMain ? { ...next, user: { ...next.user, mainPaydayIncomeId: recurringItemId } } : next);
+      return persistWriteFirst((current) => {
+        if (current.recurringItems.some((r) => r.id === recurringItemId)) return current; // idempotent retry
+        const next = createRecurringIncomeWithMidCycleOccurrence(current, itemInput, recurringItemId, choice, precedingOccurrenceDate, transactionId);
+        const created = next !== current ? next.recurringItems.find((r) => r.id === recurringItemId) : undefined;
+        const makeMain = !!options?.setAsMainPayday && !!created && isEligibleMainPaydaySource(created);
+        return makeMain ? { ...next, user: { ...next.user, mainPaydayIncomeId: recurringItemId } } : next;
+      });
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   const addGoal = useCallback(
@@ -3299,21 +3540,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addAsset = useCallback(
-    (a: Omit<Asset, 'id'>) => {
-      persist(upsertNetWorthHistory({ ...data, assets: [...data.assets, { ...a, id: generateId() }] }));
+    (a: Omit<Asset, 'id'> & { id?: string }): Promise<void> => {
+      const { id: requestedId, ...asset } = a;
+      const id = requestedId ?? generateId();
+      return persistWriteFirst((current) => addAssetTransition(current, asset, id));
     },
-    [data, persist]
+    [persistWriteFirst]
   );
 
   const updateAsset = useCallback(
-    (id: string, patch: Partial<Omit<Asset, 'id'>>) => {
-      // A1 — route through applyManualBalanceEdit so a direct balance
-      // correction stamps `manualBalanceUpdatedAt` (only when currentValue
-      // actually changes); a label/inclusion-only patch behaves exactly as
-      // before. Preserves the existing net-worth-history wrapping.
-      persist(upsertNetWorthHistory(applyManualBalanceEdit(data, id, patch, new Date().toISOString())));
+    (id: string, patch: Partial<Omit<Asset, 'id'>>): Promise<void> => {
+      const nowISO = new Date().toISOString(); // stamped once, so a rebase records the same edit time
+      return persistWriteFirst((current) => updateAssetTransition(current, id, patch, nowISO));
     },
-    [data, persist]
+    [persistWriteFirst]
   );
 
   // A1 — occurrence-resolution actions. Each is a thin wrapper over its pure
@@ -3354,17 +3594,17 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const deleteAsset = useCallback(
-    (id: string) => {
-      persist(upsertNetWorthHistory({ ...data, assets: data.assets.filter((a) => a.id !== id) }));
-    },
-    [data, persist]
+    (id: string): Promise<void> => persistWriteFirst((current) => deleteAssetTransition(current, id)),
+    [persistWriteFirst]
   );
 
   const addLiability = useCallback(
-    (l: Omit<Liability, 'id'> & { id?: string }) => {
-      persist(upsertNetWorthHistory({ ...data, liabilities: [...data.liabilities, { ...l, id: l.id ?? generateId() }] }));
+    (l: Omit<Liability, 'id'> & { id?: string }): Promise<void> => {
+      const { id: requestedId, ...liability } = l;
+      const id = requestedId ?? generateId();
+      return persistWriteFirst((current) => addLiabilityTransition(current, liability, id));
     },
-    [data, persist]
+    [persistWriteFirst]
   );
 
   // Round-5 correction (Issue 4 + Issue 5): reads dataRef.current rather
@@ -3379,24 +3619,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // tap rename ever reaches a repayment name, since that path never goes
   // through the smart-loan target-based transitions at all.
   const updateLiability = useCallback(
-    (id: string, patch: Partial<Omit<Liability, 'id'>>) => {
-      const current = dataRef.current;
-      const existing = current.liabilities.find((l) => l.id === id);
-      const liabilities = current.liabilities.map((l) => (l.id === id ? { ...l, ...patch } : l));
-      let recurringItems = current.recurringItems;
-      if (existing && typeof patch.label === 'string' && patch.label !== existing.label) {
-        recurringItems = renameLinkedRepaymentIfUnambiguous(recurringItems, id, patch.label);
-      }
-      persist(upsertNetWorthHistory({ ...current, liabilities, recurringItems }));
-    },
-    [persist]
+    (id: string, patch: Partial<Omit<Liability, 'id'>>): Promise<void> => persistWriteFirst((current) => updateLiabilityTransition(current, id, patch)),
+    [persistWriteFirst]
   );
 
+  // Pass D0 §8 — refuses (DurableMutationRefused 'linked_repayment') rather than
+  // leave a live repayment pointing at a loan that no longer exists.
   const deleteLiability = useCallback(
-    (id: string) => {
-      persist(deleteLiabilityTransition(data, id));
-    },
-    [data, persist]
+    (id: string): Promise<void> => persistWriteFirst((current) => deleteLiabilityGuardedTransition(current, id)),
+    [persistWriteFirst]
   );
 
   // Round-5 correction (Issue 5): now returns the full
@@ -3414,12 +3645,17 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       recurringItem: Omit<RecurringItem, 'id'> | undefined,
       target: LiabilityTransitionTarget,
       newRecurringItemId: string
-    ): LiabilityTransitionResult => {
+    ): DurableTransitionOutcome<LiabilityTransitionResult> => {
       const result = linkBillToLiabilityTransition(dataRef.current, liability, recurringItem, target, newRecurringItemId);
-      if (result.applied) persist(result.data);
-      return result;
+      if (!result.applied) return { result, persistence: Promise.resolve() };
+      const persistence = persistWriteFirst((current) => {
+        if (target.mode === 'create' && current.liabilities.some((l) => l.id === target.liabilityId)) return current; // idempotent retry of the same draft
+        const again = linkBillToLiabilityTransition(current, liability, recurringItem, target, newRecurringItemId);
+        return again.applied ? again.data : null;
+      });
+      return { result, persistence };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   const addMortgageWithProperty = useCallback(
@@ -3429,12 +3665,17 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       recurringItem: Omit<RecurringItem, 'id'> | undefined,
       target: LiabilityTransitionTarget,
       ids: { newPropertyAssetId: string; newRecurringItemId: string }
-    ): LiabilityTransitionResult => {
+    ): DurableTransitionOutcome<LiabilityTransitionResult> => {
       const result = createMortgageWithPropertyTransition(dataRef.current, liability, propertyLink, recurringItem, target, ids);
-      if (result.applied) persist(result.data);
-      return result;
+      if (!result.applied) return { result, persistence: Promise.resolve() };
+      const persistence = persistWriteFirst((current) => {
+        if (target.mode === 'create' && current.liabilities.some((l) => l.id === target.liabilityId)) return current; // idempotent retry of the same draft
+        const again = createMortgageWithPropertyTransition(current, liability, propertyLink, recurringItem, target, ids);
+        return again.applied ? again.data : null;
+      });
+      return { result, persistence };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   const addCarLoanWithVehicle = useCallback(
@@ -3444,33 +3685,47 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       recurringItem: Omit<RecurringItem, 'id'> | undefined,
       target: LiabilityTransitionTarget,
       ids: { newVehicleAssetId: string; newRecurringItemId: string }
-    ): LiabilityTransitionResult => {
+    ): DurableTransitionOutcome<LiabilityTransitionResult> => {
       const result = createCarLoanWithVehicleTransition(dataRef.current, liability, vehicleLink, recurringItem, target, ids);
-      if (result.applied) persist(result.data);
-      return result;
+      if (!result.applied) return { result, persistence: Promise.resolve() };
+      const persistence = persistWriteFirst((current) => {
+        if (target.mode === 'create' && current.liabilities.some((l) => l.id === target.liabilityId)) return current; // idempotent retry of the same draft
+        const again = createCarLoanWithVehicleTransition(current, liability, vehicleLink, recurringItem, target, ids);
+        return again.applied ? again.data : null;
+      });
+      return { result, persistence };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   // Round-5 addition (Issue 3) — see updateLinkedRepaymentOnlyTransition's
   // doc comment for why this exists as its own action instead of routing
   // repayment-only saves through the three actions above.
   const updateLinkedRepaymentOnly = useCallback(
-    (liabilityId: string, recurringItem: Omit<RecurringItem, 'id'> | undefined, newRecurringItemId: string): LiabilityTransitionResult => {
+    (liabilityId: string, recurringItem: Omit<RecurringItem, 'id'> | undefined, newRecurringItemId: string): DurableTransitionOutcome<LiabilityTransitionResult> => {
       const result = updateLinkedRepaymentOnlyTransition(dataRef.current, liabilityId, recurringItem, newRecurringItemId);
-      if (result.applied) persist(result.data);
-      return result;
+      if (!result.applied) return { result, persistence: Promise.resolve() };
+      const persistence = persistWriteFirst((current) => {
+        const again = updateLinkedRepaymentOnlyTransition(current, liabilityId, recurringItem, newRecurringItemId);
+        return again.applied ? again.data : null;
+      });
+      return { result, persistence };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   const saveBnplPlan = useCallback(
-    (input: SaveBnplPlanInput): SaveBnplPlanResult => {
+    (input: SaveBnplPlanInput): DurableTransitionOutcome<SaveBnplPlanResult> => {
       const result = saveBnplPlanTransition(dataRef.current, input);
-      if (result.applied) persist(result.data);
-      return result;
+      if (!result.applied) return { result, persistence: Promise.resolve() };
+      const persistence = persistWriteFirst((current) => {
+        if (input.mode === 'create' && current.liabilities.some((l) => l.id === input.ids.liabilityId)) return current; // idempotent retry of the same draft
+        const again = saveBnplPlanTransition(current, input);
+        return again.applied ? again.data : null;
+      });
+      return { result, persistence };
     },
-    [persist]
+    [persistWriteFirst]
   );
 
   // Mirrors confirmRecurringOccurrence's own contract exactly: reads
@@ -3539,50 +3794,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   // own contract exactly: reads dataRef.current fresh, transactionId/date
   // generated exactly once here, one persist() call, only on the success
   // path.
-  // Pass C.5.2.1 — WRITE-FIRST commit for a mutation that must be atomic with
-  // its storage write (the same primitives `completeOnboarding` uses, made
-  // safe against a concurrent update). `apply` is a PURE function of the
-  // latest accepted AppData:
-  //   1. compute `next` from dataRef.current and write it;
-  //   2. a REJECTED write changes nothing — in-memory state was never touched,
-  //      so nothing can appear behind the editor or ride along with a later,
-  //      unrelated successful write;
-  //   3. a resolved write commits in memory ONLY if no other accepted update
-  //      landed meanwhile. If one did, that update is never overwritten: the
-  //      same pure mutation is re-applied on top of it and written again.
-  // Never a stale-closure rollback, never a global replacement of newer state.
-  const persistWriteFirst = useCallback(
-    async (apply: (current: AppData) => AppData | null): Promise<void> => {
-      let wroteSuperseded = false;
-      try {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const base = dataRef.current;
-          const next = apply(base);
-          if (!next) throw new Error('write-first mutation no longer applies');
-          const prepared = upsertLuluScoreHistory(supersedeSetupAcknowledgements(syncIncomeAggregate(next)));
-          const write = saveAppData(prepared);
-          trackWrite(write, 'ordinary');
-          await write;
-          if (dataRef.current === base) {
-            commitData(prepared);
-            return;
-          }
-          wroteSuperseded = true; // storage holds a version memory never accepted
-        }
-        throw new Error('write-first mutation could not settle');
-      } catch (error) {
-        // Storage must never keep a mutation memory did not accept.
-        if (wroteSuperseded) {
-          const restore = saveAppData(dataRef.current);
-          trackWrite(restore, 'ordinary');
-          await restore.catch(() => undefined);
-        }
-        throw error;
-      }
-    },
-    [commitData, trackWrite]
-  );
-
   // Pass C.5.2.1 — persistence-failure atomicity. The repayment is validated
   // synchronously (so the form still gets its exact refusal reason), but it
   // is committed in memory only AFTER its storage write resolves. While that
@@ -3679,28 +3890,22 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addCreditCard = useCallback(
-    (c: Omit<CreditCard, 'id'>) => {
-      const newCard: CreditCard = { ...c, id: generateId() };
-      persist(upsertCreditCardLiability({ ...data, creditCards: [...data.creditCards, newCard] }, newCard));
+    (c: Omit<CreditCard, 'id'> & { id?: string }): Promise<void> => {
+      const { id: requestedId, ...card } = c;
+      const id = requestedId ?? generateId();
+      return persistWriteFirst((current) => addCreditCardTransition(current, card, id));
     },
-    [data, persist]
+    [persistWriteFirst]
   );
 
   const updateCreditCard = useCallback(
-    (id: string, patch: Partial<Omit<CreditCard, 'id'>>) => {
-      const updatedCard = { ...data.creditCards.find((c) => c.id === id), ...patch } as CreditCard;
-      const withCard = { ...data, creditCards: data.creditCards.map((c) => (c.id === id ? updatedCard : c)) };
-      persist(upsertCreditCardLiability(withCard, updatedCard));
-    },
-    [data, persist]
+    (id: string, patch: Partial<Omit<CreditCard, 'id'>>): Promise<void> => persistWriteFirst((current) => updateCreditCardTransition(current, id, patch)),
+    [persistWriteFirst]
   );
 
   const deleteCreditCard = useCallback(
-    (id: string) => {
-      const withoutCard = { ...data, creditCards: data.creditCards.filter((c) => c.id !== id) };
-      persist(removeCreditCardLiability(withoutCard, id));
-    },
-    [data, persist]
+    (id: string): Promise<void> => persistWriteFirst((current) => deleteCreditCardTransition(current, id)),
+    [persistWriteFirst]
   );
 
   // Thin wrapper over the pure, exported, directly-testable

@@ -79,8 +79,10 @@ describe('Pass C.2 — Look-ahead card regions and status', () => {
     expect(screen.queryByText(/\$3,000/)).toBeNull();
     // Subordinate cash-flow status, neutral tone.
     // The lowest position is the EARLIEST minimum of a flat $6,000 path → 4 Sep (Pass B contract).
-    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected · No dip below your estimated balance before 6 Sep$/);
-    expect(screen.getByTestId('money-scenario-cashflow-icon-neutral', { includeHiddenElements: true })).toBeTruthy();
+    expect(screen.getByTestId('money-scenario-cashflow')).toHaveTextContent(/^No scheduled shortfall detected$/);
+    expect(screen.getByTestId('money-scenario-cashflow-detail')).toHaveTextContent(/^No dip below your estimated balance before 6 Sep$/);
+    // Pass D.2 (founder decision) — a PROVEN no-shortfall path uses the healthy treatment.
+    expect(screen.getByTestId('money-scenario-cashflow-icon-healthy', { includeHiddenElements: true })).toBeTruthy();
     // Removed: the Scenario badge, the dominant lowest region, the on-card marker note and assumed count.
     expect(screen.queryByText('Scenario')).toBeNull();
     expect(screen.queryByText('LOWEST POSITION')).toBeNull();

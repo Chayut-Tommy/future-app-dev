@@ -59,7 +59,10 @@ const SHEET = read('src/components/money/ThisMonthSourcesSheet.tsx');
 const BAR = read('src/components/money/MoneyPaydayBar.tsx');
 const HERO = read('src/components/money/SafeToSpendHero.tsx');
 const HERO_CODE = strip(HERO);
-const BALANCES = read('src/components/money/IncludedBalancesRow.tsx');
+// Pass D.5 — the standalone row is retired; the balances entry is the inline control
+// inside the Money card. Every rule below still applies, now to that control.
+const BALANCES = read('src/components/money/InlineBalancesSelector.tsx');
+const PICKER = read('src/components/money/SelectBalancesSheet.tsx');
 
 function iso(daysFromNow: number): string {
   const d = new Date();
@@ -160,8 +163,8 @@ console.log('\n=== 2. Included balances (Class A + Class C) ===');
 
   // The row itself.
   assert('2i. the row is one whole press target', /accessibilityRole="button"/.test(BALANCES) && (BALANCES.match(/<TouchableOpacity/g) || []).length === 1);
-  assert('2j. meeting a 56pt minimum, above the 44pt activation floor', /INCLUDED_BALANCES_ROW_MIN_HEIGHT = 56/.test(BALANCES) && 56 >= designLayout.touchTargetMin);
-  assert('2k. it opens the EXISTING SelectBalancesSheet', /onManage=\{\(\) => setSelectBalancesVisible\(true\)\}/.test(MONEY_CODE) && /<SelectBalancesSheet/.test(MONEY_CODE));
+  assert('2j. meeting the 44pt activation floor on both axes', /minHeight: designLayout\.touchTargetMin/.test(BALANCES) && /minWidth: designLayout\.touchTargetMin/.test(BALANCES) && designLayout.touchTargetMin >= 44);
+  assert('2k. it opens the EXISTING SelectBalancesSheet', /onPress=\{openSelectBalances\}/.test(MONEY_CODE) && /setSelectBalancesVisible\(true\)/.test(MONEY_CODE) && /<SelectBalancesSheet/.test(MONEY_CODE));
   assert('2l. whose own Cancel/Save/dismissal behaviour is untouched', exists('src/components/money/SelectBalancesSheet.tsx'));
   assert('2m. the row states, in words, that inclusion does not change net worth', /does not change your net worth/i.test(MONEY_MEASURE_DEFINITIONS.includedBalances));
   // Wave 6 correction B — the row now uses its own shorter support line;
@@ -169,7 +172,10 @@ console.log('\n=== 2. Included balances (Class A + Class C) ===');
   // generic definition's first clause would be redundant. The claim this
   // protects — the net-worth reassurance is RENDERED, not merely spoken —
   // is unchanged and asserted against the line actually shown.
-  assert('2n. and the net-worth reassurance is actually rendered, not only spoken', /const SUPPORT_LINE = 'Used only for this estimate — your Wealth total is unchanged\.';/.test(BALANCES) && /\{SUPPORT_LINE\}<\/Text>/.test(BALANCES));
+  // Pass D.5 — the reassurance moved to where the choice is actually made, and now
+  // states the FULL truth: inclusion is persisted and applies to every estimate, and it
+  // still never changes the account balances or the Wealth total.
+  assert('2n. and the net-worth reassurance is rendered where the choice is made, without claiming a one-estimate scope', /Your account balances and Wealth total never change\./.test(PICKER) && /applies everywhere Nolie estimates your/.test(PICKER.replace(/\s+/g, ' ')) && !/only stops counting toward this specific/.test(PICKER));
   assert('2o. the row performs no summing of its own', !/reduce\(|\.value \+/.test(strip(BALANCES)));
   assert('2p. and mutates no inclusion state', !/updateAsset|updateUser|persist\(/.test(BALANCES));
 }
@@ -215,7 +221,6 @@ console.log('\n=== 4. Money hierarchy and one hero (Class C) ===');
   const ORDER: [string, string][] = [
     ['Available Until Payday hero', '<SafeToSpendHero'],
 
-    ['included balances', '<IncludedBalancesRow'],
     ['this month', '<ThisMonthCard'],
     ['what happens next', 'What happens next'],
     ['money flow', 'Typical money flow'],
@@ -232,6 +237,9 @@ console.log('\n=== 4. Money hierarchy and one hero (Class C) ===');
   }
   assert(`4a. every Money landmark is present${missing.length ? ` (missing: ${missing.join(', ')})` : ''}`, missing.length === 0);
   assert('4b. and they appear in the Design 5.1 order', ordered);
+  // Pass D.5 — the balances entry is no longer a landmark of its own: it is the ONE
+  // inline control inside the Money card, supplied to BOTH modes by the screen.
+  assert('4b-ii. the balances entry is inside the card, in both modes, exactly once', (MONEY_CODE.match(/<InlineBalancesSelector/g) || []).length === 1 && (MONEY_CODE.match(/balancesSelector=\{balancesSelector\}/g) || []).length === 2);
 
   assert('4c. exactly ONE hero-level surface', (MONEY_CODE.match(/<SafeToSpendHero/g) || []).length === 1);
   // Wave 6 Correction B — the payday rail moved INSIDE the hero shell.
@@ -266,7 +274,7 @@ console.log('\n=== 4. Money hierarchy and one hero (Class C) ===');
   assert('4h. no raw colour in the new Wave 6 surfaces', [BAR, BALANCES, CARD, read('src/lib/calculations/moneyComposition.ts')].every((src) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(src)));
   assert('4i. the new surfaces read semantic roles', [BAR, BALANCES, CARD].every((src) => /semantic\./.test(src)));
   assert('4j. and Design 5.1 type roles, never a platform default', [BAR, BALANCES, CARD].every((src) => /typeStyle\(/.test(src)));
-  assert('4k. financial figures use a tabular figure role', /typeStyle\('figureRow'/.test(CARD) && /typeStyle\('figureRow'/.test(BALANCES));
+  assert('4k. financial figures use a tabular figure role', /typeStyle\('figureRow'/.test(CARD) && /fontVariant: \['tabular-nums'\]/.test(BALANCES));
 }
 
 console.log('\n=== 5. Every measure carries one definition or provenance line (Class A + Class C) ===');
@@ -297,8 +305,10 @@ console.log('\n=== 5. Every measure carries one definition or provenance line (C
   assert('5f. the timeline definition renders', /MONEY_MEASURE_DEFINITIONS\.whatHappensNext/.test(MONEY_CODE));
   assert('5g. the Money Flow definition renders', /MONEY_MEASURE_DEFINITIONS\.moneyFlow/.test(MONEY_CODE));
   assert('5h. the This Month definition renders on the card', /MONEY_MEASURE_DEFINITIONS\.thisMonth/.test(CARD));
-  assert('5i. the included-balances row renders its own concise support line', /Used only for this estimate — your Wealth total is unchanged\./.test(BALANCES));
-  assert('5i-ii. which still states that inclusion does not change the Wealth total', /Wealth total is unchanged/.test(BALANCES));
+  // Pass D.5 — the support line moved to the sheet where the choice is made, so it can
+  // state the real scope. The inline control keeps its own name, count and total.
+  assert('5i. the balances control names itself and carries the engine summary', /BALANCES_USED_LABEL = 'Balances used'/.test(BALANCES) && /summary\.selectorLabel/.test(BALANCES));
+  assert('5i-ii. and the sheet still states that inclusion does not change the Wealth total', /Wealth total never change/.test(PICKER));
 
   // Money Plan is a forecast/preference, never proof.
   const plan = MONEY_MEASURE_DEFINITIONS.moneyPlan;
@@ -402,9 +412,11 @@ console.log('\n=== 10. Responsive geometry (Class A) ===');
   // there is no longer an action label to stack. The reflow claim now
   // applies to the summary line, which is allowed a second line at
   // accessibility sizes rather than truncating.
-  assert('10f. the balances row has no wide action column stealing content width', !/Manage balances<\/Text>/.test(BALANCES) && /chevron-forward/.test(BALANCES));
-  assert('10g. the summary value never splits mid-figure, and gains a line rather than truncating at large text', /styles\.primary\} numberOfLines=\{stackAction \? 2 : 1\}/.test(BALANCES));
-  assert('10g-ii. and the action is still announced, in the row\'s own accessible name', /Manage balances\.`\}/.test(BALANCES));
+  assert('10f. the balances control has no wide action column stealing content width', !/Manage balances<\/Text>/.test(BALANCES) && /chevron-down/.test(BALANCES));
+  // Stronger than before: the compact control truncates nothing at all — it wraps and
+  // grows, and it shrinks rather than pushing the daily-guide column.
+  assert('10g. the summary value never truncates or shrinks its text at large sizes', !/numberOfLines|ellipsizeMode|adjustsFontSizeToFit/.test(BALANCES) && /flexShrink: 1/.test(BALANCES));
+  assert('10g-ii. and the action is still announced, through the control\'s own role and hint', /accessibilityRole="button"/.test(BALANCES) && /accessibilityHint="Choose which account balances your money estimates use"/.test(BALANCES));
   assert('10h. This Month figures never split either', (CARD.match(/numberOfLines=\{1\}/g) || []).length >= 3);
   assert('10i. and their labels shrink instead', /rowLabel: \{[^}]*flexShrink: 1/.test(CARD) && /rowValue: \{[^}]*flexShrink: 0/.test(CARD));
   assert('10j. the tablet content cap is the shared Screen contract, unchanged', designLayout.contentMaxWidthTablet === 560);
@@ -451,7 +463,7 @@ console.log('\n=== 11. Wave 6 final pass — exactly five sections, and the page
   // 11t-v — nothing unique was lost.
   for (const [name, pat] of [
     ['How this was calculated', /money-aup-hero-info/],
-    ['Choose\/Manage balances', /IncludedBalancesRow|CHOOSE_BALANCES_CTA/],
+    ['Choose\/Manage balances', /InlineBalancesSelector|CHOOSE_BALANCES_CTA/],
     ['Spending sources', /Spending sources/],
     ['View all transactions', /View all transactions/],
     ['Add bill', /onPress: openAddBill/],

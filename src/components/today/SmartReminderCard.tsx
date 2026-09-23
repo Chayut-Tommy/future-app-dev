@@ -1110,6 +1110,8 @@ export function SmartReminderCard({
                         amount: reminder.amount,
                         accountName: incomeDestinationRows(eligibleIncomeDestinations).find((r) => r.id === selectedDestinationId)?.name ?? null,
                         dateISO: reminder.occurrenceDate,
+                        // Income ARRIVES in the chosen account; it is not funded from it.
+                        direction: 'to',
                       })}
                     </Text>
                   ) : null}
