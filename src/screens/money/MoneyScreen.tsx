@@ -1126,7 +1126,11 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
 
   // Pass D.5 — ONE balances entry for the whole card area, in both modes. It opens the
   // EXISTING selection journey; nothing about eligibility, drafting or saving moves here.
-  const balancesFocus = useReturnFocus();
+  // Pass E — when every balance is deselected the pill unmounts and the card's own
+  // "Choose balances" CTA takes its place, so that CTA is the focus fallback. Without it
+  // the return would target an unmounted node and focus would be left on nothing.
+  const balancesCtaRef = useRef<View | null>(null);
+  const balancesFocus = useReturnFocus(balancesCtaRef);
   const whyFocus = useReturnFocus();
   const openSelectBalances = useCallback(() => {
     balancesFocus.arm();
@@ -1135,6 +1139,23 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
   const balancesSelector = (
     <InlineBalancesSelector summary={includedBalances} onPress={openSelectBalances} controlRef={balancesFocus.ref} />
   );
+
+  // Pass E — Select Balances and the scoped Add-a-balance chooser are BOTH native
+  // Modals, and they used to be toggled in the same tick (one hiding while the other
+  // presented). That is the double-present class this app already sequences everywhere
+  // else, so the handoff now waits for the picker's own dismissal to complete, exactly
+  // like the Timeframe chooser → date picker handshake above. While a handoff is
+  // pending, assistive focus is NOT returned to the pill: the child sheet is taking it,
+  // and the return stays armed so focus lands on the pill at the end of the journey.
+  const addBalancePending = useRef(false);
+  const handleBalancesDismissed = useCallback(() => {
+    if (addBalancePending.current) {
+      addBalancePending.current = false;
+      setAddBalanceChooserVisible(true);
+      return;
+    }
+    balancesFocus.fire();
+  }, [balancesFocus]);
 
   return (
     <Screen
@@ -1259,6 +1280,7 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
           detailMaxHeight={detailMaxHeight}
           onDetailFrame={revealDetail}
           balancesSelector={balancesSelector}
+          balancesCtaRef={balancesCtaRef}
         />
         )}
       </View>
@@ -1582,9 +1604,14 @@ export function MoneyScreen({ reduceMotion, pushed = false }: { reduceMotion: bo
       <SelectBalancesSheet
         visible={selectBalancesVisible}
         onClose={() => setSelectBalancesVisible(false)}
-        onAddBalance={() => setAddBalanceChooserVisible(true)}
-        // Focus returns to the inline selector once the sheet has finished dismissing.
-        onDismissed={balancesFocus.fire}
+        // Pass E — record the intent only; the chooser is presented once this sheet has
+        // actually finished dismissing (see handleBalancesDismissed).
+        onAddBalance={() => {
+          addBalancePending.current = true;
+        }}
+        // Focus returns to the inline selector once the sheet has finished dismissing,
+        // unless a child handoff is pending.
+        onDismissed={handleBalancesDismissed}
       />
       {/* Pass C.1 — the Timeframe chooser and the native date picker are
           sequenced by `timeframeStage` so only ONE is presented at a time

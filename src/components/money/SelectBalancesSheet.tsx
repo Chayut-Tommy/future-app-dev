@@ -5,6 +5,7 @@ import { useAppState } from '../../state/AppStateContext';
 import { KeyboardSheet } from '../shared/KeyboardSheet';
 import { Button } from '../shared/Button';
 import { Ionicons } from '@expo/vector-icons';
+import { confirmSaveOrDiscardIfDirty } from '../../lib/discardConfirmation';
 import { resolveIncludeInMoneyCalculations } from '../../lib/calculations/liquidAssets';
 import { formatCentsCentsAware } from '../../lib/calculations/money';
 import { designLayout, designRadius, designSpacing } from '../../theme/semanticTokens';
@@ -163,12 +164,38 @@ export function SelectBalancesSheet({
     onClose();
   }
 
-  // Saves first so a mid-edit "+ Add a money balance" tap never silently
-  // discards toggles the user already made in this same session.
+  /** Drops the draft without writing anything: the toggles return to the last saved
+   * state, so `isDirty` is false and nothing is left to commit later. */
+  function discardDraft() {
+    setDraftIncluded(new Map(savedIncluded));
+  }
+
+  // Pass E — "+ Add a money balance" is a HANDOFF, not a dismissal. It used to call
+  // commitDraft() unconditionally, which meant merely opening the child flow SILENTLY
+  // committed an inclusion change the user had not confirmed — a write to a persisted,
+  // shared setting that feeds Available until payday, Look Ahead and Today. It now asks,
+  // through the same shared confirmation the rest of the app uses: Save and continue
+  // (one commit, the existing authoritative path), Discard (explicit), or Keep editing
+  // (stays here with the draft intact). A clean draft continues straight through with no
+  // prompt, exactly as before.
   function handleAddBalance() {
-    commitDraft();
-    onClose();
-    onAddBalance();
+    confirmSaveOrDiscardIfDirty(
+      isDirty,
+      {
+        onSave: () => {
+          commitDraft();
+          onClose();
+          onAddBalance();
+        },
+        onDiscard: () => {
+          discardDraft();
+          onClose();
+          onAddBalance();
+        },
+      },
+      'Save your balance selection?',
+      'You’ve changed which balances your money estimates use. Save that before adding a balance, or discard it.'
+    );
   }
 
   const styles = useMemo(

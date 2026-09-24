@@ -108,6 +108,7 @@ export function SafeToSpendHero({
   timeframeValueLabel,
   showManageBalancesLink = true,
   balancesSelector,
+  balancesCtaRef,
   detailMaxHeight,
   onDetailFrame,
 }: {
@@ -182,6 +183,10 @@ export function SafeToSpendHero({
    * amount (and, in states with no amount, directly in the shell) so there is exactly
    * ONE balances entry in the card area. Omitted by any other consumer. */
   balancesSelector?: React.ReactNode;
+  /** Pass E — when the zero-selection state replaces the inline pill with its own
+   * "Choose balances" call to action, the balances sheet returns assistive focus HERE
+   * instead of to a control that no longer exists. */
+  balancesCtaRef?: React.Ref<View>;
   /** Pass D.3 — forwarded to the pay-cycle bar so its event detail honours the D.1
    * dock-clearance contract (same values the selected-date card receives). */
   detailMaxHeight?: number;
@@ -613,6 +618,9 @@ export function SafeToSpendHero({
 
           {opts.cta ? (
             <TouchableOpacity
+              // Only the balances CTA is a focus-return target; every other CTA is
+              // unchanged and carries no ref.
+              ref={opts.cta.testID === 'money-aup-cta-balances' ? balancesCtaRef : undefined}
               style={styles.heroCta}
               onPress={opts.cta.onPress}
               accessibilityRole="button"

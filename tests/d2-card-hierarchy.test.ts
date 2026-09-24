@@ -57,7 +57,18 @@ assert('a status exists exactly when the accepted cash-flow line exists', [healt
 assert('the status type has no urgent/red tone: a projected shortfall is not an overdue or destructive state (Design 5.1 colour rule)', /tone: 'healthy' \| 'caution';/.test(readFileSync(join(__dirname, '../src/lib/calculations/lookAheadPresentation.ts'), 'utf8')));
 
 // ── §3 this pass touched no financial, persistence or D.1 owner ──
-const changed = execSync('git diff --name-only HEAD && git ls-files --others --exclude-standard', { cwd: join(__dirname, '..'), encoding: 'utf8' }).split('\n').filter(Boolean);
+// Pass E — these scope guards are measured against the PASS C CHECKPOINT, not against
+// HEAD. Measuring against HEAD quietly stopped guarding anything the moment Pass D was
+// committed (nothing differs from HEAD any more), and inverted it for the one assertion
+// that requires a file to have changed. The tag is the stable baseline the guards mean.
+const PASS_C_BASELINE = 'lookahead-pass-c-interface';
+const changed = (() => {
+  const cwd = join(__dirname, '..');
+  execSync(`git rev-parse --verify ${PASS_C_BASELINE}^{commit}`, { cwd, encoding: 'utf8' }); // throws if the baseline is gone
+  return execSync(`git diff --name-only ${PASS_C_BASELINE} && git ls-files --others --exclude-standard`, { cwd, encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean);
+})();
 const PROTECTED = [
   'src/lib/calculations/safeToSpend.ts', 'src/lib/calculations/lookAheadProjection.ts', 'src/lib/calculations/projectedEvents.ts', 'src/lib/calculations/dailyGuide.ts',
   'src/lib/calculations/localCalendar.ts', 'src/lib/calculations/occurrenceIdentity.ts', 'src/lib/calculations/paydayBoundary.ts', 'src/lib/calculations/money.ts',
@@ -65,6 +76,7 @@ const PROTECTED = [
   'src/types/models.ts', 'src/navigation/floatingNavGeometry.ts', 'package.json', 'package-lock.json', 'app.json',
 ];
 assert('no engine, calendar, identity, storage, model, dock-geometry or dependency file differs from the Pass C checkpoint', PROTECTED.every((f) => !changed.includes(f)));
+assert('the baseline comparison is live — it really does see the Pass D/E changes', changed.includes('src/screens/money/MoneyScreen.tsx') && changed.length > 10);
 assert('Today, Wealth and Grow screens are untouched', !changed.some((f) => /^src\/screens\/(today|wealth|grow)\//.test(f)));
 const strip = (p: string) => readFileSync(join(__dirname, '..', 'src', p), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 const lower = strip('components/money/MoneyCardLowerRegion.tsx');

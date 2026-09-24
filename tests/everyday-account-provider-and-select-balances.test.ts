@@ -323,8 +323,13 @@ console.log('\n=== 9. Select Balances add journey — customer-facing action no 
     // guards — the SAME AddAnythingSheet component, wired to the SAME
     // onAddBalance trigger, no new geometry — is unchanged and re-verified
     // against the new, extended onClose/onlyBalances wiring.
+    // Pass E — the trigger now RECORDS the intent and the chooser is presented once the
+    // picker's own dismissal completes (both are native Modals, so they must not be
+    // toggled in the same tick). The property this assertion guards — the same
+    // AddAnythingSheet, the same single trigger, no new geometry — is unchanged.
     '9e. the add-flow now renders AddAnythingSheet wired to the SAME onAddBalance trigger, scoped to balances only and returning to Select Balances on close — reusing the existing chooser/transition architecture verbatim (no new component, no new geometry)',
-    /onAddBalance=\{\(\) => setAddBalanceChooserVisible\(true\)\}/.test(MONEY_SCREEN_SRC) &&
+    /onAddBalance=\{\(\) => \{\s*\n\s*addBalancePending\.current = true;\s*\n\s*\}\}/.test(MONEY_SCREEN_SRC) &&
+      /if \(addBalancePending\.current\) \{[\s\S]{0,200}setAddBalanceChooserVisible\(true\);/.test(MONEY_SCREEN_SRC) &&
       /<AddAnythingSheet\s*\n\s*visible=\{addBalanceChooserVisible\}\s*\n\s*onClose=\{\(\) => \{\s*\n\s*setAddBalanceChooserVisible\(false\);\s*\n\s*setSelectBalancesVisible\(true\);\s*\n\s*\}\}\s*\n\s*onlyBalances\s*\n\s*\/>/.test(
         MONEY_SCREEN_SRC
       )
@@ -340,17 +345,19 @@ console.log('\n=== 9. Select Balances add journey — customer-facing action no 
       /\{ key: 'savings', label: 'Add savings' \}/.test(SHEET_SRC)
   );
   assert(
-    // Correction round, 2026-08-10 — SelectBalancesSheet's toggles became a
-    // local draft (Cancel/Back must discard unconfirmed changes), so
-    // handleAddBalance now commits that draft first (never silently
-    // dropping in-progress toggles when the user reaches for "+ Add a
-    // money balance" mid-edit). The property this assertion actually
-    // guards — onClose() still fires BEFORE onAddBalance(), so the sheet
-    // closes itself before handing off rather than stacking a second modal
-    // — is unchanged and re-verified below alongside the new commitDraft()
-    // call.
-    '9g. dismissal sequencing (SelectBalancesSheet closes itself BEFORE handing off) is unchanged; handleAddBalance now also commits the pending draft first, so in-progress toggles are never silently discarded by this hand-off',
-    /function handleAddBalance\(\) \{\s*\n\s*commitDraft\(\);\s*\n\s*onClose\(\);\s*\n\s*onAddBalance\(\);\s*\n\s*\}/.test(SELECT_BALANCES_SRC)
+    // Correction round, 2026-08-10 made the toggles a local draft, and handleAddBalance
+    // then committed that draft unconditionally so a mid-edit "+ Add a money balance"
+    // would not drop it. Pass E corrected the other half of that trade-off: committing
+    // without being asked is a silent write to a PERSISTED, SHARED setting that feeds
+    // Available until payday, Look Ahead and Today. The handoff now asks — save, discard
+    // or keep editing — through the same shared confirmation every other form uses. The
+    // property this assertion has always guarded, that the sheet closes itself BEFORE
+    // handing off rather than stacking a second modal, is unchanged in every branch.
+    '9g. dismissal sequencing (SelectBalancesSheet closes itself BEFORE handing off) is unchanged; a DIRTY draft is now resolved explicitly by the shared Save/Discard/Keep-editing confirmation instead of being committed silently',
+    /confirmSaveOrDiscardIfDirty\(/.test(SELECT_BALANCES_SRC) &&
+      /onSave: \(\) => \{\s*\n\s*commitDraft\(\);\s*\n\s*onClose\(\);\s*\n\s*onAddBalance\(\);\s*\n\s*\}/.test(SELECT_BALANCES_SRC) &&
+      /onDiscard: \(\) => \{\s*\n\s*discardDraft\(\);\s*\n\s*onClose\(\);\s*\n\s*onAddBalance\(\);\s*\n\s*\}/.test(SELECT_BALANCES_SRC) &&
+      !/function handleAddBalance\(\) \{\s*\n\s*commitDraft\(\);/.test(SELECT_BALANCES_SRC)
   );
   assert(
     '9h. the balances LIST itself (already fixed in the prior round) still includes Everyday Account alongside Cash/Savings — untouched by this correction',

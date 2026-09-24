@@ -161,7 +161,10 @@ function fixture(includeCash: boolean): AppData {
   assert('7d. it meets the 44pt floor on both axes and keeps tabular figures', /minHeight: designLayout\.touchTargetMin/.test(selector) && /minWidth: designLayout\.touchTargetMin/.test(selector) && /tabular-nums/.test(selector));
   assert('7e. long names wrap rather than clip — no fixed height, no numberOfLines', !/numberOfLines/.test(selector) && !/height:\s*\d/.test(selector));
   assert('7f. focus return is idempotent per open/close cycle and schedules no timers', /armed\.current = false/.test(focus) && !/setTimeout|requestAnimationFrame|InteractionManager/.test(focus));
-  assert('7g. the balances picker and the "Why this amount?" sheet each return focus to the control that opened them', /onDismissed=\{balancesFocus\.fire\}/.test(money) && /onDismissed=\{whyFocus\.fire\}/.test(money));
+  // Pass E — the picker's dismissal handler now also sequences the add-balance handoff,
+  // so it goes through handleBalancesDismissed; the focus return itself is unchanged.
+  assert('7g. the balances picker and the "Why this amount?" sheet each return focus to the control that opened them',
+    /onDismissed=\{handleBalancesDismissed\}/.test(money) && /balancesFocus\.fire\(\);/.test(money) && /onDismissed=\{whyFocus\.fire\}/.test(money));
 }
 
 console.log(`\n${total - failures}/${total} passed.`);
